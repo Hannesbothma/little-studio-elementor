@@ -1,0 +1,41 @@
+name: Publish plugin release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag, for example v0.2.1
+        required: true
+        type: string
+permissions:
+  contents: write
+concurrency:
+  group: plugin-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+      - name: Build WordPress package
+        run: node scripts/package.mjs . dist
+      - name: Attach and publish release
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > /tmp/lse-release-state; then
+            if [ "$(cat /tmp/lse-release-state)" = "false" ]; then
+              echo "This release is already published; its assets are unchanged."
+              exit 0
+            fi
+          else
+            gh release create "$RELEASE_TAG" --draft --verify-tag --title "Little Studio to Elementor $RELEASE_TAG" --notes-file RELEASE_NOTES.md
+          fi
+          gh release upload "$RELEASE_TAG" dist/little-studio-elementor-*.zip dist/update.json --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest
