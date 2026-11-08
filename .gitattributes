@@ -1,0 +1,6 @@
+# Preserve packaged bytes across Windows and Linux release builds.
+/assets/** -text
+/includes/** -text
+/little-studio-elementor.php -text
+/readme.txt -text
+/LICENSE.txt -text

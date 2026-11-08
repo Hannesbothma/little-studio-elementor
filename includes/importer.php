@@ -32,7 +32,7 @@ final class LSE_Importer {
         if ( ! empty( $input['site']['home_key'] ) && ! isset( $seen[$input['site']['home_key']] ) ) { throw new RuntimeException( 'The homepage does not exist in this import.' ); }
         foreach ( $pages as $page ) { $ancestors = [ $page['key'] ]; $parent = $page['parent_key'] ?? ''; while ( $parent !== '' ) { if ( ! isset( $seen[$parent] ) || in_array( $parent, $ancestors, true ) ) { throw new RuntimeException( 'Page hierarchy has a cycle or missing parent.' ); } $ancestors[] = $parent; $parent = $seen[$parent]['parent_key'] ?? ''; } }
         $id = bin2hex( random_bytes( 16 ) ); $layout = in_array( $input['layout'] ?? '', [ 'elementor_canvas', 'elementor_header_footer' ], true ) ? $input['layout'] : 'elementor_canvas';
-        $job = [ 'id' => $id, 'owner' => get_current_user_id(), 'fingerprint' => $input['fingerprint'], 'title' => self::text( $input['title'] ?? 'Imported website', 150 ), 'state' => 'importing', 'created' => time(), 'pages' => [], 'assets' => [], 'fonts' => [], 'map' => [], 'reports' => [], 'layout' => $layout, 'scripts' => ! empty( $input['scripts'] ) && current_user_can( 'unfiltered_html' ), 'site' => is_array( $input['site'] ?? null ) ? $input['site'] : [], 'menu' => 0 ];
+        $job = [ 'id' => $id, 'engine' => 'interactive-v1', 'owner' => get_current_user_id(), 'fingerprint' => $input['fingerprint'], 'title' => self::text( $input['title'] ?? 'Imported website', 150 ), 'state' => 'importing', 'created' => time(), 'pages' => [], 'assets' => [], 'fonts' => [], 'map' => [], 'reports' => [], 'layout' => $layout, 'scripts' => ! empty( $input['scripts'] ) && current_user_can( 'unfiltered_html' ), 'site' => is_array( $input['site'] ?? null ) ? $input['site'] : [], 'menu' => 0 ];
         self::store( $job ); update_user_meta( get_current_user_id(), '_lse_last_job', $id );
         try {
             foreach ( $pages as $page ) {
@@ -78,19 +78,21 @@ final class LSE_Importer {
         } finally { delete_option( $lock ); }
     }
     private static function rewrite( $value, $map ) { if ( is_array( $value ) ) { return array_map( static fn( $v ) => self::rewrite( $v, $map ), $value ); } if ( ! is_string( $value ) || ! $map ) { return $value; } $pairs = $map; foreach ( $map as $from => $to ) { $pairs[str_replace( '/', '\\/', $from )] = str_replace( '/', '\\/', $to ); } unset( $pairs[''] ); uksort( $pairs, static fn( $a, $b ) => strlen( $b ) <=> strlen( $a ) ); $pattern = '#(?:' . implode( '|', array_map( static fn( $key ) => preg_quote( $key, '#' ), array_keys( $pairs ) ) ) . ')(?=$|[^a-zA-Z0-9_./%~\\\\-])#'; return preg_replace_callback( $pattern, static fn( $match ) => $pairs[$match[0]], $value ); }
-    private static function html( $html ) {
+    private static function html( $html, $interactive = false ) {
         $allowed = wp_kses_allowed_html( 'post' );
-        foreach ( [ 'div', 'span', 'section', 'article', 'header', 'footer', 'main', 'nav', 'aside', 'details', 'dialog', 'summary', 'button', 'picture', 'source', 'video', 'audio' ] as $tag ) { $allowed[$tag] = array_merge( $allowed[$tag] ?? [], [ 'class' => true, 'id' => true, 'style' => true, 'role' => true, 'aria-*' => true, 'data-*' => true, 'hidden' => true, 'tabindex' => true ] ); }
+        foreach ( [ 'div', 'span', 'section', 'article', 'header', 'footer', 'main', 'nav', 'aside', 'details', 'dialog', 'summary', 'button', 'picture', 'source', 'video', 'audio', 'form', 'fieldset', 'legend', 'label' ] as $tag ) { $allowed[$tag] = array_merge( $allowed[$tag] ?? [], [ 'class' => true, 'id' => true, 'style' => true, 'role' => true, 'aria-*' => true, 'data-*' => true, 'hidden' => true, 'tabindex' => true ] ); }
+        $allowed['label']['for'] = true;
+        foreach ( $allowed as $tag => $attributes ) { $allowed[$tag] = array_merge( $attributes, [ 'class' => true, 'id' => true, 'role' => true, 'aria-*' => true, 'data-*' => true, 'hidden' => true ] ); }
         $svg_attributes = array_fill_keys( [ 'viewbox', 'xmlns', 'width', 'height', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'd', 'cx', 'cy', 'r', 'rx', 'ry', 'x', 'y', 'x1', 'x2', 'y1', 'y2', 'points', 'transform', 'opacity', 'fill-rule', 'clip-rule', 'aria-hidden', 'aria-label', 'role', 'focusable', 'class' ], true );
         foreach ( [ 'svg', 'g', 'path', 'circle', 'ellipse', 'rect', 'line', 'polyline', 'polygon', 'title', 'desc' ] as $tag ) { $allowed[$tag] = $svg_attributes; }
         $allowed['button']['type'] = true; $allowed['button']['disabled'] = true;
-        $field_attributes = array_fill_keys( [ 'class', 'id', 'type', 'name', 'value', 'placeholder', 'disabled', 'readonly', 'checked', 'selected', 'multiple', 'rows', 'cols', 'min', 'max', 'step', 'aria-*', 'data-*' ], true ); foreach ( [ 'input', 'select', 'option', 'textarea' ] as $tag ) { $allowed[$tag] = $field_attributes; }
+        $field_attributes = array_fill_keys( [ 'class', 'id', 'type', 'name', 'value', 'placeholder', 'disabled', 'readonly', 'checked', 'selected', 'multiple', 'rows', 'cols', 'min', 'max', 'step', 'maxlength', 'required', 'autocomplete', 'inputmode', 'role', 'hidden', 'aria-*', 'data-*' ], true ); foreach ( [ 'input', 'select', 'option', 'textarea' ] as $tag ) { $allowed[$tag] = $field_attributes; }
         foreach ( [ 'source', 'video', 'audio' ] as $tag ) { foreach ( [ 'src', 'srcset', 'sizes', 'type', 'poster', 'controls', 'preload', 'loop', 'muted', 'autoplay', 'playsinline' ] as $attr ) { $allowed[$tag][$attr] = true; } }
         $html = preg_replace( '~<(script|iframe|object|embed|style)\b[^>]*>[\s\S]*?</\1\s*>~i', '', (string) $html );
-        $html = preg_replace( '~<form\b[^>]*>~i', '<div role="group">', $html ); $html = preg_replace( '~</form\s*>~i', '</div>', $html );
-        $html = wp_kses( $html, $allowed ); $processor = new WP_HTML_Tag_Processor( $html ); while ( $processor->next_tag() ) { if ( in_array( $processor->get_tag(), [ 'INPUT', 'SELECT', 'TEXTAREA' ], true ) ) { $processor->set_attribute( 'disabled', true ); if ( $processor->get_attribute( 'type' ) === 'password' ) { $processor->remove_attribute( 'value' ); } } } return $processor->get_updated_html();
+        if ( ! $interactive ) { $html = preg_replace( '~<form\b[^>]*>~i', '<div role="group">', $html ); $html = preg_replace( '~</form\s*>~i', '</div>', $html ); }
+        $html = wp_kses( $html, $allowed ); $processor = new WP_HTML_Tag_Processor( $html ); while ( $processor->next_tag() ) { if ( in_array( $processor->get_tag(), [ 'INPUT', 'SELECT', 'TEXTAREA' ], true ) ) { if ( ! $interactive ) { $processor->set_attribute( 'disabled', true ); } if ( $processor->get_attribute( 'type' ) === 'password' ) { $processor->remove_attribute( 'value' ); } } if ( $interactive && $processor->get_tag() === 'FORM' ) { $processor->set_attribute( 'data-lse-local-form', '' ); } } return $processor->get_updated_html();
     }
-    private static function css( $css ) { if ( ! is_string( $css ) || strlen( $css ) > 2 * MB_IN_BYTES ) { throw new RuntimeException( 'Generated styles are too large.' ); } if ( preg_match( '~</?style|@import|expression\s*\(|javascript\s*:|-moz-binding|behavior\s*:|[\x00]~i', $css ) ) { throw new RuntimeException( 'Unsafe CSS was rejected.' ); } return $css; }
+    private static function css( $css ) { if ( ! is_string( $css ) || strlen( $css ) > 2 * MB_IN_BYTES ) { throw new RuntimeException( 'Generated styles are too large.' ); } if ( preg_match( '~</?style|@import|expression\s*\(|javascript\s*:|-moz-binding|(?<![a-z-])behavior\s*:|[\x00]~i', $css ) ) { throw new RuntimeException( 'Unsafe CSS was rejected.' ); } return $css; }
     private static function tree( $items, $job, &$count, $depth = 0 ) {
         if ( ! is_array( $items ) || $depth > 18 ) { throw new RuntimeException( 'Element nesting exceeds the conversion limit.' ); } $out = [];
         foreach ( $items as $item ) {
@@ -98,7 +100,7 @@ final class LSE_Importer {
             $type = $item['elType'] ?? ''; $widget = $item['widgetType'] ?? '';
             if ( $type !== 'container' && ( $type !== 'widget' || ! in_array( $widget, [ 'heading', 'text-editor', 'image', 'button', 'divider', 'html', 'video' ], true ) ) ) { throw new RuntimeException( 'An unsupported Elementor element was rejected.' ); }
             $settings = self::rewrite( $item['settings'] ?? [], $job['map'] ); if ( ! is_array( $settings ) || strlen( wp_json_encode( $settings ) ) > 512 * 1024 ) { throw new RuntimeException( 'Element settings are invalid or too large.' ); }
-            foreach ( [ 'title', 'editor', 'html' ] as $field ) { if ( isset( $settings[$field] ) ) { $settings[$field] = self::html( $settings[$field] ); } }
+            foreach ( [ 'title', 'editor', 'html' ] as $field ) { if ( isset( $settings[$field] ) ) { $settings[$field] = self::html( $settings[$field], $field === 'html' && ( $settings['lse_interactive'] ?? '' ) === 'yes' ); } }
             foreach ( $settings as $field => $value ) { if ( str_contains( $field, 'custom_css' ) || str_starts_with( $field, '__' ) || str_contains( $field, 'shortcode' ) ) { unset( $settings[$field] ); } elseif ( str_contains( $field, 'font_family' ) && is_string( $value ) && isset( $job['font_map'][$value] ) ) { $settings[$field] = $job['font_map'][$value]; } }
             if ( isset( $settings['link'] ) ) { $settings['link']['url'] = self::clean_url( $settings['link']['url'] ?? '' ); }
             if ( isset( $settings['image']['url'] ) ) { $settings['image']['url'] = self::clean_url( $settings['image']['url'] ); foreach ( $job['assets'] as $asset ) { if ( $asset['url'] === $settings['image']['url'] ) { $settings['image']['id'] = $asset['id']; } } }
@@ -108,8 +110,8 @@ final class LSE_Importer {
     public static function page( $input ) {
         $job = self::load( $input['job'] ?? '' ); $lock = self::lock( $job['id'] );
         try {
-            if ( $job['state'] !== 'importing' ) { throw new RuntimeException( 'This import no longer accepts pages.' ); }
             $index = array_search( $input['key'] ?? '', array_column( $job['pages'], 'key' ), true ); if ( $index === false ) { throw new RuntimeException( 'Unknown source page.' ); } $page = $job['pages'][$index]; if ( $page['done'] ) { return self::status( [ 'job' => $job['id'] ] ); }
+            if ( $job['state'] !== 'importing' ) { throw new RuntimeException( 'This import no longer accepts pages.' ); }
             $id = $page['id']; if ( get_post_status( $id ) !== 'draft' || ! current_user_can( 'edit_post', $id ) || isset( $page['initial_stamp'] ) && ! hash_equals( $page['initial_stamp'], self::stamp( $id ) ) ) { throw new RuntimeException( 'The destination draft changed. Review it before retrying.' ); }
             $count = 0; $tree = self::tree( $input['elements'] ?? [], $job, $count ); if ( ! $count ) { throw new RuntimeException( 'No content was converted.' ); }
             $ids = self::ids( $tree ); if ( count( array_unique( $ids ) ) !== count( $ids ) ) { throw new RuntimeException( 'Element IDs must be unique within a page.' ); }

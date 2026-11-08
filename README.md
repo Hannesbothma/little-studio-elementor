@@ -35,7 +35,14 @@ are intended for developers.
 Accepts `little-studio-website` version 1 and `code-canvas` version 1 JSON.
 Packaged images, sanitised SVG, supported media/documents and font files are
 registered in the Media Library. Identical imported files are reused.
-Original source JavaScript is retained but disabled by default.
+Original source JavaScript is retained. Interactions default on when the importing
+administrator has the required permission; enable them only for a trusted file.
+Navigation and calculator regions retain their structure and responsive state
+styles in HTML widgets, while ordinary content remains native Elementor elements.
+
+Version 0.3.0 adds compressed authenticated REST saves with an AJAX fallback and a
+shorter review screen. After updating, choose the same website JSON to rebuild
+working drafts. Existing pages are preserved; old conversions are not rewritten.
 
 Conversion from HTML/CSS is heuristic. Exact appearance and arbitrary interactions
 are not guaranteed. Review responsive layouts, typography, cropping, navigation,

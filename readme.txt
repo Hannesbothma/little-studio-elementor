@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 0.2.0
+Stable tag: 0.3.0
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -18,7 +18,7 @@ Import one native Little Studio website JSON into editable Elementor draft pages
 4. Open Studio to Elementor in the main WordPress sidebar, directly below Plugins.
    You can also use Open converter in the installed Plugins list.
 5. Choose your complete Little Studio website JSON. All pages are selected.
-6. Review the file, page layout and warnings; keep custom scripts off initially.
+6. Review the page list and setup items; enable interactions for a trusted file.
 7. Import as drafts, then open each page in Elementor and review all screen sizes.
 
 == Updates ==
@@ -45,7 +45,8 @@ update/cron and file-permission settings continue to apply.
   and the included Studio shared section widget. Variants remain separate.
 * Prepares an unassigned classic WordPress menu when navigation can be identified.
 * Stores source and SEO metadata; supplies basic SEO output without an SEO plugin.
-* Reports limitations and supports retries of the current unfinished import.
+* Preserves interactive navigation, local calculators and enquiry controls.
+* Shows a short setup summary and supports retries of the current unfinished import.
 * Removes only unchanged imported drafts on request; keeps edited/published pages,
   media and shared templates. Explicit site setup can restore earlier homepage/menu
   assignments when those settings have not subsequently changed.
@@ -61,16 +62,19 @@ Animations, pseudo-elements, complex selector relationships, custom breakpoints,
 fluid layout, generated content and third-party applications may need rebuilding.
 Small HTML regions require code editing; they do not become native content controls.
 
-Custom JavaScript is retained but disabled by default. Enabling it requires an
-administrator with unfiltered HTML permission and trusted reviewed source. It may
-need selector changes. Inline handlers and external script tags are removed.
+Website interactions are enabled during import for administrators with
+unfiltered HTML permission. The single interactions checkbox states that code
+from the selected file will run on imported drafts. Source analysis never runs
+that code. Keep interactions off for a file you do not trust. Inline handlers and external script tags are removed.
 External stylesheets/scripts, npm/PHP dependencies and missing/local-PC files are
 not fetched or installed. Package required images/fonts in Little Studio first.
-Existing page CSS is converted to computed scoped styles, not copied verbatim.
+Ordinary content uses computed native styles; interactive sections retain scoped
+source styles, attributes, breakpoints and state selectors.
 
-Forms are disabled, non-submitting markup pending a real integration. Payments,
-checkout, accounts, search backends and ecommerce data are not implemented by
-importing their visual preview. Configure Elementor Pro Forms, WooCommerce or
+Local calculators and browser-only controls retain real form semantics and
+working inputs. Imported form actions and inline event handlers are removed; a
+small runtime prevents accidental form submissions. Contact submission, payments,
+checkout, accounts, search backends and ecommerce data still need real integrations. Configure Elementor Pro Forms, WooCommerce or
 another appropriate integration separately.
 
 Shared sections are saved Elementor sections, not Pro Theme Builder assignments.
@@ -98,6 +102,13 @@ file, 32 MB combined media, 2 MB source code per page, 16 MB total source code,
 per page. Hosting upload/post limits can be lower. Large websites take several
 minutes; leave the import tab open. Retry preserves completed work.
 
+Converted pages use authenticated WordPress REST uploads, compressed when
+supported, with a protected AJAX fallback if that route is unavailable. Original
+HTML/CSS/JavaScript is not put in a form argument. Page uploads are limited to 16 MB
+and the hosting upload/post limits, whichever is lower. This can avoid form-field
+false positives on some security layers; it does not disable security rules or
+guarantee acceptance by every host. Nonces, permissions and content checks remain.
+
 == Privacy and rights ==
 
 No converter service, AI API, CDN library, telemetry or API key is required.
@@ -118,6 +129,19 @@ Elementor Pro was not available for direct testing. Test on your own staging
 versions before production use. No live website is changed by building this ZIP.
 
 == Changelog ==
+
+= 0.3.0 =
+Preserve interactive controls and state CSS. Start and reinitialise page scripts
+across Elementor renders without duplicate handlers. Enable interactions with
+clear import controls. Replace repeated notices with a brief setup summary. Use
+authenticated compressed REST saves with an AJAX fallback; retain real permission
+failures and completed-page retry safety. Older imports require reimporting.
+
+= 0.2.1 =
+Transfer converted pages as validated temporary JSON uploads. Show immediate
+saved-progress feedback beside the recovery button. Include transport, byte count
+and converter-handler presence in redacted diagnostics. Keep legacy requests
+compatible and preserve nonce, permissions, content and resumable-draft checks.
 
 = 0.2.0 =
 Public GitHub releases, automatic WordPress updates and simple check/update buttons.

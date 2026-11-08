@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Little Studio to Elementor
  * Description: Import a complete Little Studio website JSON into editable Elementor drafts, with local media, fonts, links and a conversion report.
- * Version: 0.2.0
+ * Version: 0.3.0
  * Plugin URI: https://github.com/Hannesbothma/little-studio-elementor
  * Update URI: https://github.com/Hannesbothma/little-studio-elementor
  * Requires at least: 6.8
@@ -12,7 +12,7 @@
  * Text Domain: little-studio-elementor
  */
 if ( ! defined( 'ABSPATH' ) ) { exit; }
-define( 'LSE_VERSION', '0.2.0' );
+define( 'LSE_VERSION', '0.3.0' );
 define( 'LSE_FILE', __FILE__ );
 require_once __DIR__ . '/includes/importer.php';
 require_once __DIR__ . '/includes/plugin.php';
