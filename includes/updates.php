@@ -4,7 +4,9 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 final class LSE_Updates {
     const REPO = 'https://github.com/Hannesbothma/little-studio-elementor';
     const MANIFEST = 'https://github.com/Hannesbothma/little-studio-elementor/releases/latest/download/update.json';
-    const CACHE = 'lse_public_release';
+    const API = 'https://api.github.com/repos/Hannesbothma/little-studio-elementor';
+    const CACHE = 'lse_public_release_v2';
+    const MAX_PACKAGE = 16 * 1024 * 1024;
     private static function file() { return plugin_basename( LSE_FILE ); }
     private static function installed() { $data = get_file_data( LSE_FILE, [ 'Version' => 'Version' ], 'plugin' ); return $data['Version'] ?: LSE_VERSION; }
 
@@ -26,22 +28,78 @@ final class LSE_Updates {
         update_site_option( 'lse_automatic_updates_initialized', true );
     }
 
+    private static function http( $url, $binary = false, $extra = [] ) {
+        if ( str_starts_with( $url, self::API . '/' ) && get_site_transient( self::CACHE . '_api_wait' ) ) {
+            return new WP_Error( 'lse_api_wait', 'GitHub is limiting update checks. Try again later, or install the ZIP manually.' );
+        }
+        $response = wp_safe_remote_get( $url, array_merge( [ 'timeout' => 15, 'redirection' => 5, 'limit_response_size' => MB_IN_BYTES, 'headers' => [ 'Accept' => $binary ? 'application/octet-stream' : 'application/vnd.github+json', 'User-Agent' => 'Little-Studio-Elementor/' . self::installed(), 'X-GitHub-Api-Version' => '2022-11-28' ] ], $extra ) );
+        if ( ! is_wp_error( $response ) && str_starts_with( $url, self::API . '/' ) ) {
+            $code = wp_remote_retrieve_response_code( $response );
+            if ( $code === 429 || ( $code === 403 && ( (string) wp_remote_retrieve_header( $response, 'x-ratelimit-remaining' ) === '0' || wp_remote_retrieve_header( $response, 'retry-after' ) ) ) ) {
+                $wait = max( 60, (int) wp_remote_retrieve_header( $response, 'retry-after' ), (int) wp_remote_retrieve_header( $response, 'x-ratelimit-reset' ) - time() );
+                set_site_transient( self::CACHE . '_api_wait', 1, $wait );
+                return new WP_Error( 'lse_api_wait', 'GitHub is limiting update checks. Try again later, or install the ZIP manually.' );
+            }
+        }
+        return $response;
+    }
+
+    private static function manifest( $data ) {
+        if ( ! is_array( $data ) || ! is_string( $data['version'] ?? null ) || ! is_string( $data['sha256'] ?? null ) || ! preg_match( '/^\d+\.\d+\.\d+$/D', $data['version'] ) || ! preg_match( '/^[a-f0-9]{64}$/D', $data['sha256'] ) ) { return false; }
+        $expected = self::REPO . '/releases/download/v' . $data['version'] . '/little-studio-elementor-' . $data['version'] . '.zip';
+        if ( ( $data['package'] ?? '' ) !== $expected ) { return false; }
+        if ( isset( $data['bytes'] ) && ( ! is_int( $data['bytes'] ) || $data['bytes'] < 1 || $data['bytes'] > self::MAX_PACKAGE ) ) { return false; }
+        return [ 'version' => $data['version'], 'package' => $expected, 'digest' => 'sha256:' . $data['sha256'], 'bytes' => $data['bytes'] ?? 0, 'notes' => is_string( $data['notes'] ?? null ) ? $data['notes'] : '' ];
+    }
+
+    private static function asset( $data, $name, $version ) {
+        foreach ( (array) ( $data['assets'] ?? [] ) as $asset ) {
+            if ( ! is_array( $asset ) || ( $asset['name'] ?? '' ) !== $name ) { continue; }
+            $id = $asset['id'] ?? null;
+            if ( ! is_int( $id ) || $id < 1 || ( $asset['state'] ?? '' ) !== 'uploaded' || ( $asset['url'] ?? '' ) !== self::API . '/releases/assets/' . $id || ( $asset['browser_download_url'] ?? '' ) !== self::REPO . '/releases/download/v' . $version . '/' . $name ) { return false; }
+            return $asset;
+        }
+        return false;
+    }
+
+    private static function api_release() {
+        $response = self::http( self::API . '/releases/latest' );
+        if ( is_wp_error( $response ) ) { return $response; }
+        if ( wp_remote_retrieve_response_code( $response ) !== 200 ) { return new WP_Error( 'lse_api_unavailable', 'Could not reach GitHub. Try again shortly, or install the ZIP manually.' ); }
+        $data = json_decode( wp_remote_retrieve_body( $response ), true );
+        $invalid = new WP_Error( 'lse_invalid_release', 'A verified update package was not found.' );
+        if ( ! is_array( $data ) || ! is_string( $data['tag_name'] ?? null ) || ! preg_match( '/^v(\d+\.\d+\.\d+)$/D', $data['tag_name'], $match ) || ( $data['draft'] ?? true ) !== false || ( $data['prerelease'] ?? true ) !== false ) { return $invalid; }
+        $version = $match[1];
+        $zip = self::asset( $data, 'little-studio-elementor-' . $version . '.zip', $version );
+        if ( ! $zip || ! is_int( $zip['size'] ?? null ) || $zip['size'] < 1 || $zip['size'] > self::MAX_PACKAGE ) { return $invalid; }
+        $digest = $zip['digest'] ?? '';
+        if ( ! is_string( $digest ) || ! preg_match( '/^sha256:[a-f0-9]{64}$/D', $digest ) ) {
+            // Older GitHub assets can lack a digest. Use the same release's manifest.
+            $json = self::asset( $data, 'update.json', $version );
+            if ( ! $json ) { return $invalid; }
+            $response = self::http( $json['url'], true );
+            if ( is_wp_error( $response ) ) { return $response; }
+            $manifest = wp_remote_retrieve_response_code( $response ) === 200 ? self::manifest( json_decode( wp_remote_retrieve_body( $response ), true ) ) : false;
+            if ( ! $manifest || $manifest['version'] !== $version || ( $manifest['bytes'] && $manifest['bytes'] !== $zip['size'] ) ) { return $invalid; }
+            $digest = $manifest['digest'];
+        }
+        return [ 'version' => $version, 'package' => $zip['browser_download_url'], 'asset_api' => $zip['url'], 'digest' => $digest, 'bytes' => $zip['size'], 'notes' => is_string( $data['body'] ?? null ) ? substr( wp_strip_all_tags( $data['body'] ), 0, 10000 ) : '', 'transport' => 'github-api' ];
+    }
+
     private static function release( $force = false ) {
         $cached = get_site_transient( self::CACHE );
         if ( ! $force && is_array( $cached ) ) { return $cached; }
         if ( get_site_transient( self::CACHE . '_lock' ) ) { return is_array( $cached ) ? $cached : [ 'error' => 'An update check is already running. Try again shortly.' ]; }
-        set_site_transient( self::CACHE . '_lock', 1, 25 );
+        set_site_transient( self::CACHE . '_lock', 1, 60 );
         try {
-            $response = wp_safe_remote_get( $force ? add_query_arg( 'lse_check', time(), self::MANIFEST ) : self::MANIFEST, [ 'timeout' => 15, 'redirection' => 3, 'limit_response_size' => MB_IN_BYTES, 'headers' => [ 'Accept' => 'application/json', 'User-Agent' => 'Little-Studio-Elementor/' . self::installed(), 'Cache-Control' => 'no-cache' ] ] );
-            if ( is_wp_error( $response ) ) { $release = [ 'error' => 'Could not reach the update server. Please try again.' ]; }
-            elseif ( wp_remote_retrieve_response_code( $response ) !== 200 ) { $release = [ 'error' => 'Could not check the newest release (HTTP ' . wp_remote_retrieve_response_code( $response ) . '). Please try again shortly.' ]; }
-            else {
-                $data = json_decode( wp_remote_retrieve_body( $response ), true ); $release = [ 'error' => 'A ready update package was not found. Please try again shortly.' ];
-                if ( is_array( $data ) && is_string( $data['version'] ?? null ) && is_string( $data['sha256'] ?? null ) && preg_match( '/^\d+\.\d+\.\d+$/D', $data['version'] ?? '' ) && preg_match( '/^[a-f0-9]{64}$/D', $data['sha256'] ?? '' ) ) {
-                    $version = $data['version']; $expected = self::REPO . '/releases/download/v' . $version . '/little-studio-elementor-' . $version . '.zip';
-                    if ( ( $data['package'] ?? '' ) === $expected ) { $release = [ 'version' => $version, 'package' => $expected, 'digest' => 'sha256:' . $data['sha256'], 'notes' => is_string( $data['notes'] ?? null ) ? $data['notes'] : '', 'checked_at' => time() ]; }
-                }
+            $release = self::api_release();
+            if ( is_wp_error( $release ) && $release->get_error_code() !== 'lse_invalid_release' ) {
+                // Independent fallback for hosts that cannot reach the public API.
+                $response = self::http( self::MANIFEST );
+                $legacy = ! is_wp_error( $response ) && wp_remote_retrieve_response_code( $response ) === 200 ? self::manifest( json_decode( wp_remote_retrieve_body( $response ), true ) ) : false;
+                if ( $legacy ) { $release = $legacy + [ 'transport' => 'release-manifest' ]; }
             }
+            if ( is_wp_error( $release ) ) { $release = [ 'error' => $release->get_error_code() === 'lse_api_wait' ? $release->get_error_message() : ( $release->get_error_code() === 'lse_invalid_release' ? 'A verified update package was not found.' : 'Could not reach GitHub. Try again shortly, or install the ZIP manually.' ) ]; }
             $release['checked_at'] = time(); set_site_transient( self::CACHE, $release, isset( $release['error'] ) ? MINUTE_IN_SECONDS : HOUR_IN_SECONDS );
             return $release;
         } finally { delete_site_transient( self::CACHE . '_lock' ); }
@@ -74,9 +132,20 @@ final class LSE_Updates {
     public static function download( $reply, $package, $upgrader, $extra = [] ) {
         if ( $reply !== false || ( $extra['plugin'] ?? '' ) !== self::file() ) { return $reply; }
         $release = self::release(); if ( isset( $release['error'] ) || $package !== $release['package'] ) { return new WP_Error( 'lse_update_changed', 'The update changed. Look for the newest update again.' ); }
-        require_once ABSPATH . 'wp-admin/includes/file.php'; $path = download_url( $package, 120 ); if ( is_wp_error( $path ) ) { return $path; }
-        if ( ! empty( $release['digest'] ) && ! hash_equals( substr( $release['digest'], 7 ), hash_file( 'sha256', $path ) ) ) { wp_delete_file( $path ); return new WP_Error( 'lse_update_download', 'The downloaded update was incomplete. Please try again.' ); }
-        return $path;
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        $urls = [];
+        if ( is_string( $release['asset_api'] ?? null ) && preg_match( '~^' . preg_quote( self::API, '~' ) . '/releases/assets/[1-9][0-9]*$~D', $release['asset_api'] ) ) { $urls[] = $release['asset_api']; }
+        $urls[] = $package;
+        foreach ( $urls as $url ) {
+            $path = wp_tempnam( 'little-studio-elementor-' . $release['version'] . '.zip' );
+            if ( ! $path ) { return new WP_Error( 'lse_update_temp', 'WordPress could not create a temporary update file.' ); }
+            $response = self::http( $url, true, [ 'timeout' => 120, 'stream' => true, 'filename' => $path, 'limit_response_size' => self::MAX_PACKAGE ] );
+            if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) { wp_delete_file( $path ); continue; }
+            $bytes = filesize( $path );
+            if ( ! $bytes || $bytes > self::MAX_PACKAGE || ( ! empty( $release['bytes'] ) && $bytes !== $release['bytes'] ) || ! hash_equals( substr( $release['digest'], 7 ), hash_file( 'sha256', $path ) ) ) { wp_delete_file( $path ); return new WP_Error( 'lse_update_download', 'The downloaded update was incomplete. Please try again.' ); }
+            return $path;
+        }
+        return new WP_Error( 'lse_update_connection', 'Could not download the update. Try again shortly, or install the ZIP manually.' );
     }
 
     public static function source( $source, $remote_source, $upgrader, $extra = [] ) {

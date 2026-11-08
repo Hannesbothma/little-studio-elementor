@@ -19,7 +19,7 @@
    else if(!clean)message='WordPress returned an empty response. Check saved import progress before retrying.';
    else if(/<!doctype|<html|<body|<form|<br\b/i.test(clean))message='WordPress returned an HTML page instead of the import confirmation. Check saved progress and the server/security log.';
    else message='WordPress returned an invalid import confirmation. Check saved progress before retrying.';}
-  const error=Error((actionNames[details.action]||'WordPress request')+': '+message+' (HTTP '+res.status+').');error.lseDetails={...details,responseKind:data===undefined?(/<[^>]+>/.test(clean)?'html':'text'):'json'};throw error;
+  const error=Error((actionNames[details.action]||'WordPress request')+': '+message+' (HTTP '+res.status+').');error.lseMessage=message;error.lseDetails={...details,responseKind:data===undefined?(/<[^>]+>/.test(clean)?'html':'text'):'json'};throw error;
  }
  async function request(action,payload,file){
   const encoded=JSON.stringify(payload),bytes=new TextEncoder().encode(encoded).length;

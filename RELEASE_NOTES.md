@@ -1,22 +1,17 @@
-Preserve working website interactions when converting to Elementor, and improve
-converted-page saves on hosts that reject the previous request format.
+Fix update checks and installation when GitHub's standard release-download route
+returns HTTP 504.
 
-* Keep responsive navigation, calculator inputs, state styles and local enquiry
-  controls working. Reinitialise handlers after Elementor replaces their region.
-* Keep ordinary headings, copy, prices and images editable with native controls.
-* Replace repeated per-page notices with a short setup summary and one clear
-  interactions option for trusted source files.
-* Save bounded compressed JSON uploads through authenticated REST, with protected
-  AJAX fallback for unavailable routes. Keep permission and nonce checks intact.
-* Make completed-page retries safe and accept valid scroll-behavior CSS.
+* Discover published releases and download packages through GitHub's public API.
+  No token or activation setup is needed.
+* Verify package identity, size and SHA-256 before replacing plugin files.
+* Keep the validated standard manifest and download route as a fallback.
+* Cache checks, respect GitHub rate limits and display one clear error message.
+* Retain all 0.3.0 interaction and converter improvements.
 
-After updating, reload Studio to Elementor and choose the same website JSON to
-create rebuilt drafts. Existing pages are preserved. Keep interactions enabled
-for your trusted file and keep this converter active.
+If your installed updater already reports HTTP 504, use Plugins → Add New →
+Upload Plugin to replace it with the attached little-studio-elementor-0.3.1.zip
+once. The old updater cannot reliably download its own repair through that failed
+route. Pages do not need reimporting solely for this updater patch.
 
-Verified with an 11-page website in disposable WordPress and actual Elementor Core
-editor save tests, using headless browsers. Both calculators, mobile navigation,
-local enquiry interactions and simulated 403 fallback passed. The actual hosting
-403 still requires a retry; this release does not disable hosting security rules.
-Enquiry drafts do not send messages without a real receiving integration.
-Elementor Pro and arbitrary third-party scripts are not certified.
+The updater preserves imported content and existing update preferences. This
+release does not change hosting security settings or publish website pages.

@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 0.3.0
+Stable tag: 0.3.1
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -129,6 +129,11 @@ Elementor Pro was not available for direct testing. Test on your own staging
 versions before production use. No live website is changed by building this ZIP.
 
 == Changelog ==
+
+= 0.3.1 =
+Discover releases and download verified packages through GitHub's public API,
+with the release-download route retained as a fallback. Respect API rate limits,
+bound streamed downloads and show one clear error instead of stacked HTTP codes.
 
 = 0.3.0 =
 Preserve interactive controls and state CSS. Start and reinitialise page scripts

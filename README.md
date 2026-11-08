@@ -44,6 +44,12 @@ Version 0.3.0 adds compressed authenticated REST saves with an AJAX fallback and
 shorter review screen. After updating, choose the same website JSON to rebuild
 working drafts. Existing pages are preserved; old conversions are not rewritten.
 
+Version 0.3.1 repairs update discovery and downloads through GitHub's public
+release API, retaining verified standard downloads as an alternate route. If
+your older updater reports HTTP 504, replace it once through WordPress's ZIP
+uploader; its failing download route cannot reliably fetch this repair itself.
+There is no need to reimport pages solely for the updater fix.
+
 Conversion from HTML/CSS is heuristic. Exact appearance and arbitrary interactions
 are not guaranteed. Review responsive layouts, typography, cropping, navigation,
 animations and accessibility before publishing. Forms need a real submission
