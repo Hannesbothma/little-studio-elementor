@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 0.4.0
+Stable tag: 0.4.1
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -129,6 +129,13 @@ Elementor Pro was not available for direct testing. Test on your own staging
 versions before production use. No live website is changed by building this ZIP.
 
 == Changelog ==
+
+= 0.4.1 =
+* Use one simple workspace for each import; secondary page actions are under More.
+* Remove a whole import, including edited or published pages, with one confirmation.
+* Move removed pages to Trash, keep shared media, and retain sections used elsewhere.
+* Hide removed imports and return completed imports to the same page list.
+
 
 = 0.4.0 =
 * Manage all of your saved imports from one list, including older imports.

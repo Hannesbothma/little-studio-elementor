@@ -1,48 +1,67 @@
 (() => {
  'use strict';
- const A=window.LSEAdmin,$=s=>document.querySelector(s),M=window.LSEConverter;
+ const A=window.LSEAdmin,$=s=>document.querySelector(s);
  if(!A||!$('#lse-managed'))return;
  let imports=[],next=null,current=null,target=null,loading=false;
  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const message=(text,error=false)=>{const el=$('#lse-manage-message');el.textContent=text;el.classList.toggle('is-error',error)};
+ function view(mode){
+  for(const [id,show] of [['lse-choose','choose'],['lse-review','review'],['lse-progress','progress'],['lse-managed-pages','manage'],['lse-import-actions','manage'],['lse-import-details','manage']])$('#'+id).hidden=mode!==show;
+  $('#lse-managed').dataset.mode=mode;
+ }
  async function list(more=false){
-  const data=await A.request('imports',{offset:more?next||0:0});
-  imports=more?imports.concat(data.imports):data.imports;next=data.next;
-  const selected=current?.id||$('#lse-import-list').value;
-  $('#lse-import-list').innerHTML='<option value="">Choose an imported website</option>'+imports.map(j=>'<option value="'+esc(j.id)+'">'+esc(j.title)+' · '+j.pages+' pages</option>').join('');
-  $('#lse-import-list').value=selected;$('#lse-more-imports').hidden=next===null;
+  const data=await A.request('imports',{offset:more?next||0:0});imports=more?imports.concat(data.imports):data.imports;next=data.next;
+  $('#lse-import-list').innerHTML='<option value="">New import</option>'+imports.map(j=>'<option value="'+esc(j.id)+'">'+esc(j.title)+'</option>').join('');
+  $('#lse-import-list').value=current?.id||'';$('#lse-more-imports').hidden=next===null;
  }
  function render(){
-  $('#lse-refresh-import').disabled=!current||['importing','finishing'].includes(current.state);
-  if(!current){$('#lse-managed-pages').replaceChildren();return}
-  $('#lse-managed-pages').innerHTML='<div class="lse-table-scroll"><table class="widefat striped lse-managed-table"><thead><tr><th>Page title and address</th><th>State</th><th>Actions</th></tr></thead><tbody>'+current.pages.map(p=>'<tr data-managed-key="'+esc(p.key)+'"><td><label>Title<input data-field="title" value="'+esc(p.current_title)+'" aria-label="Page title"></label><label>Address<input data-field="slug" value="'+esc(p.slug)+'" aria-label="Page address"></label></td><td>'+esc(p.post_status)+(p.changed?'<br><small>Edited since import</small>':'')+'</td><td><div class="lse-page-actions">'+(p.can_edit&&p.post_status!=='trash'?'<a class="button" href="'+esc(p.edit_url)+'">Edit with Elementor</a><a class="button" target="_blank" rel="noopener" href="'+esc(p.preview_url)+'">Preview</a><button type="button" class="button" data-operation="metadata">Save details</button>':'')+(p.can_delete?'<button type="button" class="button" data-operation="'+(p.post_status==='trash'?'untrash':'trash')+'">'+(p.post_status==='trash'?'Restore draft':'Move to Trash')+'</button>':'')+(p.can_restore_refresh?'<button type="button" class="button" data-operation="restore_refresh">Restore before last refresh</button>':'')+'</div></td></tr>').join('')+'</tbody></table></div>';
+  A.setJob(current);
+  if(!current){view('choose');$('#lse-managed-pages').replaceChildren();return}
+  view('manage');$('#lse-import-list').value=current.id;
+  $('#lse-refresh-import').disabled=['importing','finishing'].includes(current.state);
+  $('#lse-managed-pages').innerHTML='<div class="lse-table-scroll"><table class="widefat striped lse-managed-table"><thead><tr><th>Page</th><th>Status</th><th></th></tr></thead><tbody>'+current.pages.map(p=>'<tr data-managed-key="'+esc(p.key)+'"><td><strong>'+esc(p.current_title)+'</strong><small>'+esc(p.slug)+'</small></td><td>'+esc(p.post_status==='publish'?'Published':p.post_status==='trash'?'In Trash':p.post_status)+'</td><td><div class="lse-page-actions">'+(p.can_edit&&p.post_status!=='trash'?'<a class="button" href="'+esc(p.edit_url)+'">Edit in Elementor</a><a target="_blank" rel="noopener" href="'+esc(p.preview_url)+'">Preview</a>':'')+(p.can_edit?'<details class="lse-page-more"><summary>More</summary><div class="lse-page-menu">'+(p.post_status!=='trash'?'<label>Title<input data-field="title" value="'+esc(p.current_title)+'"></label><label>Address<input data-field="slug" value="'+esc(p.slug)+'"></label><button type="button" class="button" data-operation="metadata">Save details</button>':'')+(p.can_delete?'<button type="button" class="button" data-operation="'+(p.post_status==='trash'?'untrash':'trash')+'">'+(p.post_status==='trash'?'Restore draft':'Move to Trash')+'</button>':'')+(p.can_restore_refresh?'<button type="button" class="button" data-operation="restore_refresh">Restore before last update</button>':'')+'</div></details>':'')+'</div></td></tr>').join('')+'</tbody></table></div>';
+  const templates=Object.values(current.templates||{});
+  $('#lse-report').innerHTML='<p>'+current.pages.length+' pages · '+current.assets.length+' media files</p>'+templates.map(t=>'<p><a href="'+esc(t.edit_url)+'">Edit shared '+esc(t.kind)+'</a></p>').join('')+Object.entries(current.reports||{}).map(([key,r])=>'<p><strong>'+esc(current.pages.find(p=>p.key===key)?.current_title||key)+'</strong>: '+r.native+' native elements, '+r.fallbacks+' HTML regions.</p>'+(r.warnings.length?'<ul>'+r.warnings.map(w=>'<li>'+esc(w)+'</li>').join('')+'</ul>':'')).join('');
+  $('#lse-restore').hidden=!current.activated;$('#lse-restoration').textContent=(current.restoration||[]).join(' ');
  }
  async function select(id){
   if(A.busy||loading)return;loading=true;
-  try{current=id?await A.request('status',{job:id}):null;render();message(current?'Loaded existing pages. Editing opens their current Elementor content.':'Choose an imported website.');}
+  try{clearTarget();current=id?await A.request('status',{job:id}):null;render();message('');}
   catch(e){message(e.message,true)}finally{loading=false}
  }
+ function clearTarget(){target=null;$('#lse-layout').disabled=false;delete $('#lse-layout').dataset.lseDisabled;}
+ async function remove(imported=current){
+  if(!imported||A.busy||loading)return;loading=true;
+  try{
+   const latest=await A.request('status',{job:imported.id}),published=latest.pages.filter(p=>p.post_status==='publish').length;
+   if(!confirm('Remove “'+latest.title+'” and all '+latest.pages.length+' pages'+(published?' ('+published+' published)':'')+' from this site? Pages go to WordPress Trash. Media files are kept.'))return;
+   const result=await A.request('remove_import',{job:latest.id,expected_stamps:Object.fromEntries(latest.pages.map(p=>[p.key,p.current_stamp])),consent:true});
+   clearTarget();current=result.state==='removed'?null:result;render();await list();
+   message(result.state==='removed'?'Import removed. Pages are in WordPress Trash; media files were kept.':'Some pages could not be removed. Review the import and try again.',result.state!=='removed');
+  }catch(e){message(e.message,true)}finally{loading=false}
+ }
  $('#lse-import-list').addEventListener('change',e=>select(e.target.value));
- $('#lse-reload-imports').onclick=async()=>{if(A.busy||loading)return;try{await list();if(current)await select(current.id);else message('Imported websites reloaded.')}catch(e){message(e.message,true)}};
+ $('#lse-new-import').onclick=()=>{if(A.busy||loading)return;current=null;clearTarget();$('#lse-import-list').value='';render();$('#lse-reset').click();$('#lse-file').click();};
  $('#lse-more-imports').onclick=()=>list(true).catch(e=>message(e.message,true));
+ $('#lse-remove-import').onclick=()=>remove();
  $('#lse-managed-pages').onclick=async event=>{
   const button=event.target.closest('button[data-operation]');if(!button||A.busy||loading||!current)return;
   const row=button.closest('[data-managed-key]'),page=current.pages.find(p=>p.key===row.dataset.managedKey),operation=button.dataset.operation;
-  if(operation==='trash'&&!confirm('Move “'+page.current_title+'” ('+page.post_status+') to WordPress Trash? This also removes a published page from the live site. Media files are kept.'))return;
-  if(operation==='restore_refresh'&&!confirm('Restore “'+page.current_title+'” to its content before the last refresh? Its publication status stays unchanged.'))return;
+  if(operation==='trash'&&!confirm('Move “'+page.current_title+'” to WordPress Trash? A published page will disappear from the site.'))return;
+  if(operation==='restore_refresh'&&!confirm('Restore “'+page.current_title+'” to its content before the last update?'))return;
   loading=true;button.disabled=true;
-  try{current=await A.request(operation==='restore_refresh'?'restore_refresh':'manage_page',{job:current.id,key:page.key,operation,expected_stamp:page.current_stamp,title:row.querySelector('[data-field="title"]').value,slug:row.querySelector('[data-field="slug"]').value,consent:true});render();message(operation==='metadata'?'Page details saved.':operation==='trash'?'Page moved to Trash.':operation==='restore_refresh'?'Content before the last refresh restored.':'Page restored. Review it before publishing.');}
+  try{current=await A.request(operation==='restore_refresh'?'restore_refresh':'manage_page',{job:current.id,key:page.key,operation,expected_stamp:page.current_stamp,title:row.querySelector('[data-field="title"]')?.value||'',slug:row.querySelector('[data-field="slug"]')?.value||'',consent:true});render();message(operation==='metadata'?'Saved.':operation==='trash'?'Page moved to Trash.':'Page restored.');}
   catch(e){message(e.message,true)}finally{loading=false;button.disabled=false}
  };
  $('#lse-refresh-import').onclick=async()=>{
   if(!current||A.busy||loading)return;
-  try{target=await A.request('status',{job:current.id});$('#lse-reset').click();$('#lse-file').click();message('Choose the updated JSON or HTML for '+target.title+'. Existing page IDs and addresses will be kept.');}
+  try{$('#lse-reset').click();target=await A.request('status',{job:current.id});$('#lse-file').click();message('');}
   catch(e){message(e.message,true)}
  };
  function review(project){
   const context=$('#lse-refresh-context'),overwrite=$('#lse-overwrite-option');
   context.hidden=!target;overwrite.hidden=!target;$('#lse-overwrite').checked=false;
-  $('#lse-import').textContent=target?'Refresh selected existing pages':'Import website as drafts';$('#lse-import-scope').textContent=target?'Selected existing pages are replaced after your confirmation.':'New imports add drafts. Nothing is published.';
+  $('#lse-import').textContent=target?'Update selected pages':'Import';$('#lse-import-scope').textContent=target?'Selected existing pages are replaced after your confirmation.':'New imports add drafts. Nothing is published.';
   if(!target)return;
   context.textContent='Refreshing '+target.title+'. Existing page IDs, addresses and publication status are kept. Pages absent from this file stay unchanged.';
   if(project.input_kind==='html'){
@@ -61,8 +80,10 @@
   }
   $('#lse-pages').dispatchEvent(new Event('change'));
  }
- window.addEventListener('lse:file-selected',()=>review(A.project));
- window.addEventListener('lse:import-saved',async e=>{current=e.detail;target=null;$('#lse-layout').disabled=false;delete $('#lse-layout').dataset.lseDisabled;render();try{await list()}catch(e){message(e.message,true)}});
- window.LSEManage={get target(){return target},review,clear(){target=null;$('#lse-layout').disabled=false;delete $('#lse-layout').dataset.lseDisabled},async reload(){await list();if(current)await select(current.id)}};
+ window.addEventListener('lse:file-selected',()=>{view('review');review(A.project)});
+ window.addEventListener('lse:import-started',()=>{view('progress');message('')});
+ window.addEventListener('lse:choose-reset',()=>{clearTarget();render();message('')});
+ window.addEventListener('lse:import-saved',async e=>{current=e.detail;clearTarget();render();message('');try{await list()}catch(e){message(e.message,true)}});
+ window.LSEManage={get target(){return target},get current(){return current},review,remove,clear:clearTarget,async reload(){await list();if(current)await select(current.id)}};
  list().catch(e=>message(e.message,true));
 })();

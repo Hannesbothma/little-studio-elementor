@@ -10,13 +10,15 @@ Imports do not replace existing page content or publish the new drafts.
 
 ## Manage imported websites
 
-The **Imported websites** panel lists your saved imports, including imports from older plugin versions. Choose one to open its pages in Elementor, preview them, edit titles/addresses, move pages to Trash, or restore them as drafts.
+Choose an import in the single workspace. Its page list is the only editing area: **Edit in Elementor** and **Preview** are visible; title/address editing, individual Trash/restore and pre-update recovery sit under **More**. A completed import returns to this same list, without a second results panel. Import options, reports, site setup and plugin updates stay collapsed until needed.
 
-Use **Refresh from JSON or HTML** to update selected existing pages. Their WordPress IDs, addresses and publication status stay the same. Unselected pages are kept. Edited and published pages are initially deselected; replacing them requires the explicit checkbox and confirmation. A page changed after review is rejected. New page keys must be imported separately. Deleted pages must be restored before refreshing them.
+Use **Update from file** to update selected existing pages. Their WordPress IDs, addresses and publication status stay the same. Unselected pages are kept. Edited and published pages are initially deselected; replacing them requires the explicit checkbox and confirmation. A page changed after review is rejected. New page keys must be imported separately. Deleted pages must be restored before refreshing them.
 
 A single HTML file can be imported as a new page or targeted at a selected existing page. Include inline CSS/JavaScript and embedded assets; external dependencies are not fetched during analysis. This does not accept arbitrary file types.
 
-A recoverable copy is kept before refreshing each page. **Restore before last refresh** is available until the page is edited again. It restores the previous page data and supporting metadata while keeping the current publication status. Existing WordPress revisions are also retained. The bulk remove-unedited-drafts action cannot delete pages as an undo of a refresh.
+**Remove import** moves every page in the selected import to WordPress Trash, including edited and published pages, after one confirmation. It removes the import from the list, removes its own menu, and moves its own unused shared sections to Trash. Media files and shared sections referenced elsewhere are kept. A changed page stops removal before any pages are touched. Restore pages later through WordPress Trash.
+
+A recoverable copy is kept before refreshing each page. **More → Restore before last update** is available until the page is edited again. It restores the previous page data and supporting metadata while keeping the current publication status. Existing WordPress revisions are also retained. The bulk remove-unedited-drafts action cannot delete pages as an undo of a refresh.
 
 Older imports use an earlier change fingerprint. The first refresh may conservatively require replacement consent, even if you have not edited them. Subsequent refreshes use the current fingerprint.
 

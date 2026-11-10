@@ -2,6 +2,54 @@
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 trait LSE_Management {
+    public static function remove_import( $input ) {
+        $job = self::load( $input['job'] ?? '' ); $lock = self::lock( $job['id'] );
+        try {
+            if ( empty( $input['consent'] ) ) { throw new RuntimeException( 'Confirm removing this whole import first.' ); }
+            if ( ! EMPTY_TRASH_DAYS ) { throw new RuntimeException( 'WordPress Trash is disabled. No imported content was removed.' ); }
+            // Check every page before changing anything, including edited or published pages.
+            foreach ( $job['pages'] as $page ) {
+                if ( ! get_post( $page['id'] ) ) { continue; }
+                [ , , $post ] = self::managed_page( $job, $page['key'] );
+                self::expected_page( $post, $input['expected_stamps'][$page['key']] ?? '' );
+                if ( ! current_user_can( 'delete_post', $post->ID ) ) { throw new RuntimeException( 'Your account cannot remove every page in this import. Nothing was removed.' ); }
+            }
+            if ( ! empty( $job['activated'] ) ) { self::restore_setup( $job ); }
+            $removed = []; $kept = [];
+            foreach ( $job['pages'] as $page ) {
+                if ( ! get_post( $page['id'] ) || get_post_status( $page['id'] ) === 'trash' ) { continue; }
+                if ( wp_trash_post( $page['id'] ) ) { $removed[] = $page['id']; } else { $kept[] = $page['id']; }
+            }
+            $retained_templates = [];
+            if ( ! $kept ) {
+                foreach ( $job['templates'] ?? [] as $template ) {
+                    $id = (int) $template['id'];
+                    if ( get_post_meta( $id, '_lse_job', true ) !== $job['id'] || self::template_used_elsewhere( $id, array_column( $job['pages'], 'id' ) ) || ! current_user_can( 'delete_post', $id ) ) { $retained_templates[] = $id; continue; }
+                    if ( get_post_status( $id ) !== 'trash' && get_post( $id ) && ! wp_trash_post( $id ) ) { $retained_templates[] = $id; }
+                }
+                if ( ! empty( $job['menu'] ) ) { $result = wp_delete_nav_menu( $job['menu'] ); if ( ! is_wp_error( $result ) && $result ) { $job['menu'] = 0; } }
+            }
+            $job['state'] = $kept ? 'partly-removed' : 'removed';
+            $job['cleanup'] = [ 'removed' => $removed, 'kept' => $kept, 'templates_kept' => $retained_templates, 'media' => 'Media files are retained because they may be used elsewhere.' ];
+            self::store( $job );
+            if ( ! $kept && get_user_meta( get_current_user_id(), '_lse_last_job', true ) === $job['id'] ) { delete_user_meta( get_current_user_id(), '_lse_last_job' ); }
+            return self::status( [ 'job' => $job['id'] ] );
+        } finally { delete_option( $lock ); }
+    }
+    private static function template_used_elsewhere( $template, $imported_pages ) {
+        global $wpdb;
+        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT post_id, meta_value FROM {$wpdb->postmeta} WHERE meta_key = '_elementor_data' AND meta_value LIKE %s", '%' . $wpdb->esc_like( (string) $template ) . '%' ) );
+        $contains = static function( $nodes ) use ( &$contains, $template ) { foreach ( is_array( $nodes ) ? $nodes : [] as $node ) { if ( (int) ( $node['settings']['template_id'] ?? 0 ) === $template || $contains( $node['elements'] ?? [] ) ) { return true; } } return false; };
+        foreach ( $rows as $row ) { if ( ! in_array( (int) $row->post_id, $imported_pages, true ) && ! in_array( get_post_status( $row->post_id ), [ false, 'trash' ], true ) && $contains( json_decode( $row->meta_value, true ) ) ) { return true; } }
+        return false;
+    }
+    private static function restore_setup( &$job ) {
+        if ( empty( $job['previous_setup'] ) || empty( $job['applied_setup'] ) ) { return; }
+        $old = $job['previous_setup']; $applied = $job['applied_setup']; $kept = [];
+        if ( (string) get_option( 'page_on_front' ) === (string) $applied['page_on_front'] && get_option( 'show_on_front' ) === $applied['show_on_front'] ) { update_option( 'page_on_front', $old['page_on_front'] ); update_option( 'show_on_front', $old['show_on_front'] ); } else { $kept[] = 'Homepage settings changed since import and were kept.'; }
+        if ( get_stylesheet() === $old['theme'] && get_theme_mod( 'nav_menu_locations', [] ) === $applied['locations'] ) { set_theme_mod( 'nav_menu_locations', $old['locations'] ); } else { $kept[] = 'Theme or menu assignments changed since import and were kept.'; }
+        $job['activated'] = false; $job['restoration'] = $kept ?: [ 'Previous homepage and menu assignments restored.' ];
+    }
     private static function managed_page( $job, $key ) {
         $index = array_search( $key, array_column( $job['pages'], 'key' ), true );
         if ( $index === false ) { throw new RuntimeException( 'This page does not belong to the selected import.' ); }
@@ -57,7 +105,7 @@ trait LSE_Management {
         $rows = [];
         foreach ( array_slice( $names, 0, $limit ) as $name ) {
             $job = get_option( $name );
-            if ( ! is_array( $job ) || (int) ( $job['owner'] ?? 0 ) !== get_current_user_id() ) { continue; }
+            if ( ! is_array( $job ) || (int) ( $job['owner'] ?? 0 ) !== get_current_user_id() || ( $job['state'] ?? '' ) === 'removed' ) { continue; }
             $rows[] = [ 'id' => $job['id'], 'title' => $job['title'], 'state' => $job['state'], 'created' => $job['created'], 'pages' => count( $job['pages'] ), 'site_id' => $job['site_id'] ?? '' ];
         }
         return [ 'imports' => $rows, 'next' => count( $names ) > $limit ? $offset + $limit : null ];

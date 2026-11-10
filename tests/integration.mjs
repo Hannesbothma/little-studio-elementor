@@ -66,7 +66,7 @@ try{
  await assert.rejects(()=>rpc('manage_page',{job:original.id,key:'foreign-page',operation:'trash',expected_stamp:restored.pages[0].current_stamp,consent:true}),/does not belong/);
  assert((await rpc('test',{operation:'foreign-owner',job:original.id})).denied);
  // Exercise HTML file selection and conversion through the same public import UI.
- await page.locator('#lse-another').click();await choose('<!doctype html><title>HTML source</title><style>h1{color:rgb(20,90,110)}</style><main><h1>Plain HTML import</h1></main>','standalone.html');
+ await page.locator('#lse-new-import').click();await choose('<!doctype html><title>HTML source</title><style>h1{color:rgb(20,90,110)}</style><main><h1>Plain HTML import</h1></main>','standalone.html');
  const html=await run();assert.match(JSON.stringify((await rpc('test',{id:html.pages[0].id})).elements),/Plain HTML import/);
  // The users' real exports are read, validated, and representative pages converted without changing the source files.
  const paths=[
@@ -75,15 +75,35 @@ try{
  ];
  const actual=[];
  for(const path of paths){
-  if(process.env.CI)continue;
+  if(process.env.CI||process.env.LSE_SKIP_SSD)continue;
   const text=await readFile(path,'utf8');
   const review=await page.evaluate(async text=>{const p=window.LSEConverter.validate(JSON.parse(text));const selected=[p.pages[0],p.pages.find(x=>/product/.test(x.key))||p.pages[1]];const outputs=[];for(const source of selected){const out=await window.LSEConverter.convert(p,source,{map:{},layout:'elementor_canvas',preserveCSS:true});outputs.push({key:source.key,elements:out.counts.native,fallbacks:out.fallbacks,warnings:out.warnings})}return{title:p.title,pages:p.pages.length,assets:p.assets.length,converted:outputs}},text);
   assert(review.converted.every(p=>p.elements>10),'Ordinary website content was swallowed by an HTML interaction region');actual.push(review);
  }
- await page.locator('#lse-reload-imports').click();await page.screenshot({path:fileURLToPath(new URL('management.png',dir)),fullPage:true});
+ await page.evaluate(()=>window.LSEManage.reload());await page.screenshot({path:fileURLToPath(new URL('management.png',dir)),fullPage:true});
+ assert.equal(await page.locator('#lse-result').count(),0,'A duplicate completion panel returned');
+ assert.equal(await page.locator('.lse-card').count(),1,'The interface has multiple import workspaces');
+ assert.equal(await page.locator('[data-operation="metadata"]:visible').count(),0,'Secondary page actions should start collapsed');
+ await page.locator('#lse-import-list').selectOption(original.id);
+ await page.waitForFunction(id=>window.LSEManage.current?.id===id,original.id);
+ await rpc('test',{operation:'publish',id});await rpc('test',{operation:'publish',id:ids[1]});
+ await rpc('activate',{job:original.id,consent:true});
+ const removal=await rpc('status',{job:original.id});
+ await assert.rejects(()=>rpc('remove_import',{job:original.id,consent:false,expected_stamps:Object.fromEntries(removal.pages.map(p=>[p.key,p.current_stamp]))}),/Confirm removing/);
+ await rpc('test',{operation:'edit',id});
+ await assert.rejects(()=>rpc('remove_import',{job:original.id,consent:true,expected_stamps:Object.fromEntries(removal.pages.map(p=>[p.key,p.current_stamp]))}),/changed after/);
+ assert.equal((await rpc('test',{id})).post.status,'publish','Stale bulk removal partly deleted the import');
+ await page.locator('#lse-remove-import').click();
+ await page.waitForFunction(id=>!Array.from(document.querySelector('#lse-import-list').options).some(o=>o.value===id),original.id);
+ for(const postId of ids)assert.equal((await rpc('test',{id:postId})).post.status,'trash','Whole-import removal left a page behind');
+ assert.equal((await rpc('test',{id:html.pages[0].id})).post.status,'draft','A different import was deleted');
+ assert.equal((await rpc('test',{id:original.assets[0].id})).post.status,'inherit','Shared media was deleted');
+ const removed=await rpc('status',{job:original.id});assert.equal(removed.state,'removed');assert.equal(removed.menu,0);
+ assert.equal(removed.activated,false,'Imported homepage setup was left active');
+ await page.screenshot({path:fileURLToPath(new URL('single-workspace.png',dir)),fullPage:true});
  assert.deepEqual(failures,[],'Unexpected browser errors');
  const updater=process.env.LSE_TEST_UPDATER?await rpc('test',{operation:'updater',id}):null;
- const result={ok:true,versions,initialImport:true,refreshSameIds:true,sourceJSBackslashes:true,restoreRefresh:true,nativeElementorEditProtected:true,publishedRefreshConsent:true,concurrentEditProtected:true,titleAndSlug:true,trashRestore:true,foreignPageAndAccountDenied:true,htmlImport:true,actualWebsiteConversions:actual,updater};
+ const result={ok:true,versions,initialImport:true,refreshSameIds:true,sourceJSBackslashes:true,restoreRefresh:true,nativeElementorEditProtected:true,publishedRefreshConsent:true,concurrentEditProtected:true,titleAndSlug:true,trashRestore:true,foreignPageAndAccountDenied:true,htmlImport:true,singleWorkspace:true,wholeImportRemoval:true,staleBulkRemovalProtected:true,unrelatedImportRetained:true,actualWebsiteConversions:actual,updater};
  await writeFile(new URL('integration.json',dir),JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result));
 }catch(error){await writeFile(new URL('integration-error.json',dir),JSON.stringify({ok:false,error:error.message,stack:error.stack,browserErrors:failures},null,2));await page.screenshot({path:fileURLToPath(new URL('failure.png',dir)),fullPage:true}).catch(()=>{});throw error}
 finally{await browser.close()}

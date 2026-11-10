@@ -209,10 +209,7 @@ final class LSE_Importer {
         $job = self::load( $input['job'] ?? '' ); $lock = self::lock( $job['id'] );
         try {
             if ( empty( $job['activated'] ) || empty( $job['previous_setup'] ) || empty( $job['applied_setup'] ) ) { throw new RuntimeException( 'There is no applied site setup to restore.' ); }
-            $old = $job['previous_setup']; $applied = $job['applied_setup']; $kept = [];
-            if ( (string) get_option( 'page_on_front' ) === (string) $applied['page_on_front'] && get_option( 'show_on_front' ) === $applied['show_on_front'] ) { update_option( 'page_on_front', $old['page_on_front'] ); update_option( 'show_on_front', $old['show_on_front'] ); } else { $kept[] = 'Homepage settings changed since import and were kept.'; }
-            if ( get_stylesheet() === $old['theme'] && get_theme_mod( 'nav_menu_locations', [] ) === $applied['locations'] ) { set_theme_mod( 'nav_menu_locations', $old['locations'] ); } else { $kept[] = 'Theme or menu assignments changed since import and were kept.'; }
-            $job['activated'] = false; $job['restoration'] = $kept ?: [ 'Previous homepage and menu assignments restored. Published pages are unchanged.' ]; self::store( $job ); return self::status( $input );
+            self::restore_setup( $job ); self::store( $job ); return self::status( $input );
         } finally { delete_option( $lock ); }
     }
 }
