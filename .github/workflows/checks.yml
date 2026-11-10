@@ -1,0 +1,17 @@
+name: Check plugin changes
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/run.mjs

@@ -2,30 +2,48 @@ name: Publish plugin release
 on:
   push:
     tags: ['v*']
+    branches: [main]
+    paths: ['little-studio-elementor.php']
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag, for example v0.2.1
+        description: Existing version tag, for example v0.4.0
         required: true
         type: string
 permissions:
   contents: write
 concurrency:
-  group: plugin-release-${{ inputs.tag || github.ref_name }}
+  group: plugin-release
   cancel-in-progress: false
 jobs:
   release:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
-      - name: Build WordPress package
-        run: node scripts/package.mjs . dist
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Resolve plugin version
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          VERSION=$(node -e "const fs=require('fs'); const s=fs.readFileSync('little-studio-elementor.php','utf8'); console.log(s.match(/Version:\s*(\d+\.\d+\.\d+)/)[1]);")
+          TAG="v$VERSION"
+          if [ -n "$REQUESTED_TAG" ] && [ "$REQUESTED_TAG" != "$TAG" ]; then exit 1; fi
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "$TAG" ]; then exit 1; fi
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "PLUGIN_VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Install test tools
+        run: |
+          npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0
+          npx playwright install --with-deps chromium
+      - name: Check packaged imports, management, and native updates
+        run: node tests/run.mjs
       - name: Attach and publish release
         shell: bash
         run: |
@@ -34,8 +52,19 @@ jobs:
               echo "This release is already published; its assets are unchanged."
               exit 0
             fi
+          fi
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > /tmp/lse-tag.json; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$GITHUB_SHA"
           else
+            TAG_SHA=$(node -p "JSON.parse(require('fs').readFileSync('/tmp/lse-tag.json')).object.sha")
+            CURRENT_SHA=$(git rev-parse HEAD)
+            if [ "$TAG_SHA" != "$CURRENT_SHA" ]; then
+              echo "The version tag points to different code. Refusing to publish."
+              exit 1
+            fi
+          fi
+          if ! gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --draft --verify-tag --title "Little Studio to Elementor $RELEASE_TAG" --notes-file RELEASE_NOTES.md
           fi
-          gh release upload "$RELEASE_TAG" dist/little-studio-elementor-*.zip dist/update.json --clobber
+          gh release upload "$RELEASE_TAG" "dist/little-studio-elementor-$PLUGIN_VERSION.zip" dist/update.json --clobber
           gh release edit "$RELEASE_TAG" --draft=false --latest

@@ -1,17 +1,10 @@
-Fix update checks and installation when GitHub's standard release-download route
-returns HTTP 504.
+Manage imported websites and refresh existing Elementor pages.
 
-* Discover published releases and download packages through GitHub's public API.
-  No token or activation setup is needed.
-* Verify package identity, size and SHA-256 before replacing plugin files.
-* Keep the validated standard manifest and download route as a fallback.
-* Cache checks, respect GitHub rate limits and display one clear error message.
-* Retain all 0.3.0 interaction and converter improvements.
+* Browse saved imports, edit page titles and addresses, open Elementor, and preview pages.
+* Refresh selected existing pages from native Little Studio JSON or self-contained HTML. Page IDs, addresses and publication status stay the same.
+* Edited or published content needs explicit replacement consent; concurrent changes and shared-section edits are checked.
+* Move individual pages to WordPress Trash and restore drafts. Media files are retained.
+* Restore page content from before its last refresh when no newer page edits would be overwritten.
+* Keep the existing verified GitHub updater and automatic-update preferences.
 
-If your installed updater already reports HTTP 504, use Plugins → Add New →
-Upload Plugin to replace it with the attached little-studio-elementor-0.3.1.zip
-once. The old updater cannot reliably download its own repair through that failed
-route. Pages do not need reimporting solely for this updater patch.
-
-The updater preserves imported content and existing update preferences. This
-release does not change hosting security settings or publish website pages.
+New page keys must be imported separately; pages absent from an updated file are kept. External HTML dependencies and complex interactive regions still need review. Elementor Pro has not been certified. No live WordPress site was used for testing.

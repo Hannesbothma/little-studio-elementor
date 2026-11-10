@@ -67,14 +67,14 @@
    for(const n of d.querySelectorAll('form'))islands.add(n.closest('.fr-calculator,[data-lse-interaction]')||n);
    for(const n of d.querySelectorAll('[data-fr-brief]'))islands.add(n.closest('.fr-form')||n.parentElement);
    for(const n of d.querySelectorAll('dialog,[data-lse-interaction]'))islands.add(n);
-   for(const n of d.querySelectorAll('button[aria-controls]')){const target=d.getElementById(n.getAttribute('aria-controls'));if(target){let parent=n.parentElement;while(parent&&parent!==d.body&&!parent.contains(target))parent=parent.parentElement;if(parent&&parent!==d.body)islands.add(parent);}}
+   for(const n of d.querySelectorAll('button[aria-controls]')){const target=d.getElementById(n.getAttribute('aria-controls'));if(target){let parent=n.parentElement;while(parent&&parent!==d.body&&!parent.contains(target))parent=parent.parentElement;if(parent&&parent!==d.body&&!parent.matches('main,[role=main]')&&!parent.querySelector('main,[role=main],header,footer'))islands.add(parent);}}
    for(const n of [...islands])if([...islands].some(parent=>parent!==n&&parent.contains(n)))islands.delete(n);
    function create(node,depth=0){if(depth>16)throw Error('This page is nested too deeply. Simplify the source before conversion.');if(node.nodeType===3){const text=node.textContent.trim();if(!text)return null;const wrap=d.createElement('p');wrap.textContent=text;node.replaceWith(wrap);node=wrap;}
     if(node.nodeType!==1)return null;const tag=node.tagName.toLowerCase();if(['script','style','link','meta','base','template','noscript'].includes(tag))return null;if(++serial>4000)throw Error('This page exceeds 4,000 editable elements.');
-    const id=crypto.getRandomValues(new Uint32Array(1))[0].toString(16).padStart(8,'0'),settings={_css_classes:node.className?.baseVal??node.className??''};if(node.id)settings._element_id=node.id;
+    const id=crypto.getRandomValues(new Uint32Array(1))[0].toString(16).padStart(8,'0'),settings={_css_classes:node.className?.baseVal??node.className??''};if(node.id)settings._element_id=node.id;settings.lse_attributes=Object.fromEntries([...node.attributes].filter(a=>/^(data-[a-z0-9_-]+|aria-[a-z0-9_-]+|role)$/i.test(a.name)&&a.value.length<=4096).map(a=>[a.name,a.value]));
     let widget='',children=[];
     const interactive=islands.has(node);
-    if(interactive){widget='html';settings.html='<div data-lse-interactive="">'+node.outerHTML+'</div>';settings.lse_interactive='yes';settings._title=tag==='header'?'Website navigation':node.querySelector('[data-fr-cost]')||node.matches('[data-fr-cost]')?'Website calculator':'Website interaction';}
+    if(interactive){fallbacks++;widget='html';settings.html='<div data-lse-interactive="">'+node.outerHTML+'</div>';settings.lse_interactive='yes';settings._title=tag==='header'?'Website navigation':node.querySelector('[data-fr-cost]')||node.matches('[data-fr-cost]')?'Website calculator':'Website interaction';}
     else if(/^h[1-6]$/.test(tag)){widget='heading';settings.title=node.innerHTML;settings.header_size=tag;settings.size='default';}
     else if(['p','ul','ol','blockquote','pre','figcaption','label','small','strong','em'].includes(tag)||tag==='span'&&!node.querySelector('div,p,h1,h2,img')){widget='text-editor';settings.editor=node.outerHTML;}
     else if(tag==='img'){widget='image';settings.image={url:rewrite(node.getAttribute('src')||'',options.map||{}),id:0};settings.image_size='full';settings.caption_source='none';settings.lse_image_alt=node.getAttribute('alt')||'';settings.lse_alt_override='yes';}
@@ -108,5 +108,16 @@
    return{elements:restore(tree),css:restoreRefs(css),warnings:[...new Set(warnings)],fallbacks,regions,source:{html:page.html,css:page.css,js:page.js+'\n'+inlineScripts},seo:page.seo||{},counts:{native:elements.length-fallbacks,fallbacks}};
   }finally{clearTimeout(timer);frame.remove();}
  }
- root.LSEConverter={validate,rewrite,inspect,convert,resolveLinks};
+ function fromHTML(text,name='page.html'){
+  if(typeof text!=='string'||!text.trim())throw Error('The HTML page is empty.');
+  const doc=new DOMParser().parseFromString(text,'text/html');
+  const title=doc.title.trim()||name.replace(/\.html?$/i,'');
+  const css=[...doc.querySelectorAll('style')].map(n=>n.textContent).join('\n');
+  const js=[...doc.querySelectorAll('script:not([src])')].map(n=>n.textContent).join('\n');
+  for(const node of doc.querySelectorAll('style,script:not([src])'))node.remove();
+  const slug=name.replace(/\.html?$/i,'').toLowerCase().replace(/[^a-z0-9-]+/g,'-').slice(0,80)||'page';
+  const project=validate({format:'little-studio-website',version:1,site_id:'html-'+slug,title,site_css:'',pages:[{key:slug,title,slug,url:'https://little-studio.invalid/'+slug+'/',parent_key:'',html:doc.documentElement.outerHTML,css,js}],assets:[],fonts:[],site:{home_key:slug,navigation:[]}});
+  project.input_kind='html';return project;
+ }
+ root.LSEConverter={validate,fromHTML,rewrite,inspect,convert,resolveLinks};
 })(typeof globalThis!=='undefined'?globalThis:window);

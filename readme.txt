@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 0.3.1
+Stable tag: 0.4.0
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -129,6 +129,16 @@ Elementor Pro was not available for direct testing. Test on your own staging
 versions before production use. No live website is changed by building this ZIP.
 
 == Changelog ==
+
+= 0.4.0 =
+* Manage all of your saved imports from one list, including older imports.
+* Refresh selected existing pages from JSON or self-contained HTML without creating replacement posts.
+* Edit imported page titles and addresses; open Elementor or preview directly.
+* Move individual imported pages to Trash and restore them as drafts.
+* Protect concurrent edits and require explicit replacement of edited or published content.
+* Keep a recoverable copy before each page refresh; restore it while the refreshed page is unchanged.
+* Preserve JavaScript backslashes and respect disabled WordPress Trash.
+
 
 = 0.3.1 =
 Discover releases and download verified packages through GitHub's public API,

@@ -8,6 +8,18 @@ Headings, text, images, buttons and supported layouts become native Elementor
 elements. Complex regions are reported and may use small editable HTML widgets.
 Imports do not replace existing page content or publish the new drafts.
 
+## Manage imported websites
+
+The **Imported websites** panel lists your saved imports, including imports from older plugin versions. Choose one to open its pages in Elementor, preview them, edit titles/addresses, move pages to Trash, or restore them as drafts.
+
+Use **Refresh from JSON or HTML** to update selected existing pages. Their WordPress IDs, addresses and publication status stay the same. Unselected pages are kept. Edited and published pages are initially deselected; replacing them requires the explicit checkbox and confirmation. A page changed after review is rejected. New page keys must be imported separately. Deleted pages must be restored before refreshing them.
+
+A single HTML file can be imported as a new page or targeted at a selected existing page. Include inline CSS/JavaScript and embedded assets; external dependencies are not fetched during analysis. This does not accept arbitrary file types.
+
+A recoverable copy is kept before refreshing each page. **Restore before last refresh** is available until the page is edited again. It restores the previous page data and supporting metadata while keeping the current publication status. Existing WordPress revisions are also retained. The bulk remove-unedited-drafts action cannot delete pages as an undo of a refresh.
+
+Older imports use an earlier change fingerprint. The first refresh may conservatively require replacement consent, even if you have not edited them. Subsequent refreshes use the current fingerprint.
+
 ## Updates
 
 Updates come from this public repository’s releases. No GitHub token, licence key
@@ -72,7 +84,7 @@ node scripts/package.mjs . dist
 
 The package builder emits the WordPress ZIP and `update.json` together. It includes
 only plugin files, never test fixtures, website projects or credentials.
-Future version tags trigger the release workflow. The tag, plugin header and
+A plugin version change on main or a version tag triggers validation and the release workflow. The tag, plugin header and
 version constant must agree. Release assets are attached to a draft before it is
 published, so an unfinished package is not offered to WordPress.
 
@@ -80,3 +92,7 @@ published, so an unfinished package is not offered to WordPress.
 
 GPL-3.0-or-later. Elementor and Elementor Pro are separate products and are not
 bundled. Import only assets and content you have permission to use.
+
+## Repeatable testing
+
+Install development tools with `npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0`, then `npx playwright install chromium` and `node tests/run.mjs`. The runner builds the actual plugin ZIP, installs it into an isolated WordPress Playground site (not over the development source), exercises import management and uses a simulated next-version package to test the native updater. On this workstation it also reads the current portfolio and Opu JSON for validation and representative conversion checks. The simulated package is never released. See `docs/TESTING-0.4.0.md`.

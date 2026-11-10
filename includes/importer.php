@@ -1,6 +1,7 @@
 <?php
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 final class LSE_Importer {
+    use LSE_Management;
     private static function key( $id ) { if ( ! is_string( $id ) || ! preg_match( '/^[a-f0-9]{32}$/', $id ) ) { throw new RuntimeException( 'Invalid import identity.' ); } return '_lse_job_' . $id; }
     private static function load( $id ) { $job = get_option( self::key( $id ) ); if ( ! is_array( $job ) || (int) $job['owner'] !== get_current_user_id() ) { throw new RuntimeException( 'This import is unavailable to your account.' ); } return $job; }
     private static function store( $job ) { update_option( self::key( $job['id'] ), $job, false ); return $job; }
@@ -23,16 +24,17 @@ final class LSE_Importer {
     private static function begin( $input ) {
         if ( ! defined( 'ELEMENTOR_VERSION' ) || ! class_exists( '\Elementor\Plugin' ) ) { throw new RuntimeException( 'Activate Elementor before importing.' ); }
         if ( ! isset( $input['fingerprint'] ) || ! preg_match( '/^[a-f0-9]{64}$/', $input['fingerprint'] ) ) { throw new RuntimeException( 'The source file identity is invalid.' ); }
-        $last = get_user_meta( get_current_user_id(), '_lse_last_job', true );
-        if ( $last ) { $previous = get_option( self::key( $last ) ); if ( is_array( $previous ) && $previous['owner'] === get_current_user_id() && $previous['fingerprint'] === $input['fingerprint'] && in_array( $previous['state'], [ 'importing', 'finishing', 'ready' ], true ) ) { return self::status( [ 'job' => $last ] ); } }
         $pages = $input['pages'] ?? null; if ( ! is_array( $pages ) || ! count( $pages ) || count( $pages ) > 200 ) { throw new RuntimeException( 'A website must contain 1–200 pages.' ); }
         $seen = []; foreach ( $pages as $page ) { if ( ! is_array( $page ) ) { throw new RuntimeException( 'Invalid page metadata.' ); } $key = self::text( $page['key'] ?? '', 100 ); if ( ! $key || $key !== $page['key'] || isset( $seen[$key] ) ) { throw new RuntimeException( 'Page keys must be unique plain text.' ); } if ( ! trim( self::text( $page['title'] ?? '', 300 ) ) ) { throw new RuntimeException( 'Page titles cannot be empty.' ); } foreach ( [ 'slug' => 200, 'url' => 2048, 'parent_key' => 100 ] as $field => $limit ) { self::text( $page[$field] ?? '', $limit ); } $seen[$key] = $page; }
         if ( ! is_array( $input['site'] ?? [] ) || ! is_array( $input['site']['navigation'] ?? [] ) || count( $input['site']['navigation'] ?? [] ) > 100 ) { throw new RuntimeException( 'Invalid site navigation.' ); }
         foreach ( $input['site']['navigation'] ?? [] as $item ) { if ( ! is_array( $item ) || ! isset( $seen[$item['key'] ?? ''] ) || ! trim( self::text( $item['label'] ?? '', 150 ) ) ) { throw new RuntimeException( 'A menu item has an invalid destination or label.' ); } }
         if ( ! empty( $input['site']['home_key'] ) && ! isset( $seen[$input['site']['home_key']] ) ) { throw new RuntimeException( 'The homepage does not exist in this import.' ); }
         foreach ( $pages as $page ) { $ancestors = [ $page['key'] ]; $parent = $page['parent_key'] ?? ''; while ( $parent !== '' ) { if ( ! isset( $seen[$parent] ) || in_array( $parent, $ancestors, true ) ) { throw new RuntimeException( 'Page hierarchy has a cycle or missing parent.' ); } $ancestors[] = $parent; $parent = $seen[$parent]['parent_key'] ?? ''; } }
+        if ( ! empty( $input['target_job'] ) ) { return self::refresh( $input ); }
+        $last = get_user_meta( get_current_user_id(), '_lse_last_job', true );
+        if ( $last ) { $previous = get_option( self::key( $last ) ); if ( is_array( $previous ) && $previous['owner'] === get_current_user_id() && $previous['fingerprint'] === $input['fingerprint'] && in_array( $previous['state'], [ 'importing', 'finishing', 'ready' ], true ) ) { return self::status( [ 'job' => $last ] ); } }
         $id = bin2hex( random_bytes( 16 ) ); $layout = in_array( $input['layout'] ?? '', [ 'elementor_canvas', 'elementor_header_footer' ], true ) ? $input['layout'] : 'elementor_canvas';
-        $job = [ 'id' => $id, 'engine' => 'interactive-v1', 'owner' => get_current_user_id(), 'fingerprint' => $input['fingerprint'], 'title' => self::text( $input['title'] ?? 'Imported website', 150 ), 'state' => 'importing', 'created' => time(), 'pages' => [], 'assets' => [], 'fonts' => [], 'map' => [], 'reports' => [], 'layout' => $layout, 'scripts' => ! empty( $input['scripts'] ) && current_user_can( 'unfiltered_html' ), 'site' => is_array( $input['site'] ?? null ) ? $input['site'] : [], 'menu' => 0 ];
+        $job = [ 'id' => $id, 'engine' => 'interactive-v1', 'site_id' => self::text( $input['site_id'] ?? '', 100 ), 'owner' => get_current_user_id(), 'fingerprint' => $input['fingerprint'], 'title' => self::text( $input['title'] ?? 'Imported website', 150 ), 'state' => 'importing', 'created' => time(), 'pages' => [], 'assets' => [], 'fonts' => [], 'map' => [], 'reports' => [], 'layout' => $layout, 'scripts' => ! empty( $input['scripts'] ) && current_user_can( 'unfiltered_html' ), 'site' => is_array( $input['site'] ?? null ) ? $input['site'] : [], 'menu' => 0 ];
         self::store( $job ); update_user_meta( get_current_user_id(), '_lse_last_job', $id );
         try {
             foreach ( $pages as $page ) {
@@ -112,23 +114,25 @@ final class LSE_Importer {
         try {
             $index = array_search( $input['key'] ?? '', array_column( $job['pages'], 'key' ), true ); if ( $index === false ) { throw new RuntimeException( 'Unknown source page.' ); } $page = $job['pages'][$index]; if ( $page['done'] ) { return self::status( [ 'job' => $job['id'] ] ); }
             if ( $job['state'] !== 'importing' ) { throw new RuntimeException( 'This import no longer accepts pages.' ); }
-            $id = $page['id']; if ( get_post_status( $id ) !== 'draft' || ! current_user_can( 'edit_post', $id ) || isset( $page['initial_stamp'] ) && ! hash_equals( $page['initial_stamp'], self::stamp( $id ) ) ) { throw new RuntimeException( 'The destination draft changed. Review it before retrying.' ); }
+            $id = $page['id']; if ( get_post_status( $id ) !== ( $page['target_status'] ?? 'draft' ) || ! current_user_can( 'edit_post', $id ) || isset( $page['initial_stamp'] ) && ! hash_equals( $page['initial_stamp'], self::stamp( $id ) ) ) { throw new RuntimeException( 'The destination draft changed. Review it before retrying.' ); }
+            if ( isset( $page['initial_review_stamp'] ) && ! hash_equals( $page['initial_review_stamp'], self::review_stamp( $id ) ) ) { throw new RuntimeException( 'The page or a shared section changed while refreshing. Your edits were preserved.' ); }
             $count = 0; $tree = self::tree( $input['elements'] ?? [], $job, $count ); if ( ! $count ) { throw new RuntimeException( 'No content was converted.' ); }
             $ids = self::ids( $tree ); if ( count( array_unique( $ids ) ) !== count( $ids ) ) { throw new RuntimeException( 'Element IDs must be unique within a page.' ); }
             self::css( self::rewrite( $input['css'] ?? '', $job['map'] ) ); $candidate_source = $input['source'] ?? []; if ( ! is_array( $candidate_source ) || strlen( wp_json_encode( $candidate_source ) ) > 3 * MB_IN_BYTES || ! is_array( $input['seo'] ?? [] ) || ! is_array( $input['warnings'] ?? [] ) || ! is_array( $input['regions'] ?? [] ) ) { throw new RuntimeException( 'Page metadata or source is invalid.' ); }
             foreach ( [ 'html', 'css', 'js' ] as $field ) { if ( isset( $candidate_source[$field] ) && ! is_string( $candidate_source[$field] ) ) { throw new RuntimeException( 'Original source fields must be text.' ); } }
             foreach ( $input['seo'] ?? [] as $field => $value ) { self::text( $value, in_array( $field, [ 'canonical', 'social_image' ], true ) ? 2048 : 1000 ); }
             foreach ( $input['warnings'] ?? [] as $warning ) { self::text( $warning, 1500 ); }
+            if ( ! empty( $page['refreshing'] ) ) { self::backup_refresh( $id ); }
             $document = \Elementor\Plugin::$instance->documents->get( $id ); if ( ! $document ) { throw new RuntimeException( 'Elementor could not open the draft.' ); } $document->set_is_built_with_elementor( true );
-            $ok = $document->save( [ 'elements' => $tree, 'settings' => [ 'post_status' => 'draft', 'template' => $job['layout'], 'hide_title' => 'yes' ] ] ); if ( ! $ok ) { throw new RuntimeException( 'Elementor did not save the page.' ); }
+            $ok = $document->save( [ 'elements' => $tree, 'settings' => [ 'post_status' => $page['target_status'] ?? 'draft', 'template' => $job['layout'], 'hide_title' => 'yes' ] ] ); if ( ! $ok ) { throw new RuntimeException( 'Elementor did not save the page.' ); }
             $css = self::rewrite( $input['css'] ?? '', $job['map'] ); $css = preg_replace_callback( '/font-family:([^;}]+)/i', static fn( $match ) => 'font-family:' . strtr( $match[1], $job['font_map'] ?? [] ), $css ); $css = str_replace( '__LSE_SCOPE__', 'body.page-id-' . $id, self::css( $css ) );
             foreach ( $job['fonts'] as $font ) { $css .= '@font-face{font-family:"' . $font['family'] . '";src:url("' . esc_url_raw( $font['url'] ) . '");font-display:swap}'; }
-            update_post_meta( $id, '_lse_css', $css );
+            update_post_meta( $id, '_lse_css', wp_slash( $css ) );
             $source = $input['source'] ?? []; if ( ! is_array( $source ) || strlen( wp_json_encode( $source ) ) > 3 * MB_IN_BYTES ) { throw new RuntimeException( 'Original page source exceeds the storage limit.' ); }
             update_post_meta( $id, '_lse_source', wp_slash( $source ) );
-            $js = self::rewrite( is_string( $source['js'] ?? null ) ? $source['js'] : '', $job['map'] ); update_post_meta( $id, '_lse_js', $js ); update_post_meta( $id, '_lse_scripts_enabled', $job['scripts'] ? '1' : '' );
+            $js = self::rewrite( is_string( $source['js'] ?? null ) ? $source['js'] : '', $job['map'] ); update_post_meta( $id, '_lse_js', wp_slash( $js ) ); update_post_meta( $id, '_lse_scripts_enabled', $job['scripts'] ? '1' : '' );
             $seo = self::rewrite( is_array( $input['seo'] ?? null ) ? $input['seo'] : [], $job['map'] ); $clean = []; foreach ( [ 'title', 'description', 'canonical', 'indexing', 'social_title', 'social_description', 'social_image' ] as $field ) { $clean[$field] = self::text( (string) ( $seo[$field] ?? '' ), in_array( $field, [ 'canonical', 'social_image' ], true ) ? 2048 : 1000 ); }
-            update_post_meta( $id, '_lse_seo', $clean );
+            update_post_meta( $id, '_lse_seo', wp_slash( $clean ) );
             if ( defined( 'WPSEO_VERSION' ) ) { foreach ( [ 'title' => 'title', 'description' => 'metadesc', 'canonical' => 'canonical', 'social_title' => 'opengraph-title', 'social_description' => 'opengraph-description', 'social_image' => 'opengraph-image' ] as $a => $b ) { if ( $clean[$a] ) { update_post_meta( $id, '_yoast_wpseo_' . $b, $clean[$a] ); } } }
             if ( defined( 'RANK_MATH_VERSION' ) ) { foreach ( [ 'title' => 'title', 'description' => 'description', 'canonical' => 'canonical_url', 'social_title' => 'facebook_title', 'social_description' => 'facebook_description', 'social_image' => 'facebook_image' ] as $a => $b ) { if ( $clean[$a] ) { update_post_meta( $id, 'rank_math_' . $b, $clean[$a] ); } } }
             $regions = []; foreach ( array_slice( $input['regions'] ?? [], 0, 20 ) as $region ) { if ( preg_match( '/^[a-f0-9]{64}$/', $region['hash'] ?? '' ) && preg_match( '/^[a-f0-9]{8}$/', $region['id'] ?? '' ) && in_array( $region['kind'] ?? '', [ 'header', 'footer' ], true ) ) { $regions[] = $region; } }
@@ -137,7 +141,7 @@ final class LSE_Importer {
             $job['pages'][$index]['done'] = true; $job['pages'][$index]['stamp'] = self::stamp( $id ); self::store( $job ); return self::status( [ 'job' => $job['id'] ] );
         } finally { delete_option( $lock ); }
     }
-    private static function stamp( $id ) { return hash( 'sha256', wp_json_encode( [ get_post_field( 'post_title', $id ), get_post_field( 'post_content', $id ), get_post_field( 'post_status', $id ), get_post_meta( $id, '_elementor_data', true ), get_post_meta( $id, '_elementor_page_settings', true ), get_post_meta( $id, '_lse_css', true ) ] ) ); }
+    private static function stamp( $id ) { return hash( 'sha256', wp_json_encode( [ get_post_field( 'post_title', $id ), get_post_field( 'post_content', $id ), get_post_field( 'post_status', $id ), get_post_meta( $id, '_elementor_data', true ), get_post_meta( $id, '_elementor_page_settings', true ), get_post_meta( $id, '_lse_css', true ), get_post_field( 'post_name', $id ), get_post_field( 'post_parent', $id ), get_post_meta( $id, '_lse_js', true ), get_post_meta( $id, '_lse_seo', true ), get_post_meta( $id, '_lse_scripts_enabled', true ) ] ) ); }
     private static function find_node( $tree, $id ) { foreach ( $tree as $node ) { if ( $node['id'] === $id ) { return $node; } $found = self::find_node( $node['elements'] ?? [], $id ); if ( $found ) { return $found; } } return null; }
     private static function ids( $tree ) { $ids = []; foreach ( $tree as $node ) { $ids[] = $node['id']; $ids = array_merge( $ids, self::ids( $node['elements'] ?? [] ) ); } return $ids; }
     private static function replace_node( &$tree, $id, $template ) { foreach ( $tree as &$node ) { if ( $node['id'] === $id ) { $node = [ 'id' => $id, 'elType' => 'widget', 'widgetType' => 'lse-shared', 'isInner' => false, 'settings' => [ 'template_id' => $template, '_title' => 'Shared header / footer' ], 'elements' => [] ]; return true; } if ( self::replace_node( $node['elements'], $id, $template ) ) { return true; } } return false; }
@@ -155,13 +159,13 @@ final class LSE_Importer {
                 if ( is_wp_error( $template ) || ! $template ) { throw new RuntimeException( 'A shared section template could not be created.' ); }
                 $template->set_is_built_with_elementor( true ); if ( ! $template->save( [ 'elements' => [ $canonical ], 'settings' => [] ] ) ) { throw new RuntimeException( 'A shared section template could not be saved.' ); }
                 $template_id = $template->get_main_id(); update_post_meta( $template_id, '_lse_job', $job['id'] ); update_post_meta( $template_id, '_lse_shared', '1' );
-                $existing = [ 'id' => $template_id, 'kind' => $first['region']['kind'], 'ids' => self::ids( [ $canonical ] ), 'edit_url' => admin_url( 'post.php?post=' . $template_id . '&action=elementor' ) ]; $job['templates'][$hash] = $existing; self::store( $job );
+                $existing = [ 'id' => $template_id, 'kind' => $first['region']['kind'], 'stamp' => self::stamp( $template_id ), 'ids' => self::ids( [ $canonical ] ), 'edit_url' => admin_url( 'post.php?post=' . $template_id . '&action=elementor' ) ]; $job['templates'][$hash] = $existing; self::store( $job );
             }
             foreach ( $group as $member ) { $index = $member['index']; $id = $job['pages'][$index]['id']; $doc = \Elementor\Plugin::$instance->documents->get( $id ); $tree = $doc->get_elements_data(); $node = self::find_node( $tree, $member['region']['id'] ); if ( ! $node || ( $node['widgetType'] ?? '' ) === 'lse-shared' ) { continue; }
                 $original_ids = self::ids( [ $node ] ); if ( count( $original_ids ) !== count( $existing['ids'] ) ) { continue; }
                 $css = get_post_meta( $id, '_lse_css', true ); $pairs = []; foreach ( $original_ids as $n => $original_id ) { $pairs['elementor-element-' . $original_id] = 'elementor-element-' . $existing['ids'][$n]; }
                 self::replace_node( $tree, $member['region']['id'], $existing['id'] ); if ( ! $doc->save( [ 'elements' => $tree ] ) ) { throw new RuntimeException( 'A linked shared section could not be saved.' ); }
-                update_post_meta( $id, '_lse_css', strtr( $css, $pairs ) ); $job['pages'][$index]['stamp'] = self::stamp( $id ); self::store( $job );
+                update_post_meta( $id, '_lse_css', wp_slash( strtr( $css, $pairs ) ) ); $job['pages'][$index]['stamp'] = self::stamp( $id ); self::store( $job );
             }
             $job['shared_done'][$hash] = true; self::store( $job ); return true;
         } return false;
@@ -177,10 +181,21 @@ final class LSE_Importer {
             $job['state'] = 'ready'; self::store( $job ); return self::status( [ 'job' => $job['id'] ] );
         } finally { delete_option( $lock ); }
     }
-    public static function status( $input ) { $job = self::load( $input['job'] ?? '' ); unset( $job['owner'], $job['fingerprint'] ); return $job; }
+    public static function status( $input ) {
+        $job = self::load( $input['job'] ?? '' ); unset( $job['owner'], $job['fingerprint'] );
+        foreach ( $job['pages'] as &$page ) {
+            $post = get_post( $page['id'] ); $page['post_status'] = $post ? $post->post_status : 'missing';
+            $page['current_stamp'] = $post ? self::review_stamp( $post->ID ) : '';
+            $page['changed'] = $post && ( ! hash_equals( $page['stamp'] ?? $page['initial_stamp'] ?? '', self::stamp( $post->ID ) ) || self::shared_changed( $job, $post->ID ) );
+            $page['current_title'] = $post ? $post->post_title : $page['title']; $page['slug'] = $post ? $post->post_name : '';
+            $page['preview_url'] = $post && $post->post_status !== 'trash' ? ( get_preview_post_link( $post ) ?: get_permalink( $post ) ) : '';
+            $page['can_edit'] = $post && current_user_can( 'edit_post', $post->ID ); $page['can_delete'] = $post && current_user_can( 'delete_post', $post->ID );
+            $page['can_restore_refresh'] = $post && ! empty( get_post_meta( $post->ID, '_lse_refresh_backup', true ) ) && hash_equals( $page['stamp'] ?? '', self::stamp( $post->ID ) );
+        } unset( $page ); return $job;
+    }
     public static function undo( $input ) {
         $job = self::load( $input['job'] ?? '' ); $lock = self::lock( $job['id'] ); $removed = []; $kept = [];
-        try { foreach ( $job['pages'] as $page ) { if ( get_post_status( $page['id'] ) === 'trash' || ! get_post( $page['id'] ) ) { continue; } $expected = $page['done'] ? ( $page['stamp'] ?? '' ) : ( $page['initial_stamp'] ?? '' ); if ( get_post_status( $page['id'] ) === 'draft' && $expected && hash_equals( $expected, self::stamp( $page['id'] ) ) && current_user_can( 'delete_post', $page['id'] ) ) { wp_trash_post( $page['id'] ); $removed[] = $page['id']; } else { $kept[] = $page['id']; } } if ( $job['menu'] && empty( $job['activated'] ) ) { wp_delete_nav_menu( $job['menu'] ); $job['menu'] = 0; } $job['state'] = $kept ? 'partly-removed' : 'removed'; $job['cleanup'] = [ 'removed' => $removed, 'kept' => $kept, 'media' => 'Media files and shared templates are retained to avoid breaking references.' ]; self::store( $job ); return self::status( [ 'job' => $job['id'] ] ); } finally { delete_option( $lock ); }
+        try { if ( ! empty( $job['refreshing'] ) ) { throw new RuntimeException( 'This was a refresh of existing pages. Use Restore before last refresh, or move a selected page to Trash explicitly.' ); } if ( ! EMPTY_TRASH_DAYS ) { throw new RuntimeException( 'WordPress Trash is disabled. No pages were deleted.' ); } foreach ( $job['pages'] as $page ) { if ( get_post_status( $page['id'] ) === 'trash' || ! get_post( $page['id'] ) ) { continue; } $expected = $page['done'] ? ( $page['stamp'] ?? '' ) : ( $page['initial_stamp'] ?? '' ); if ( get_post_status( $page['id'] ) === 'draft' && $expected && hash_equals( $expected, self::stamp( $page['id'] ) ) && current_user_can( 'delete_post', $page['id'] ) ) { wp_trash_post( $page['id'] ); $removed[] = $page['id']; } else { $kept[] = $page['id']; } } if ( $job['menu'] && empty( $job['activated'] ) ) { wp_delete_nav_menu( $job['menu'] ); $job['menu'] = 0; } $job['state'] = $kept ? 'partly-removed' : 'removed'; $job['cleanup'] = [ 'removed' => $removed, 'kept' => $kept, 'media' => 'Media files and shared templates are retained to avoid breaking references.' ]; self::store( $job ); return self::status( [ 'job' => $job['id'] ] ); } finally { delete_option( $lock ); }
     }
     public static function activate( $input ) {
         $job = self::load( $input['job'] ?? '' ); if ( empty( $input['consent'] ) || $job['state'] !== 'ready' ) { throw new RuntimeException( 'Review the completed import and confirm site setup first.' ); }

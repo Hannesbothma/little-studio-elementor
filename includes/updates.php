@@ -106,7 +106,7 @@ final class LSE_Updates {
     }
 
     private static function item( $release ) {
-        return (object) [ 'id' => self::REPO, 'slug' => 'little-studio-elementor', 'plugin' => self::file(), 'new_version' => $release['version'], 'url' => self::REPO, 'package' => $release['package'], 'requires' => '6.8', 'requires_php' => '8.0', 'tested' => '7.1.3' ];
+        return (object) [ 'id' => self::REPO, 'slug' => 'little-studio-elementor', 'plugin' => self::file(), 'new_version' => $release['version'], 'url' => self::REPO, 'package' => $release['package'], 'requires' => '6.8', 'requires_php' => '8.0', 'tested' => '7.1.4' ];
     }
 
     public static function merge( $updates ) {
@@ -121,12 +121,12 @@ final class LSE_Updates {
 
     public static function offer( $update, $data, $file, $locales = [] ) {
         if ( $file !== self::file() ) { return $update; } $release = self::release(); if ( isset( $release['error'] ) ) { return false; }
-        return [ 'id' => self::REPO, 'slug' => 'little-studio-elementor', 'version' => $release['version'], 'url' => self::REPO, 'package' => $release['package'], 'requires' => '6.8', 'requires_php' => '8.0', 'tested' => '7.1.3' ];
+        return [ 'id' => self::REPO, 'slug' => 'little-studio-elementor', 'version' => $release['version'], 'url' => self::REPO, 'package' => $release['package'], 'requires' => '6.8', 'requires_php' => '8.0', 'tested' => '7.1.4' ];
     }
 
     public static function information( $result, $action, $args ) {
         if ( $action !== 'plugin_information' || ( $args->slug ?? '' ) !== 'little-studio-elementor' ) { return $result; }
-        $release = self::release(); return (object) [ 'name' => 'Little Studio to Elementor', 'slug' => 'little-studio-elementor', 'version' => $release['version'] ?? self::installed(), 'homepage' => self::REPO, 'download_link' => $release['package'] ?? '', 'requires' => '6.8', 'requires_php' => '8.0', 'tested' => '7.1.3', 'sections' => [ 'description' => 'Import complete Little Studio website JSON into native Elementor draft pages.', 'changelog' => nl2br( esc_html( $release['notes'] ?? 'No release notes available.' ) ) ] ];
+        $release = self::release(); return (object) [ 'name' => 'Little Studio to Elementor', 'slug' => 'little-studio-elementor', 'version' => $release['version'] ?? self::installed(), 'homepage' => self::REPO, 'download_link' => $release['package'] ?? '', 'requires' => '6.8', 'requires_php' => '8.0', 'tested' => '7.1.4', 'sections' => [ 'description' => 'Import complete Little Studio website JSON into native Elementor draft pages.', 'changelog' => nl2br( esc_html( $release['notes'] ?? 'No release notes available.' ) ) ] ];
     }
 
     public static function download( $reply, $package, $upgrader, $extra = [] ) {
