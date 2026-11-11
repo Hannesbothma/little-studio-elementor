@@ -188,6 +188,7 @@ final class LSE_Importer {
             $page['current_stamp'] = $post ? self::review_stamp( $post->ID ) : '';
             $page['changed'] = $post && ( ! hash_equals( $page['stamp'] ?? $page['initial_stamp'] ?? '', self::stamp( $post->ID ) ) || self::shared_changed( $job, $post->ID ) );
             $page['current_title'] = $post ? $post->post_title : $page['title']; $page['slug'] = $post ? $post->post_name : '';
+            $page['modified'] = $post ? get_post_modified_time( 'c', true, $post ) : '';
             $page['preview_url'] = $post && $post->post_status !== 'trash' ? ( get_preview_post_link( $post ) ?: get_permalink( $post ) ) : '';
             $page['can_edit'] = $post && current_user_can( 'edit_post', $post->ID ); $page['can_delete'] = $post && current_user_can( 'delete_post', $post->ID );
             $page['can_restore_refresh'] = $post && ! empty( get_post_meta( $post->ID, '_lse_refresh_backup', true ) ) && hash_equals( $page['stamp'] ?? '', self::stamp( $post->ID ) );

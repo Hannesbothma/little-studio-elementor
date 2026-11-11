@@ -10,7 +10,7 @@ const dir=new URL('./results/',import.meta.url);await mkdir(dir,{recursive:true}
 const rpc=(action,args={})=>page.evaluate(([action,args])=>window.LSEAdmin.request(action,args),[action,args]);
 const choose=async(data,name='test.website.json')=>{
  await page.locator('#lse-file').setInputFiles({name,mimeType:name.endsWith('.html')?'text/html':'application/json',buffer:Buffer.from(typeof data==='string'?data:JSON.stringify(data))});
- await page.waitForFunction(()=>window.LSEAdmin.project!==null);
+ await page.waitForFunction(()=>window.LSEAdmin.project!==null&&!window.LSEAdmin.busy);
 };
 const run=async()=>{
  await page.evaluate(()=>window.LSEAdmin.run());
@@ -32,6 +32,28 @@ try{
  const versions=await rpc('test',{operation:'versions'});
  await choose(fixture);const original=await run();const id=original.pages[0].id;const ids=original.pages.map(p=>p.id);
  const native=await rpc('test',{id});assert(native.elements?.length);assert.match(native.js,/\\d/);
+ // Exercise the new workspace through the same controls used in WordPress.
+ assert.equal(await page.locator('.lse-site[aria-current="true"]').count(),1);
+ assert.equal(await page.locator('[data-managed-key]').count(),2);
+ assert.equal(await page.locator('#lse-flow-dialog').isVisible(),false);
+ assert(original.pages.every(item=>item.modified),'Page modification dates are missing');
+ await page.locator('#lse-page-search').fill('About');
+ assert.equal(await page.locator('[data-managed-key]').count(),1);
+ assert.equal(await page.locator('#lse-page-inspector h3').innerText(),'About');
+ await page.locator('#lse-page-search').clear();
+ await page.locator('#lse-page-filter').selectOption('trash');
+ assert.equal(await page.locator('[data-managed-key]').count(),0);
+ await page.locator('#lse-page-filter').selectOption('all');
+ await page.setViewportSize({width:430,height:900});
+ await page.locator('[data-managed-key="home"]').click();
+ assert.equal(await page.locator('#lse-page-inspector').isVisible(),true);
+ await page.screenshot({path:fileURLToPath(new URL('mobile-workspace.png',dir)),fullPage:true});
+ await page.locator('.lse-inspector-close').click();
+ assert.equal(await page.locator('#lse-page-inspector').isVisible(),false);
+ const mobileOverflow=await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth);
+ assert.equal(mobileOverflow,false,'The mobile workspace scrolls horizontally');
+ await page.setViewportSize({width:1440,height:1000});
+
  assert.match(JSON.stringify(native.elements),/"widgetType":"heading"/,'Distant dialog controls swallowed native headings');
  const front=await page.evaluate(id=>fetch('/?page_id='+id+'&preview=true').then(r=>r.text()),id);assert.match(front,/data-page="index\.html"/,'Source data attributes were lost');
  assert.equal(original.assets.length,1);
@@ -58,11 +80,22 @@ try{
  let finished;do{finished=await rpc('finish',{job:original.id})}while(finished.state==='finishing');
  assert.equal((await rpc('test',{id})).post.status,'publish');assert.deepEqual(finished.pages.map(p=>p.id),ids);
  await assert.rejects(()=>rpc('undo',{job:original.id}),/refresh of existing pages/);
- const safe=await rpc('status',{job:original.id});const newSlug='renamed-imported-page-'+id;
- const meta=await rpc('manage_page',{job:original.id,key:'home',operation:'metadata',expected_stamp:safe.pages[0].current_stamp,title:'Renamed imported page',slug:newSlug});
+ await page.evaluate(()=>window.LSEManage.reload());
+ await page.locator('[data-managed-key="home"]').click();
+ const newSlug='renamed-imported-page-'+id;
+ await page.locator('[data-operation="metadata"]').click();
+ await page.locator('#lse-page-title').fill('Renamed imported page');
+ await page.locator('#lse-page-slug').fill(newSlug);
+ await page.locator('#lse-page-save').click();
+ await page.waitForFunction(()=>!document.querySelector('#lse-page-dialog').open);
  assert.equal((await rpc('test',{id})).post.slug,newSlug);
- const trashed=await rpc('manage_page',{job:original.id,key:'home',operation:'trash',expected_stamp:meta.pages[0].current_stamp,consent:true});assert.equal((await rpc('test',{id})).post.status,'trash');
- const restored=await rpc('manage_page',{job:original.id,key:'home',operation:'untrash',expected_stamp:trashed.pages[0].current_stamp});assert.equal((await rpc('test',{id})).post.status,'draft');
+ await page.locator('[data-operation="trash"]').click();
+ await page.waitForFunction(()=>window.LSEManage.current.pages[0].post_status==='trash');
+ assert.equal((await rpc('test',{id})).post.status,'trash');
+ await page.locator('[data-operation="untrash"]').click();
+ await page.waitForFunction(()=>window.LSEManage.current.pages[0].post_status==='draft');
+ const restored=await rpc('status',{job:original.id});
+ assert.equal((await rpc('test',{id})).post.status,'draft');
  await assert.rejects(()=>rpc('manage_page',{job:original.id,key:'foreign-page',operation:'trash',expected_stamp:restored.pages[0].current_stamp,consent:true}),/does not belong/);
  assert((await rpc('test',{operation:'foreign-owner',job:original.id})).denied);
  // Exercise HTML file selection and conversion through the same public import UI.
@@ -83,8 +116,9 @@ try{
  await page.evaluate(()=>window.LSEManage.reload());await page.screenshot({path:fileURLToPath(new URL('management.png',dir)),fullPage:true});
  assert.equal(await page.locator('#lse-result').count(),0,'A duplicate completion panel returned');
  assert.equal(await page.locator('.lse-card').count(),1,'The interface has multiple import workspaces');
- assert.equal(await page.locator('[data-operation="metadata"]:visible').count(),0,'Secondary page actions should start collapsed');
- await page.locator('#lse-import-list').selectOption(original.id);
+ assert.equal(await page.locator('#lse-page-dialog').isVisible(),false,'The metadata dialog opens only when requested');
+ assert.equal(await page.locator('#lse-page-inspector a.button-primary').count(),1,'The selected page has no Elementor link');
+ await page.locator('[data-import-id="'+original.id+'"]').click();
  await page.waitForFunction(id=>window.LSEManage.current?.id===id,original.id);
  await rpc('test',{operation:'publish',id});await rpc('test',{operation:'publish',id:ids[1]});
  await rpc('activate',{job:original.id,consent:true});
@@ -93,6 +127,7 @@ try{
  await rpc('test',{operation:'edit',id});
  await assert.rejects(()=>rpc('remove_import',{job:original.id,consent:true,expected_stamps:Object.fromEntries(removal.pages.map(p=>[p.key,p.current_stamp]))}),/changed after/);
  assert.equal((await rpc('test',{id})).post.status,'publish','Stale bulk removal partly deleted the import');
+ await page.locator('#lse-import-menu > summary').click();
  await page.locator('#lse-remove-import').click();
  await page.waitForFunction(id=>!Array.from(document.querySelector('#lse-import-list').options).some(o=>o.value===id),original.id);
  for(const postId of ids)assert.equal((await rpc('test',{id:postId})).post.status,'trash','Whole-import removal left a page behind');
@@ -103,7 +138,7 @@ try{
  await page.screenshot({path:fileURLToPath(new URL('single-workspace.png',dir)),fullPage:true});
  assert.deepEqual(failures,[],'Unexpected browser errors');
  const updater=process.env.LSE_TEST_UPDATER?await rpc('test',{operation:'updater',id}):null;
- const result={ok:true,versions,initialImport:true,refreshSameIds:true,sourceJSBackslashes:true,restoreRefresh:true,nativeElementorEditProtected:true,publishedRefreshConsent:true,concurrentEditProtected:true,titleAndSlug:true,trashRestore:true,foreignPageAndAccountDenied:true,htmlImport:true,singleWorkspace:true,wholeImportRemoval:true,staleBulkRemovalProtected:true,unrelatedImportRetained:true,actualWebsiteConversions:actual,updater};
+ const result={ok:true,versions,initialImport:true,refreshSameIds:true,sourceJSBackslashes:true,restoreRefresh:true,nativeElementorEditProtected:true,publishedRefreshConsent:true,concurrentEditProtected:true,titleAndSlug:true,trashRestore:true,foreignPageAndAccountDenied:true,htmlImport:true,singleWorkspace:true,sidebarAndInspector:true,pageSearchAndFilters:true,mobileWorkspace:true,metadataDialog:true,wholeImportRemoval:true,staleBulkRemovalProtected:true,unrelatedImportRetained:true,actualWebsiteConversions:actual,updater};
  await writeFile(new URL('integration.json',dir),JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result));
 }catch(error){await writeFile(new URL('integration-error.json',dir),JSON.stringify({ok:false,error:error.message,stack:error.stack,browserErrors:failures},null,2));await page.screenshot({path:fileURLToPath(new URL('failure.png',dir)),fullPage:true}).catch(()=>{});throw error}
 finally{await browser.close()}

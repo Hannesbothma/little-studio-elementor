@@ -95,25 +95,109 @@ final class LSE_Plugin {
     }
     public static function screen() {
         ?><div class="wrap lse" id="lse-app">
-        <header class="lse-head"><div><p class="lse-eyebrow">LITTLE STUDIO</p><h1>Studio to Elementor</h1></div><span class="lse-version"><?php echo esc_html( LSE_VERSION ); ?></span></header>
-        <section class="lse-card" id="lse-managed">
-        <div class="lse-toolbar"><label for="lse-import-list" class="screen-reader-text">Imported website</label><select id="lse-import-list"><option value="">New import</option></select><button type="button" class="button button-primary" id="lse-new-import">New import</button><button type="button" class="button" id="lse-more-imports" hidden>More websites</button></div>
-        <div id="lse-status" class="lse-notice" role="status" aria-live="polite">Choose New import to add a JSON or HTML website.</div>
-        <?php if ( ! defined( 'ELEMENTOR_VERSION' ) ) : ?><p>Activate Elementor before importing.</p><?php endif; ?>
-        <div id="lse-choose"><div class="lse-drop"><strong>Drop a JSON or HTML file here</strong><span>or choose New import above</span><input type="file" id="lse-file" accept=".json,.html,.htm,application/json,text/html" hidden></div></div>
-        <div id="lse-review" hidden><div class="lse-card-title"><h2>Ready to import</h2><button type="button" class="button" id="lse-reset">Cancel</button></div><div id="lse-summary" class="lse-summary"></div>
-        <details class="lse-details"><summary>Pages</summary><div class="lse-table-scroll"><table class="widefat striped"><thead><tr><th><input type="checkbox" id="lse-all" checked aria-label="Select all pages"></th><th>Page</th><th>Address</th><th>Review</th></tr></thead><tbody id="lse-pages"></tbody></table></div></details>
-        <div class="lse-setup" id="lse-setup" hidden><div id="lse-findings"></div></div>
-        <details class="lse-details"><summary>Options</summary><div class="lse-options"><label>Website name<input id="lse-name" type="text" maxlength="150"></label><label>Page layout<select id="lse-layout"><option value="elementor_canvas">Standalone pages</option><option value="elementor_header_footer">Use WordPress header and footer</option></select></label></div><label class="lse-check"><input type="checkbox" id="lse-scripts" checked> Keep website interactions</label><label class="lse-check"><input type="checkbox" id="lse-css" checked> Keep website styling</label></details>
-        <p id="lse-refresh-context" hidden></p><label class="lse-check" id="lse-overwrite-option" hidden><input type="checkbox" id="lse-overwrite"> Allow replacing selected edited or published pages.</label><div class="lse-actions"><button type="button" class="button button-primary" id="lse-import">Import</button><span id="lse-import-scope">New pages are saved as drafts.</span></div></div>
-        <div id="lse-progress" hidden><h2>Importing</h2><progress id="lse-meter" max="100" value="0"></progress><p id="lse-current" role="status"></p><button class="button" type="button" id="lse-retry" hidden>Retry</button> <button class="button" type="button" id="lse-check" hidden>Check progress</button> <button class="button" type="button" id="lse-error-details" hidden>Error details</button> <button class="button" type="button" id="lse-cancel" hidden>Remove import</button></div>
-        <div id="lse-managed-pages" hidden></div>
-        <div class="lse-actions" id="lse-import-actions" hidden><button type="button" class="button" id="lse-refresh-import">Update from file</button><button type="button" class="button lse-danger" id="lse-remove-import">Remove import</button></div>
-        <p id="lse-manage-message" role="status"></p>
-        <details class="lse-details" id="lse-import-details" hidden><summary>Import details</summary><div id="lse-report"></div><button type="button" class="button" id="lse-download">Save report</button><details class="lse-details"><summary>Homepage and menu</summary><p>Publish reviewed pages before applying site setup.</p><label class="lse-check"><input type="checkbox" id="lse-activate-consent"> Use this import's homepage and menu.</label><button type="button" class="button" id="lse-activate">Apply</button> <button type="button" class="button" id="lse-restore" hidden>Restore previous setup</button><p id="lse-restoration" class="lse-small"></p></details></details>
+        <section class="lse-card lse-shell" id="lse-managed" data-mode="choose">
+            <header class="lse-head">
+                <div class="lse-brand"><span class="lse-brand-icon" aria-hidden="true"></span><span>Studio to Elementor</span></div>
+                <div class="lse-head-actions">
+                    <span class="lse-version">v<?php echo esc_html( LSE_VERSION ); ?></span>
+                    <?php if ( current_user_can( 'update_plugins' ) ) : ?>
+                    <details class="lse-plugin-updates lse-popover">
+                        <summary>Plugin updates</summary>
+                        <div class="lse-popover-panel">
+                            <p id="lse-update-message" role="status">Installed <?php echo esc_html( LSE_VERSION ); ?>.</p>
+                            <div class="lse-actions"><button type="button" class="button" id="lse-update-check">Check for updates</button><button type="button" class="button button-primary" id="lse-update-now" hidden>Update now</button></div>
+                        </div>
+                    </details>
+                    <?php endif; ?>
+                </div>
+            </header>
+            <div class="lse-layout">
+                <aside class="lse-sidebar" aria-labelledby="lse-sidebar-title">
+                    <button type="button" class="button button-primary" id="lse-new-import"><span aria-hidden="true">+</span> New import</button>
+                    <label for="lse-import-list" class="screen-reader-text">Imported website</label>
+                    <select id="lse-import-list"><option value="">New import</option></select>
+                    <h2 id="lse-sidebar-title">Imported websites</h2>
+                    <nav id="lse-import-nav" aria-label="Imported websites"></nav>
+                    <button type="button" class="button lse-subtle" id="lse-more-imports" hidden>More websites</button>
+                </aside>
+                <main class="lse-workspace">
+                    <div id="lse-status" class="lse-notice" role="status" aria-live="polite">Choose a JSON or HTML file to get started.</div>
+                    <p id="lse-manage-message" class="lse-notice" role="status" aria-live="polite"></p>
+                    <?php if ( ! defined( 'ELEMENTOR_VERSION' ) ) : ?><p class="lse-notice is-error">Activate Elementor before importing.</p><?php endif; ?>
+                    <input type="file" id="lse-file" accept=".json,.html,.htm,application/json,text/html" hidden>
+                    <div id="lse-choose">
+                        <div class="lse-drop">
+                            <span class="lse-empty-icon" aria-hidden="true">↑</span>
+                            <h1>Bring your website into Elementor</h1>
+                            <p>Drop a Little Studio JSON export or an HTML file here.</p>
+                            <button type="button" class="button button-primary" id="lse-choose-file">Choose file</button>
+                            <small>Imported pages are saved as drafts.</small>
+                        </div>
+                    </div>
+                    <section id="lse-project" aria-labelledby="lse-project-title" hidden>
+                        <div class="lse-project-head">
+                            <div><h1 id="lse-project-title"></h1><p id="lse-project-meta"></p></div>
+                            <div class="lse-actions" id="lse-import-actions">
+                                <button type="button" class="button button-primary" id="lse-refresh-import"><span aria-hidden="true">↑</span> Update from file</button>
+                                <details class="lse-popover" id="lse-import-menu">
+                                    <summary class="button lse-icon-button" aria-label="Import options">⋯</summary>
+                                    <div class="lse-popover-panel lse-menu">
+                                        <button type="button" id="lse-download">Download report</button>
+                                        <button type="button" id="lse-remove-import" class="lse-danger">Remove import</button>
+                                    </div>
+                                </details>
+                            </div>
+                        </div>
+                        <div class="lse-tabs" role="tablist" aria-label="Import workspace">
+                            <button type="button" class="lse-tab" id="lse-pages-tab" role="tab" aria-selected="true" aria-controls="lse-managed-pages" data-tab="pages">Pages <span id="lse-page-count"></span></button>
+                            <button type="button" class="lse-tab" id="lse-details-tab" role="tab" aria-selected="false" aria-controls="lse-import-details" data-tab="details" tabindex="-1">Import details</button>
+                        </div>
+                        <div id="lse-managed-pages" class="lse-page-layout" role="tabpanel" aria-labelledby="lse-pages-tab">
+                            <section class="lse-page-list" aria-label="Imported pages">
+                                <div class="lse-page-controls">
+                                    <label class="lse-search"><span class="screen-reader-text">Search pages</span><input type="search" id="lse-page-search" placeholder="Search pages"></label>
+                                    <label><span class="screen-reader-text">Filter pages by status</span><select id="lse-page-filter"><option value="all">All statuses</option><option value="draft">Draft</option><option value="publish">Published</option><option value="pending">Pending review</option><option value="private">Private</option><option value="trash">In Trash</option><option value="missing">Missing</option></select></label>
+                                </div>
+                                <div class="lse-list-heading" aria-hidden="true"><span>Page</span><span>Status</span></div>
+                                <div id="lse-page-rows"></div>
+                                <p id="lse-list-footer" role="status"></p>
+                            </section>
+                            <aside id="lse-page-inspector" class="lse-inspector" aria-label="Selected page" hidden></aside>
+                        </div>
+                        <div id="lse-import-details" class="lse-detail-grid" role="tabpanel" aria-labelledby="lse-details-tab" hidden>
+                            <section class="lse-detail-card"><h2>Import summary</h2><div id="lse-import-summary"></div></section>
+                            <section class="lse-detail-card"><h2>Homepage and menu</h2><p>Publish reviewed pages before applying site setup.</p><label class="lse-check"><input type="checkbox" id="lse-activate-consent"> Use this import's homepage and menu.</label><div class="lse-actions"><button type="button" class="button" id="lse-activate">Apply</button><button type="button" class="button" id="lse-restore" hidden>Restore previous setup</button></div><p id="lse-restoration" class="lse-small"></p></section>
+                            <section class="lse-detail-card lse-conversion-report"><h2>Conversion report</h2><div id="lse-report"></div></section>
+                        </div>
+                    </section>
+                </main>
+            </div>
         </section>
-        <?php if ( current_user_can( 'update_plugins' ) ) : ?><details class="lse-details lse-plugin-updates"><summary>Plugin updates</summary><p id="lse-update-message" role="status">Installed <?php echo esc_html( LSE_VERSION ); ?>.</p><button type="button" class="button" id="lse-update-check">Check for updates</button> <button type="button" class="button button-primary" id="lse-update-now" hidden>Update now</button></details><?php endif; ?>
-        <footer class="lse-foot">Keep this plugin active for your imported website.</footer></div><?php
+        <dialog id="lse-flow-dialog" class="lse-dialog" aria-labelledby="lse-flow-title">
+            <header class="lse-dialog-head"><h2 id="lse-flow-title">Review new import</h2><button type="button" class="button lse-subtle lse-icon-button" id="lse-flow-close" aria-label="Close import">×</button></header>
+            <div class="lse-dialog-body">
+                <p id="lse-dialog-status" class="lse-notice" role="status" aria-live="polite" hidden></p>
+                <div id="lse-review" hidden>
+                    <div id="lse-summary" class="lse-summary"></div>
+                    <p id="lse-refresh-context" hidden></p>
+                    <details class="lse-details" open><summary>Pages</summary><div class="lse-table-scroll"><table class="widefat striped"><thead><tr><th><input type="checkbox" id="lse-all" checked aria-label="Select all pages"></th><th>Page</th><th>Address</th><th>Review</th></tr></thead><tbody id="lse-pages"></tbody></table></div></details>
+                    <div class="lse-setup" id="lse-setup" hidden><div id="lse-findings"></div></div>
+                    <details class="lse-details"><summary>Import options</summary><div class="lse-options"><label>Website name<input id="lse-name" type="text" maxlength="150"></label><label>Page layout<select id="lse-layout"><option value="elementor_canvas">Standalone pages</option><option value="elementor_header_footer">Use WordPress header and footer</option></select></label></div><label class="lse-check"><input type="checkbox" id="lse-scripts" checked> Keep website interactions</label><label class="lse-check"><input type="checkbox" id="lse-css" checked> Keep website styling</label></details>
+                    <label class="lse-check" id="lse-overwrite-option" hidden><input type="checkbox" id="lse-overwrite"> Allow replacing selected edited or published pages.</label>
+                    <div class="lse-dialog-actions"><button type="button" class="button" id="lse-reset">Cancel</button><span id="lse-import-scope">New pages are saved as drafts.</span><button type="button" class="button button-primary" id="lse-import">Import</button></div>
+                </div>
+                <div id="lse-progress" hidden><progress id="lse-meter" max="100" value="0"></progress><p id="lse-current" role="status"></p><div class="lse-actions"><button class="button" type="button" id="lse-retry" hidden>Retry</button><button class="button" type="button" id="lse-check" hidden>Check progress</button><button class="button" type="button" id="lse-error-details" hidden>Error details</button><button class="button lse-danger" type="button" id="lse-cancel" hidden>Remove import</button></div></div>
+            </div>
+        </dialog>
+        <dialog id="lse-page-dialog" class="lse-dialog lse-page-dialog" aria-labelledby="lse-page-dialog-title">
+            <form id="lse-page-form">
+                <header class="lse-dialog-head"><h2 id="lse-page-dialog-title">Edit page details</h2><button type="button" class="button lse-subtle lse-icon-button" id="lse-page-close" aria-label="Close page details">×</button></header>
+                <div class="lse-dialog-body"><label class="lse-field">Page title<input name="title" id="lse-page-title" type="text" maxlength="300" required></label><label class="lse-field">Page address<input name="slug" id="lse-page-slug" type="text" maxlength="200" required></label><p id="lse-page-error" class="is-error" role="alert" hidden></p></div>
+                <footer class="lse-dialog-actions"><button type="button" class="button" id="lse-page-cancel">Cancel</button><button type="submit" class="button button-primary" id="lse-page-save">Save details</button></footer>
+            </form>
+        </dialog>
+        <footer class="lse-foot">Keep this plugin active for your imported website.</footer>
+        </div><?php
     }
     public static function front() {
         if ( ! is_singular() ) { return; }

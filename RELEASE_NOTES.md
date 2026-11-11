@@ -1,9 +1,10 @@
-Simpler layout and whole-import removal.
+A redesigned workspace for Studio to Elementor.
 
-* Use one workspace and one page list, including after an import finishes.
-* Keep Edit in Elementor and Preview visible; put secondary page actions under More.
-* Collapse import options, reports, site setup and plugin updates.
-* Remove an entire import with one confirmation, including edited and published pages. Pages go to WordPress Trash; media and shared sections used elsewhere are retained.
-* Check all pages for permission and concurrent changes before removing any, and restore imported homepage/menu setup when still unchanged.
+* Browse imported websites from a dedicated sidebar.
+* Search and filter pages, then open Elementor or Preview from the selected-page inspector.
+* Edit page titles and addresses in a focused dialog.
+* Review new imports and page updates in a dialog with visible page selection.
+* Use the same workspace on smaller screens, with a website selector and collapsible inspector.
+* Find reports, shared sections, and homepage/menu setup under Import details.
 
-Existing automatic updates and import/refresh behaviour are retained.
+Page refresh, content recovery, Trash/restore, whole-import removal, and native WordPress updates continue through the existing permission and concurrent-edit checks.

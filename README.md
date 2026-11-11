@@ -10,7 +10,7 @@ Imports do not replace existing page content or publish the new drafts.
 
 ## Manage imported websites
 
-Choose an import in the single workspace. Its page list is the only editing area: **Edit in Elementor** and **Preview** are visible; title/address editing, individual Trash/restore and pre-update recovery sit under **More**. A completed import returns to this same list, without a second results panel. Import options, reports, site setup and plugin updates stay collapsed until needed.
+Choose an imported website from the sidebar, then search or filter its pages. Select a page to open its inspector with **Edit in Elementor**, **Preview page**, title/address editing, Trash/restore, and recovery before the last update. New imports and page updates are reviewed in a dialog. Reports, shared sections, and homepage/menu setup are under **Import details**. On smaller screens, use the website selector and tap a page to open its inspector.
 
 Use **Update from file** to update selected existing pages. Their WordPress IDs, addresses and publication status stay the same. Unselected pages are kept. Edited and published pages are initially deselected; replacing them requires the explicit checkbox and confirmation. A page changed after review is rejected. New page keys must be imported separately. Deleted pages must be restored before refreshing them.
 
@@ -18,7 +18,7 @@ A single HTML file can be imported as a new page or targeted at a selected exist
 
 **Remove import** moves every page in the selected import to WordPress Trash, including edited and published pages, after one confirmation. It removes the import from the list, removes its own menu, and moves its own unused shared sections to Trash. Media files and shared sections referenced elsewhere are kept. A changed page stops removal before any pages are touched. Restore pages later through WordPress Trash.
 
-A recoverable copy is kept before refreshing each page. **More → Restore before last update** is available until the page is edited again. It restores the previous page data and supporting metadata while keeping the current publication status. Existing WordPress revisions are also retained. The bulk remove-unedited-drafts action cannot delete pages as an undo of a refresh.
+A recoverable copy is kept before refreshing each page. **Restore before last update** in the page inspector is available until the page is edited again. It restores the previous page data and supporting metadata while keeping the current publication status. Existing WordPress revisions are also retained. The bulk remove-unedited-drafts action cannot delete pages as an undo of a refresh.
 
 Older imports use an earlier change fingerprint. The first refresh may conservatively require replacement consent, even if you have not edited them. Subsequent refreshes use the current fingerprint.
 
@@ -97,4 +97,4 @@ bundled. Import only assets and content you have permission to use.
 
 ## Repeatable testing
 
-Install development tools with `npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0`, then `npx playwright install chromium` and `node tests/run.mjs`. The runner builds the actual plugin ZIP, installs it into an isolated WordPress Playground site (not over the development source), exercises import management and uses a simulated next-version package to test the native updater. On this workstation it also reads the current portfolio and Opu JSON for validation and representative conversion checks. The simulated package is never released. See `docs/TESTING-0.4.0.md`.
+Install development tools with `npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0`, then `npx playwright install chromium` and `node tests/run.mjs`. The runner builds the actual plugin ZIP, installs it into an isolated WordPress Playground site (not over the development source), exercises import management and uses a simulated next-version package to test the native updater. On this workstation it also reads the current portfolio and Opu JSON for validation and representative conversion checks. The simulated package is never released. See `docs/TESTING-0.5.0.md`.

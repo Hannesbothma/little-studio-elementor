@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 0.4.1
+Stable tag: 0.5.0
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -129,6 +129,12 @@ Elementor Pro was not available for direct testing. Test on your own staging
 versions before production use. No live website is changed by building this ZIP.
 
 == Changelog ==
+
+= 0.5.0 =
+* Navigate imported websites from a dedicated sidebar.
+* Search and filter pages, then preview or edit them from the selected-page inspector.
+* Review imports and updates in a focused dialog, with responsive controls on smaller screens.
+* Edit page details, restore content, and manage Trash through the existing protected actions.
 
 = 0.4.1 =
 * Use one simple workspace for each import; secondary page actions are under More.
