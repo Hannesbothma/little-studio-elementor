@@ -1,9 +1,12 @@
-Remove fixed plugin content limits that could reject valid converted drafts after media uploads.
+Repair draft saving after large website captures and increase resource throughput.
 
-* Remove generated CSS, source, settings, decoded payload, JSON, page/file, element and nesting caps.
-* Remove automatic website-capture page, depth, resource-count and byte quotas.
-* Retain hosting/native resource limits, permission/content validation and resumable small batches.
-* Compact repeated selector declarations while preserving responsive/state styles.
-* Reuse verified media imported by Little Studio Suite and recover upload batch size after temporary slow processing.
+After 148 uploads, the old URL-replacement expression could exceed PHP's regex compilation limit and return null, making valid CSS fail with “Generated styles must be CSS text.” Replacement now processes the full resource map through bounded expressions while preserving original text, longest matches, URL boundaries and escaped JavaScript. CSS remapping failures are reported explicitly before the native draft save.
 
-After updating, retry the same JSON with the same page selection and options. Confirmed media and drafts remain available; missing work continues. The release does not make network transfer, image processing or native Elementor conversion instantaneous.
+* Capture up to 32 small resources per request with replay checkpoints.
+* Upload in groups sized to the host's file-count limit, with adaptive work budgets.
+* Share a job load/lock across each media group, cache attachment IDs and avoid rewriting CSS twice.
+* Preserve the previous content-quota removal, native saves, media validation, retries and edit protection.
+
+A 19.5 MB JSON with 148 fresh PNGs completed in 40.5 seconds versus 91.4 seconds with the old frontend queue on the same fixed backend. Upload requests fell from 37 to eight. Preview images, interactions/state CSS and native Elementor editing were verified. These are fixture timings, not a live-site or universal fidelity guarantee.
+
+Update, then retry the same JSON and options. Confirmed uploads and completed drafts are kept.

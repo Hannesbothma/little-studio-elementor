@@ -163,3 +163,39 @@ checkout/index could not be read or edited. Work uses the established fallback
 `/tmp/lse-layout-work` and publishes through the connected GitHub release workflow.
 No scan mounts or historical files are changed. Sync the clean canonical checkout
 and website index later when the SSD is accessible; do not overwrite local work.
+
+
+## 0.7.2 resource-map regression and throughput
+
+The old replacement method was reproduced with 148 synthetic capture URLs. PHP
+reported “regular expression is too large” at pattern offset 36,437 and returned
+null for a valid, small CSS string. The older large-CSS test used only a few URL
+mappings, so it did not exercise this failure. The fix does not cast null to an
+empty string or discard styles.
+
+`tests/rewrite-regression.mjs` runs the actual PHP importer in PHP-WASM. It checks
+all 148 mappings, 512 long URLs, escaped JSON/JavaScript references, prefix and
+longest-match boundaries, non-cascading replacements, nested settings and
+cross-expression overlaps. PHP source syntax is checked as well.
+
+`tests/resources.mjs` imports a 19,496,280-byte native website JSON containing
+148 distinct fresh 256×128 PNGs through the actual browser import controls. It
+requires a successful native draft save, 148 uploaded attachments, all 148 preview
+images loaded, a working custom interaction, hover/focus styling and a real
+Elementor heading-control edit on that imported page. The fixture is removed
+through protected import removal; only its own media is then deleted in this
+disposable site. No production content is affected.
+
+An optional `LSE_RESOURCE_BASELINE=/path/to/0.7.1-admin.js node tests/run.mjs`
+compares frontend batching on the same repaired backend. It creates fresh media
+for each run, cleaning only fixture attachments between runs. Measured import
+times: 91,350 ms before and 40,529 ms after (~56% faster); upload requests: 37
+before and eight after. The test host allows 20 uploads per request. Capture also
+verified delivery and exact replay of a 32-resource batch. These numbers isolate
+batching and do not measure a production host, large-photo decoding or full
+remote-site network capture. They are not a benchmark of the failing old backend.
+
+The 17 MB CSS/4 MB source/600 KB settings/9 MB media regression and all previous
+management, refresh, protection, preview, editor and native-upgrade checks remain.
+The simulated next-version upgrade is 0.7.3; that fixture is never published.
+The SSD is accessible again, and work continues in its existing canonical checkout.

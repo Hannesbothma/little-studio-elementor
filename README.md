@@ -111,6 +111,29 @@ bundled. Import only assets and content you have permission to use.
 
 Install development tools with `npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0`, then `npx playwright install chromium` and `node tests/run.mjs`. The runner builds the actual plugin ZIP, installs it into an isolated WordPress Playground site (not over the development source), exercises import management and uses a simulated next-version package to test the native updater. On this workstation it also reads the current portfolio and Opu JSON for validation and representative conversion checks. The simulated package is never released. See `docs/TESTING.md` and `docs/TESTING-0.6.0.md`.
 
+## Resource-map save repair and batching (0.7.2)
+
+With 148 captured resource URLs, the old combined replacement expression could
+exceed PHP's regex compilation limit. Replacement returned null, so valid CSS
+was rejected at the end of the upload. The matcher now uses small expressions
+across the complete map, merges matches against the original text, preserves
+longest-match/URL boundaries and escaped JavaScript, and reports actual remapping
+errors. It never substitutes an empty stylesheet to bypass validation.
+
+Capture can deliver up to 32 small resources per request. Media groups follow
+PHP's upload-count setting (20 on the test host, up to 32), with a host-aware work
+budget and a soft 4 MB grouping target. Large individual files remain supported
+within host resources. Every completed file/record retains its checkpoint.
+Media groups share one job load/lock, attachment IDs use a cached lookup, and CSS
+is rewritten once per save. Existing import identity is retained for retries.
+
+A same-server batching comparison used 148 fresh 256×128 PNGs in a 19.5 MB native
+website JSON. Import time was 91,350 ms with the old frontend queue and 40,529 ms
+with the new queue; media requests fell from 37 to eight. Both used the fixed
+backend to isolate batching. All 148 images loaded, custom interaction/state CSS
+worked, and the resulting native heading was edited in Elementor. This is not a
+claim of instant imports or universal conversion fidelity.
+
 ## Content-size repair and media imports (0.7.1)
 
 The importer no longer imposes fixed CSS, source-code, shared-style, element-settings,

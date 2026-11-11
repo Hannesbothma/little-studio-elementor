@@ -56,24 +56,26 @@ final class LSE_Importer {
             self::store( $job ); return self::status( [ 'job' => $id ] );
         } catch ( Throwable $error ) { $job['state'] = 'interrupted'; self::store( $job ); throw $error; }
     }
+    public static function media_batch_size() { return max( 1, min( 32, (int) ini_get( 'max_file_uploads' ) ?: 20 ) ); }
+    public static function batch_seconds() { $host = (int) ini_get( 'max_execution_time' ); return $host > 0 ? min( 3.0, max( 0.25, $host / 4 ) ) : 3.0; }
     public static function assets( $input ) {
         $items = $input['assets'] ?? null;
-        if ( ! is_array( $items ) || ! $items || count( $items ) > 4 ) { throw new RuntimeException( 'A media batch must contain 1–4 files.' ); }
+        if ( ! is_array( $items ) || ! $items || count( $items ) > self::media_batch_size() ) { throw new RuntimeException( 'The media batch exceeds the hosting upload count. Reload the importer and retry.' ); }
         $bytes = 0;
         foreach ( $items as $i => $item ) {
             $file = $_FILES['file_' . $i] ?? null;
             if ( ! is_array( $item ) || ! is_array( $file ) || ! isset( $file['size'] ) ) { throw new RuntimeException( 'A media batch is incomplete. Retry the import.' ); }
             $bytes += (int) $file['size'];
         }
-        if ( $bytes > 2 * MB_IN_BYTES ) { throw new RuntimeException( 'This media batch exceeds 2 MB. Use individual uploads.' ); }
-        $original = $_FILES['file'] ?? null; $saved = []; $started = microtime( true );
+        if ( $bytes > 4 * MB_IN_BYTES ) { throw new RuntimeException( 'This media batch exceeds its request work size. Use individual uploads.' ); }
+        $original = $_FILES['file'] ?? null; $saved = []; $started = microtime( true ); $budget = self::batch_seconds(); $job = self::load( $input['job'] ?? '' ); $lock = self::lock( $job['id'] );
         try {
             foreach ( $items as $i => $item ) {
                 $_FILES['file'] = $_FILES['file_' . $i];
-                $saved[] = self::asset( array_merge( $item, [ 'job' => $input['job'] ?? '' ] ) );
-                if ( microtime( true ) - $started >= 1 ) { break; }
+                $saved[] = self::save_asset( $item, $job );
+                if ( microtime( true ) - $started >= $budget ) { break; }
             }
-        } finally { if ( $original === null ) { unset( $_FILES['file'] ); } else { $_FILES['file'] = $original; } }
+        } finally { delete_option( $lock ); if ( $original === null ) { unset( $_FILES['file'] ); } else { $_FILES['file'] = $original; } }
         return [ 'assets' => $saved ];
     }
     private static function page_result( $job, $index, $input ) {
@@ -81,55 +83,87 @@ final class LSE_Importer {
         return self::status( [ 'job' => $job['id'] ] );
     }
     public static function asset( $input ) {
-        $started = microtime( true ); $job = self::load( $input['job'] ?? '' ); $lock = self::lock( $job['id'] );
-        try {
-            if ( $job['state'] !== 'importing' ) { throw new RuntimeException( 'This import no longer accepts files.' ); }
-            $source = (string) ( $input['url'] ?? '' ); if ( ! $source || strlen( $source ) > 2048 ) { throw new RuntimeException( 'Invalid source asset reference.' ); }
-            foreach ( $job['assets'] as $saved ) { if ( $saved['source'] === $source ) { return $saved; } }
-            $file = $_FILES['file'] ?? null; if ( ! is_array( $file ) || (int) $file['error'] !== UPLOAD_ERR_OK || ! is_uploaded_file( $file['tmp_name'] ) || $file['size'] < 1 || $file['size'] > wp_max_upload_size() ) { throw new RuntimeException( 'An asset is missing or exceeds the upload limit.' ); }
-            $ext = strtolower( pathinfo( $file['name'], PATHINFO_EXTENSION ) ); $font_types = [ 'woff' => 'font/woff', 'woff2' => 'font/woff2', 'ttf' => 'font/ttf', 'otf' => 'font/otf' ]; $is_font = isset( $font_types[$ext] ); $is_svg = $ext === 'svg';
-            $types = array_intersect( get_allowed_mime_types(), [ 'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif', 'video/mp4', 'video/webm', 'audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ] );
-            if ( $is_font ) { $signatures = [ 'woff' => [ 'wOFF' ], 'woff2' => [ 'wOF2' ], 'otf' => [ 'OTTO' ], 'ttf' => [ "\x00\x01\x00\x00", 'true' ] ]; $stream = fopen( $file['tmp_name'], 'rb' ); $signature = $stream ? fread( $stream, 4 ) : ''; if ( $stream ) { fclose( $stream ); } if ( ! in_array( $signature, $signatures[$ext], true ) ) { throw new RuntimeException( 'Invalid font signature.' ); } $types = [ $ext => $font_types[$ext] ]; }
-            elseif ( $is_svg ) { $raw = file_get_contents( $file['tmp_name'] ); if ( preg_match( '/<!DOCTYPE|<!ENTITY/i', $raw ) ) { throw new RuntimeException( 'SVG document entities are not allowed.' ); } $clean_svg = self::html( $raw ); $xml = new DOMDocument(); $previous = libxml_use_internal_errors( true ); try { $valid = $xml->loadXML( $clean_svg, LIBXML_NONET ) && $xml->documentElement && $xml->documentElement->localName === 'svg'; } finally { libxml_clear_errors(); libxml_use_internal_errors( $previous ); } if ( ! $valid ) { throw new RuntimeException( 'The SVG file could not be sanitised safely.' ); } file_put_contents( $file['tmp_name'], $clean_svg ); $types = [ 'svg' => 'image/svg+xml' ]; }
-            else { $checked = wp_check_filetype_and_ext( $file['tmp_name'], $file['name'], $types ); if ( empty( $checked['type'] ) || ( str_starts_with( $checked['type'], 'image/' ) && wp_get_image_mime( $file['tmp_name'] ) !== $checked['type'] ) ) { throw new RuntimeException( 'This embedded file is invalid or is not allowed by WordPress.' ); } }
-            $hash = hash_file( 'sha256', $file['tmp_name'] ); $attachment = 0;
-            foreach ( get_posts( [ 'post_type' => 'attachment', 'post_status' => 'inherit', 'numberposts' => 10, 'meta_query' => [ 'relation' => 'OR', [ 'key' => '_lse_sha256', 'value' => $hash ], [ 'key' => '_little_studio_import_sha256', 'value' => $hash ] ] ] ) as $existing ) { $path = wp_get_original_image_path( $existing->ID ) ?: get_attached_file( $existing->ID ); if ( $path && is_file( $path ) && hash_equals( $hash, hash_file( 'sha256', $path ) ) ) { $attachment = $existing->ID; break; } }
-            $reused = (bool) $attachment;
-            if ( ! $attachment ) {
-                require_once ABSPATH . 'wp-admin/includes/file.php'; require_once ABSPATH . 'wp-admin/includes/media.php'; require_once ABSPATH . 'wp-admin/includes/image.php';
-                $mime_filter = static function( $mimes ) use ( $types ) { return array_merge( $mimes, $types ); }; if ( $is_font || $is_svg ) { add_filter( 'upload_mimes', $mime_filter ); }
-                try { $attachment = media_handle_upload( 'file', 0, [ 'post_title' => self::asset_title( $file['name'] ) ], [ 'test_form' => false, 'mimes' => $types ] ); } finally { if ( $is_font || $is_svg ) { remove_filter( 'upload_mimes', $mime_filter ); } }
-                if ( is_wp_error( $attachment ) ) { throw new RuntimeException( $attachment->get_error_message() ); }
-                update_post_meta( $attachment, '_lse_sha256', $hash ); update_post_meta( $attachment, '_lse_job', $job['id'] );
-                if ( ! $is_font ) { update_post_meta( $attachment, '_wp_attachment_image_alt', self::text( $input['alt'] ?? '', 1000 ) ); }
-            }
-            if ( $reused && get_post_meta( $attachment, '_lse_sha256', true ) === $hash && preg_match( '/^(?:captured-)?[a-f0-9]{16,64}$/iD', get_the_title( $attachment ) ) && ! preg_match( '/^(?:captured-)?[a-f0-9]{16,64}$/iD', pathinfo( $file['name'], PATHINFO_FILENAME ) ) ) { wp_update_post( [ 'ID' => $attachment, 'post_title' => self::asset_title( $file['name'] ) ] ); }
-            if ( $is_svg ) {
-                $root = $xml->documentElement; $view = preg_split( '/[\s,]+/', trim( $root->getAttribute( 'viewBox' ) ?: $root->getAttribute( 'viewbox' ) ) );
-                $dimension = static function( $value, $fallback ) { return preg_match( '/^([0-9]+(?:\.[0-9]+)?)(?:px)?$/D', $value, $m ) ? (float) $m[1] : (float) $fallback; };
-                $width = $dimension( $root->getAttribute( 'width' ), $view[2] ?? 0 ); $height = $dimension( $root->getAttribute( 'height' ), $view[3] ?? 0 );
-                $meta = wp_get_attachment_metadata( $attachment ); $meta = is_array( $meta ) ? $meta : [];
-                if ( $width > 0 && $height > 0 && $width <= 100000 && $height <= 100000 && ( empty( $meta['width'] ) || empty( $meta['height'] ) ) ) { $meta['width'] = (int) ceil( $width ); $meta['height'] = (int) ceil( $height ); $meta['file'] = get_post_meta( $attachment, '_wp_attached_file', true ); wp_update_attachment_metadata( $attachment, $meta ); }
-            }
-            $url = wp_get_attachment_url( $attachment ); $saved = [ 'source' => $source, 'url' => $url, 'id' => $attachment, 'reused' => $reused, 'name' => sanitize_file_name( $file['name'] ), 'bytes' => (int) $file['size'], 'hash' => $hash, 'font' => $is_font ];
-            $job['assets'][] = $saved; $job['map'][$source] = $url;
-            if ( $is_font ) { $family = 'LSImport_' . substr( $hash, 0, 16 ); $families = $input['families'] ?? [ $input['family'] ?? '' ]; if ( ! is_array( $families ) ) { throw new RuntimeException( 'Invalid font families.' ); } foreach ( $families as $source_family ) { $source_family = self::text( $source_family, 100 ); if ( $source_family ) { $job['font_map'][$source_family] = $family; } } $job['fonts'][] = [ 'family' => $family, 'url' => $url ]; }
-            self::store( $job ); $saved['processing_ms'] = (int) round( ( microtime( true ) - $started ) * 1000 ); return $saved;
-        } finally { delete_option( $lock ); }
+        $job = self::load( $input['job'] ?? '' ); $lock = self::lock( $job['id'] );
+        try { return self::save_asset( $input, $job ); } finally { delete_option( $lock ); }
+    }
+    private static function save_asset( $input, &$job ) {
+        $started = microtime( true );
+        if ( $job['state'] !== 'importing' ) { throw new RuntimeException( 'This import no longer accepts files.' ); }
+        $source = (string) ( $input['url'] ?? '' ); if ( ! $source || strlen( $source ) > 2048 ) { throw new RuntimeException( 'Invalid source asset reference.' ); }
+        foreach ( $job['assets'] as $saved ) { if ( $saved['source'] === $source ) { return $saved; } }
+        $file = $_FILES['file'] ?? null; if ( ! is_array( $file ) || (int) $file['error'] !== UPLOAD_ERR_OK || ! is_uploaded_file( $file['tmp_name'] ) || $file['size'] < 1 || $file['size'] > wp_max_upload_size() ) { throw new RuntimeException( 'An asset is missing or exceeds the upload limit.' ); }
+        $ext = strtolower( pathinfo( $file['name'], PATHINFO_EXTENSION ) ); $font_types = [ 'woff' => 'font/woff', 'woff2' => 'font/woff2', 'ttf' => 'font/ttf', 'otf' => 'font/otf' ]; $is_font = isset( $font_types[$ext] ); $is_svg = $ext === 'svg';
+        $types = array_intersect( get_allowed_mime_types(), [ 'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif', 'video/mp4', 'video/webm', 'audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ] );
+        if ( $is_font ) { $signatures = [ 'woff' => [ 'wOFF' ], 'woff2' => [ 'wOF2' ], 'otf' => [ 'OTTO' ], 'ttf' => [ "\x00\x01\x00\x00", 'true' ] ]; $stream = fopen( $file['tmp_name'], 'rb' ); $signature = $stream ? fread( $stream, 4 ) : ''; if ( $stream ) { fclose( $stream ); } if ( ! in_array( $signature, $signatures[$ext], true ) ) { throw new RuntimeException( 'Invalid font signature.' ); } $types = [ $ext => $font_types[$ext] ]; }
+        elseif ( $is_svg ) { $raw = file_get_contents( $file['tmp_name'] ); if ( preg_match( '/<!DOCTYPE|<!ENTITY/i', $raw ) ) { throw new RuntimeException( 'SVG document entities are not allowed.' ); } $clean_svg = self::html( $raw ); $xml = new DOMDocument(); $previous = libxml_use_internal_errors( true ); try { $valid = $xml->loadXML( $clean_svg, LIBXML_NONET ) && $xml->documentElement && $xml->documentElement->localName === 'svg'; } finally { libxml_clear_errors(); libxml_use_internal_errors( $previous ); } if ( ! $valid ) { throw new RuntimeException( 'The SVG file could not be sanitised safely.' ); } file_put_contents( $file['tmp_name'], $clean_svg ); $types = [ 'svg' => 'image/svg+xml' ]; }
+        else { $checked = wp_check_filetype_and_ext( $file['tmp_name'], $file['name'], $types ); if ( empty( $checked['type'] ) || ( str_starts_with( $checked['type'], 'image/' ) && wp_get_image_mime( $file['tmp_name'] ) !== $checked['type'] ) ) { throw new RuntimeException( 'This embedded file is invalid or is not allowed by WordPress.' ); } }
+        $hash = hash_file( 'sha256', $file['tmp_name'] ); $attachment = 0;
+        foreach ( get_posts( [ 'post_type' => 'attachment', 'post_status' => 'inherit', 'numberposts' => 10, 'meta_query' => [ 'relation' => 'OR', [ 'key' => '_lse_sha256', 'value' => $hash ], [ 'key' => '_little_studio_import_sha256', 'value' => $hash ] ] ] ) as $existing ) { $path = wp_get_original_image_path( $existing->ID ) ?: get_attached_file( $existing->ID ); if ( $path && is_file( $path ) && hash_equals( $hash, hash_file( 'sha256', $path ) ) ) { $attachment = $existing->ID; break; } }
+        $reused = (bool) $attachment;
+        if ( ! $attachment ) {
+            require_once ABSPATH . 'wp-admin/includes/file.php'; require_once ABSPATH . 'wp-admin/includes/media.php'; require_once ABSPATH . 'wp-admin/includes/image.php';
+            $mime_filter = static function( $mimes ) use ( $types ) { return array_merge( $mimes, $types ); }; if ( $is_font || $is_svg ) { add_filter( 'upload_mimes', $mime_filter ); }
+            try { $attachment = media_handle_upload( 'file', 0, [ 'post_title' => self::asset_title( $file['name'] ) ], [ 'test_form' => false, 'mimes' => $types ] ); } finally { if ( $is_font || $is_svg ) { remove_filter( 'upload_mimes', $mime_filter ); } }
+            if ( is_wp_error( $attachment ) ) { throw new RuntimeException( $attachment->get_error_message() ); }
+            update_post_meta( $attachment, '_lse_sha256', $hash ); update_post_meta( $attachment, '_lse_job', $job['id'] );
+            if ( ! $is_font ) { update_post_meta( $attachment, '_wp_attachment_image_alt', self::text( $input['alt'] ?? '', 1000 ) ); }
+        }
+        if ( $reused && get_post_meta( $attachment, '_lse_sha256', true ) === $hash && preg_match( '/^(?:captured-)?[a-f0-9]{16,64}$/iD', get_the_title( $attachment ) ) && ! preg_match( '/^(?:captured-)?[a-f0-9]{16,64}$/iD', pathinfo( $file['name'], PATHINFO_FILENAME ) ) ) { wp_update_post( [ 'ID' => $attachment, 'post_title' => self::asset_title( $file['name'] ) ] ); }
+        if ( $is_svg ) {
+            $root = $xml->documentElement; $view = preg_split( '/[\s,]+/', trim( $root->getAttribute( 'viewBox' ) ?: $root->getAttribute( 'viewbox' ) ) );
+            $dimension = static function( $value, $fallback ) { return preg_match( '/^([0-9]+(?:\.[0-9]+)?)(?:px)?$/D', $value, $m ) ? (float) $m[1] : (float) $fallback; };
+            $width = $dimension( $root->getAttribute( 'width' ), $view[2] ?? 0 ); $height = $dimension( $root->getAttribute( 'height' ), $view[3] ?? 0 );
+            $meta = wp_get_attachment_metadata( $attachment ); $meta = is_array( $meta ) ? $meta : [];
+            if ( $width > 0 && $height > 0 && $width <= 100000 && $height <= 100000 && ( empty( $meta['width'] ) || empty( $meta['height'] ) ) ) { $meta['width'] = (int) ceil( $width ); $meta['height'] = (int) ceil( $height ); $meta['file'] = get_post_meta( $attachment, '_wp_attached_file', true ); wp_update_attachment_metadata( $attachment, $meta ); }
+        }
+        $url = wp_get_attachment_url( $attachment ); $saved = [ 'source' => $source, 'url' => $url, 'id' => $attachment, 'reused' => $reused, 'name' => sanitize_file_name( $file['name'] ), 'bytes' => (int) $file['size'], 'hash' => $hash, 'font' => $is_font ];
+        $job['assets'][] = $saved; $job['map'][$source] = $url;
+        if ( $is_font ) { $family = 'LSImport_' . substr( $hash, 0, 16 ); $families = $input['families'] ?? [ $input['family'] ?? '' ]; if ( ! is_array( $families ) ) { throw new RuntimeException( 'Invalid font families.' ); } foreach ( $families as $source_family ) { $source_family = self::text( $source_family, 100 ); if ( $source_family ) { $job['font_map'][$source_family] = $family; } } $job['fonts'][] = [ 'family' => $family, 'url' => $url ]; }
+        self::store( $job ); $saved['processing_ms'] = (int) round( ( microtime( true ) - $started ) * 1000 ); return $saved;
     }
     private static function asset_title( $name ) { return ucwords( str_replace( [ '-', '_' ], ' ', pathinfo( sanitize_file_name( $name ), PATHINFO_FILENAME ) ) ); }
     private static function rewrite( $value, $map ) {
         if ( ! $map ) { return $value; }
-        static $cached_map = null, $pairs = [], $pattern = '';
+        static $cached_map = null, $pairs = [], $patterns = [];
         if ( $cached_map !== $map ) {
-            $cached_map = $map;
-            $pairs = $map; foreach ( $map as $from => $to ) { $pairs[str_replace( '/', '\\/', $from )] = str_replace( '/', '\\/', $to ); } unset( $pairs[''] ); uksort( $pairs, static fn( $a, $b ) => strlen( $b ) <=> strlen( $a ) ); $pattern = '#(?:' . implode( '|', array_map( static fn( $key ) => preg_quote( $key, '#' ), array_keys( $pairs ) ) ) . ')(?=$|[^a-zA-Z0-9_./%~\\\\-])#';
+            $cached_map = $map; $pairs = $map;
+            foreach ( $map as $from => $to ) { $pairs[str_replace( '/', '\\/', $from )] = str_replace( '/', '\\/', $to ); }
+            unset( $pairs[''] ); uksort( $pairs, static fn( $a, $b ) => strlen( $b ) <=> strlen( $a ) );
+            $patterns = []; $chunk = []; $bytes = 0;
+            foreach ( array_keys( $pairs ) as $key ) {
+                $quoted = preg_quote( $key, '#' );
+                if ( $chunk && $bytes + strlen( $quoted ) > 4096 ) { $patterns[] = self::rewrite_pattern( $chunk ); $chunk = []; $bytes = 0; }
+                $chunk[] = $quoted; $bytes += strlen( $quoted ) + 1;
+            }
+            if ( $chunk ) { $patterns[] = self::rewrite_pattern( $chunk ); }
         }
-        return self::rewrite_values( $value, $pairs, $pattern );
+        return self::rewrite_values( $value, $pairs, $patterns );
     }
-    private static function rewrite_values( $value, $pairs, $pattern ) {
-        if ( is_array( $value ) ) { return array_map( static fn( $v ) => self::rewrite_values( $v, $pairs, $pattern ), $value ); }
-        return is_string( $value ) && $pairs ? preg_replace_callback( $pattern, static fn( $match ) => $pairs[$match[0]], $value ) : $value;
+    private static function rewrite_pattern( $keys ) { return '#(?:' . implode( '|', $keys ) . ')(?=$|[^a-zA-Z0-9_./%~\\-])#'; }
+    private static function rewrite_match( $pattern, $value, $offset ) {
+        $found = preg_match( $pattern, $value, $match, PREG_OFFSET_CAPTURE, $offset );
+        if ( $found === false ) { throw new RuntimeException( 'A captured resource URL could not be remapped: ' . preg_last_error_msg() ); }
+        return $found ? $match[0] : null;
+    }
+    private static function rewrite_values( $value, $pairs, $patterns ) {
+        if ( is_array( $value ) ) { return array_map( static fn( $v ) => self::rewrite_values( $v, $pairs, $patterns ), $value ); }
+        if ( ! is_string( $value ) || ! $pairs ) { return $value; }
+        if ( count( $patterns ) === 1 ) {
+            $result = preg_replace_callback( $patterns[0], static fn( $match ) => $pairs[$match[0]], $value );
+            if ( ! is_string( $result ) ) { throw new RuntimeException( 'A captured resource URL could not be remapped: ' . preg_last_error_msg() ); }
+            return $result;
+        }
+        // Merge matches from small expressions against the original text. Rewriting each
+        // chunk's output would cascade replacements and break longest-match boundaries.
+        $next = []; foreach ( $patterns as $i => $pattern ) { $next[$i] = self::rewrite_match( $pattern, $value, 0 ); }
+        $cursor = 0; $result = '';
+        while ( true ) {
+            $first = null;
+            foreach ( $next as $match ) { if ( $match !== null && ( $first === null || $match[1] < $first[1] || ( $match[1] === $first[1] && strlen( $match[0] ) > strlen( $first[0] ) ) ) ) { $first = $match; } }
+            if ( $first === null ) { return $cursor ? $result . substr( $value, $cursor ) : $value; }
+            $result .= substr( $value, $cursor, $first[1] - $cursor ) . $pairs[$first[0]]; $cursor = $first[1] + strlen( $first[0] );
+            foreach ( $next as $i => $match ) { if ( $match !== null && $match[1] < $cursor ) { $next[$i] = self::rewrite_match( $patterns[$i], $value, $cursor ); } }
+        }
     }
     private static function html( $html, $interactive = false ) {
         $allowed = wp_kses_allowed_html( 'post' );
@@ -148,6 +182,7 @@ final class LSE_Importer {
     private static function css( $css ) { if ( ! is_string( $css ) ) { throw new RuntimeException( 'Generated styles must be CSS text.' ); } if ( preg_match( '~</?style|@import|expression\s*\(|javascript\s*:|-moz-binding|(?<![a-z-])behavior\s*:|[\x00]~i', $css ) ) { throw new RuntimeException( 'Unsafe CSS was rejected.' ); } return $css; }
     private static function tree( $items, $job, &$count, $depth = 0 ) {
         if ( ! is_array( $items ) ) { throw new RuntimeException( 'Element children must be a list.' ); } $out = [];
+        static $cached_assets = null, $asset_ids = []; if ( $cached_assets !== $job['assets'] ) { $cached_assets = $job['assets']; $asset_ids = array_column( $job['assets'], 'id', 'url' ); }
         foreach ( $items as $item ) {
             ++$count; if ( ! is_array( $item ) || ! preg_match( '/^[a-f0-9]{8}$/', $item['id'] ?? '' ) ) { throw new RuntimeException( 'Invalid Elementor elements.' ); }
             $type = $item['elType'] ?? ''; $widget = $item['widgetType'] ?? '';
@@ -157,7 +192,7 @@ final class LSE_Importer {
             foreach ( [ 'title', 'editor', 'html' ] as $field ) { if ( isset( $settings[$field] ) ) { $settings[$field] = self::html( $settings[$field], $field === 'html' && ( $settings['lse_interactive'] ?? '' ) === 'yes' ); } }
             foreach ( $settings as $field => $value ) { if ( str_contains( $field, 'custom_css' ) || str_starts_with( $field, '__' ) || str_contains( $field, 'shortcode' ) ) { unset( $settings[$field] ); } elseif ( str_contains( $field, 'font_family' ) && is_string( $value ) && isset( $job['font_map'][$value] ) ) { $settings[$field] = $job['font_map'][$value]; } }
             if ( isset( $settings['link'] ) ) { $settings['link']['url'] = self::clean_url( $settings['link']['url'] ?? '' ); }
-            foreach ( [ 'image', 'background_image', 'background_overlay_image' ] as $field ) { if ( isset( $settings[$field]['url'] ) ) { $settings[$field]['url'] = self::clean_url( $settings[$field]['url'] ); foreach ( $job['assets'] as $asset ) { if ( $asset['url'] === $settings[$field]['url'] ) { $settings[$field]['id'] = $asset['id']; } } } }
+            foreach ( [ 'image', 'background_image', 'background_overlay_image' ] as $field ) { if ( isset( $settings[$field]['url'] ) ) { $settings[$field]['url'] = self::clean_url( $settings[$field]['url'] ); if ( isset( $asset_ids[$settings[$field]['url']] ) ) { $settings[$field]['id'] = $asset_ids[$settings[$field]['url']]; } } }
             $out[] = array_merge( [ 'id' => $item['id'], 'elType' => $type, 'isInner' => false, 'settings' => $settings, 'elements' => self::tree( $item['elements'] ?? [], $job, $count, $depth + 1 ) ], $type === 'widget' ? [ 'widgetType' => $widget ] : [] );
         } return $out;
     }
@@ -170,14 +205,14 @@ final class LSE_Importer {
             if ( isset( $page['initial_review_stamp'] ) && ! hash_equals( $page['initial_review_stamp'], self::review_stamp( $id ) ) ) { throw new RuntimeException( 'The page or a shared section changed while refreshing. Your edits were preserved.' ); }
             $count = 0; $tree = self::tree( $input['elements'] ?? [], $job, $count ); if ( ! $count ) { throw new RuntimeException( 'No content was converted.' ); }
             $ids = self::ids( $tree ); if ( count( array_unique( $ids ) ) !== count( $ids ) ) { throw new RuntimeException( 'Element IDs must be unique within a page.' ); }
-            self::css( self::rewrite( $input['css'] ?? '', $job['map'] ) ); $candidate_source = $input['source'] ?? []; if ( ! is_array( $candidate_source ) || ! is_array( $input['seo'] ?? [] ) || ! is_array( $input['warnings'] ?? [] ) || ! is_array( $input['regions'] ?? [] ) ) { throw new RuntimeException( 'Page metadata or source is invalid.' ); }
+            $css = self::css( self::rewrite( $input['css'] ?? '', $job['map'] ) ); $candidate_source = $input['source'] ?? []; if ( ! is_array( $candidate_source ) || ! is_array( $input['seo'] ?? [] ) || ! is_array( $input['warnings'] ?? [] ) || ! is_array( $input['regions'] ?? [] ) ) { throw new RuntimeException( 'Page metadata or source is invalid.' ); }
             foreach ( [ 'html', 'css', 'js' ] as $field ) { if ( isset( $candidate_source[$field] ) && ! is_string( $candidate_source[$field] ) ) { throw new RuntimeException( 'Original source fields must be text.' ); } }
             foreach ( $input['seo'] ?? [] as $field => $value ) { self::text( $value, in_array( $field, [ 'canonical', 'social_image' ], true ) ? 2048 : 1000 ); }
             foreach ( $input['warnings'] ?? [] as $warning ) { self::text( $warning, 1500 ); }
             if ( ! empty( $page['refreshing'] ) ) { self::backup_refresh( $id ); }
             $document = \Elementor\Plugin::$instance->documents->get( $id ); if ( ! $document ) { throw new RuntimeException( 'Elementor could not open the draft.' ); } $document->set_is_built_with_elementor( true );
             $ok = $document->save( [ 'elements' => $tree, 'settings' => [ 'post_status' => $page['target_status'] ?? 'draft', 'template' => $job['layout'], 'hide_title' => 'yes' ] ] ); if ( ! $ok ) { throw new RuntimeException( 'Elementor did not save the page.' ); }
-            $css = self::rewrite( $input['css'] ?? '', $job['map'] ); $css = preg_replace_callback( '/font-family:([^;}]+)/i', static fn( $match ) => 'font-family:' . strtr( $match[1], $job['font_map'] ?? [] ), $css ); $css = str_replace( '__LSE_SCOPE__', 'body.page-id-' . $id, self::css( $css ) );
+            $css = preg_replace_callback( '/font-family:([^;}]+)/i', static fn( $match ) => 'font-family:' . strtr( $match[1], $job['font_map'] ?? [] ), $css ); $css = str_replace( '__LSE_SCOPE__', 'body.page-id-' . $id, self::css( $css ) );
             foreach ( $job['fonts'] as $font ) { $css .= '@font-face{font-family:"' . $font['family'] . '";src:url("' . esc_url_raw( $font['url'] ) . '");font-display:swap}'; }
             update_post_meta( $id, '_lse_css', wp_slash( $css ) );
             $source = $input['source'] ?? []; if ( ! is_array( $source ) ) { throw new RuntimeException( 'Original page source must be an object.' ); }

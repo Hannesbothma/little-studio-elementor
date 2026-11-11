@@ -176,15 +176,15 @@ final class LSE_Capture {
             // before the next one is acknowledged, including if PHP stops between resources.
             if ( file_put_contents( $file, wp_json_encode( $result ), LOCK_EX ) === false ) { throw new RuntimeException( 'The capture cache could not be written.' ); }
             set_transient( self::batch_key( $id ), [ 'file' => $file ], HOUR_IN_SECONDS );
-            $started = microtime( true ); $bytes = 0;
-            for ( $i = 0; $i < 4; ++$i ) {
+            $started = microtime( true ); $bytes = 0; $budget = LSE_Importer::batch_seconds();
+            for ( $i = 0; $i < 32; ++$i ) {
                 $step = self::capture_step( [ 'capture' => $id, 'seq' => $result['seq'] ] );
                 $result['seq'] = $step['seq']; $result['done'] = $step['done'];
                 if ( ! empty( $step['record'] ) ) { $result['records'][] = $step['record']; $bytes += strlen( $step['record']['data'] ); }
                 $result['message'] = $step['message'] ?? 'Website capture complete.';
                 if ( $step['done'] ) { $result['warnings'] = $step['warnings']; $result['truncated'] = $step['truncated']; }
                 if ( file_put_contents( $file, wp_json_encode( $result ), LOCK_EX ) === false ) { throw new RuntimeException( 'The capture checkpoint could not be saved. Restart the capture.' ); }
-                if ( $step['done'] || $bytes >= 2 * MB_IN_BYTES || microtime( true ) - $started >= 1 ) { break; }
+                if ( $step['done'] || $bytes >= 4 * MB_IN_BYTES || microtime( true ) - $started >= $budget ) { break; }
             }
             return $result;
         } finally { delete_option( $lock ); }

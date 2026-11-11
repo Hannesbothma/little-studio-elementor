@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 0.7.1
+Stable tag: 0.7.2
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -161,6 +161,13 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.7.2 =
+* Fix URL replacement failing on large resource maps and returning null instead of CSS.
+* Preserve complete styles, escaped JavaScript URLs and longest-match boundaries.
+* Process up to 32 capture resources per request and use host-sized media groups.
+* Reuse one job lock/load per media group, cache attachment IDs and rewrite CSS once.
+* Verify a 19.5 MB JSON with 148 fresh images, native editing, preview and interactions.
 
 = 0.7.1 =
 * Remove fixed plugin content quotas, including generated CSS and converted-draft payload caps.
