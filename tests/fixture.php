@@ -18,12 +18,18 @@ add_filter( 'pre_http_request', static function( $reply, $args, $url ) {
     if ( ! isset( $files[$path] ) ) { return [ 'headers' => [], 'body' => '', 'response' => [ 'code' => 404, 'message' => 'Not found' ], 'cookies' => [] ]; }
     return [ 'headers' => [ 'content-type' => $files[$path][0] ], 'body' => $files[$path][1], 'response' => [ 'code' => 200, 'message' => 'OK' ], 'cookies' => [] ];
 }, 10, 3 );
+// Emulate slow image processing only for the partial-batch regression check.
+add_action( 'pre_get_posts', static function( $query ) {
+    static $delayed = false;
+    if ( ! $delayed && ( $_POST['action'] ?? '' ) === 'lse_assets' && get_option( '_lse_test_slow_media' ) && ( $query->get( 'meta_key' ) === '_lse_sha256' ) ) { $delayed = true; usleep( 1100000 ); }
+}, 10, 1 );
 // Installed only into a disposable Playground site; never included in plugin ZIPs.
 add_action( 'wp_ajax_lse_test', static function() {
     if ( ! current_user_can( 'manage_options' ) || ! check_ajax_referer( 'lse_import', 'nonce', false ) ) { wp_send_json_error( [ 'message' => 'Forbidden test request.' ], 403 ); }
     $input = json_decode( wp_unslash( $_POST['payload'] ?? '{}' ), true ); $id = (int) ( $input['id'] ?? 0 );
     try {
         switch ( $input['operation'] ?? 'inspect' ) {
+            case 'slow-media': update_option( '_lse_test_slow_media', ! empty( $input['enabled'] ) ); wp_send_json_success( [ 'ok' => true ] );
             case 'edit':
                 $doc = \Elementor\Plugin::$instance->documents->get( $id ); $tree = $doc->get_elements_data();
                 $edit = static function( &$nodes ) use ( &$edit ) { foreach ( $nodes as &$node ) { if ( ( $node['widgetType'] ?? '' ) === 'heading' ) { $node['settings']['title'] = 'Native Elementor edit'; return true; } if ( $edit( $node['elements'] ) ) { return true; } } return false; };

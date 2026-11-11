@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 0.6.1
+Stable tag: 0.6.2
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -158,9 +158,9 @@ PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
 
-= 0.6.1 =
+= 0.6.2 =
 * Simplify URL capture to one website address and fix dialog/sidebar spacing.
-* Batch captures and small media uploads, and overlap conversion with page saves.
+* Batch captures and media uploads, adapt to slow hosts, and overlap conversion with saves.
 * Reuse parsed metadata and avoid repeated checks of all pages after each save.
 * Accept deeply nested source layouts up to 128 editable container levels.
 * Keep source preview protections, media validation, saved-progress retries and edit protection.

@@ -84,7 +84,9 @@ try{
  await rpc('remove_import',{job:capturedImport.id,consent:true,expected_stamps:Object.fromEntries(capturedSaved.pages.map(p=>[p.key,p.current_stamp]))});
  await page.reload();await page.waitForFunction(()=>window.LSEAdmin&&window.LSEManage&&window.LSECapture);
 
- await choose(fixture);const original=await run();const id=original.pages[0].id;const ids=original.pages.map(p=>p.id);
+ await rpc('test',{operation:'slow-media',enabled:true});const uploadsBefore={assets:requestCounts.assets||0,asset:requestCounts.asset||0};
+ await choose(fixture);const original=await run();
+ assert.equal(requestCounts.assets-uploadsBefore.assets,1,'A slow host kept receiving oversized batches');assert.equal(requestCounts.asset-uploadsBefore.asset,3,'Unprocessed media was skipped instead of uploaded individually');await rpc('test',{operation:'slow-media',enabled:false});const id=original.pages[0].id;const ids=original.pages.map(p=>p.id);
  const native=await rpc('test',{id});assert(native.elements?.length);assert.match(native.js,/\\d/);
  // Exercise the new workspace through the same controls used in WordPress.
  assert.equal(await page.locator('.lse-site[aria-current="true"]').count(),1);

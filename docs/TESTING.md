@@ -71,3 +71,18 @@ Capture batches retain a temporary host checkpoint for response replay. Completi
 or cancellation removes it; abandoned checkpoints are cleaned through WordPress
 cron. Captured source code remains unexecuted during analysis. No live WordPress
 site is modified by these tests.
+
+
+### 0.6.2 adaptive media batches
+
+When a host stops a media batch early, the next upload group is reduced to the
+number it actually processed. Remaining files are uploaded individually if the
+host processed only one, rather than repeatedly sending four files. A disposable
+fixture delays the first media lookup inside a batch and verifies that the
+remaining three files are still imported using individual uploads.
+
+The same-server frontend benchmark recorded 18,495 ms before and 13,237 ms after
+for two pages and four small media references: approximately 28% faster in that
+fixture. Four media-upload requests became one. This uses already available
+media and isolates request overhead; it is not a benchmark of real-site network
+capture, large fresh uploads or every hosting environment.
