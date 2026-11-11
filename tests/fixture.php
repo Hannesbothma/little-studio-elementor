@@ -1,4 +1,21 @@
 <?php
+// Public-address responses intercepted only in this disposable test installation.
+add_filter( 'pre_http_request', static function( $reply, $args, $url ) {
+    if ( ! str_starts_with( $url, 'https://93.184.216.34/lse-capture/' ) ) { return $reply; }
+    $path = wp_parse_url( $url, PHP_URL_PATH );
+    $files = [
+        '/lse-capture/' => [ 'text/html; charset=UTF-8', '<!doctype html><html><head><title>Captured fixture</title><link rel="stylesheet" href="theme.css"><script src="app.js"></script></head><body class="capture-body"><nav><a href="./">Home</a><a href="about/">About</a></nav><main><h1>Captured native heading</h1><img src="pixel.png" alt="Captured pixel"><img src="pixel-copy.png" alt="Same pixel"></main><script type="module">window.moduleShouldNotRun=true;</script></body></html>' ],
+        '/lse-capture/about/' => [ 'text/html', '<!doctype html><html><head><title>Captured About</title><link rel="stylesheet" href="../theme.css"></head><body><main><h1>Captured About</h1><a href="../">Home</a></main></body></html>' ],
+        '/lse-capture/theme.css' => [ 'text/css', '@import "extra.css"; body{color:#243442}.capture-body main{padding:40px;background-image:url(pixel.png)}' ],
+        '/lse-capture/extra.css' => [ 'text/css', 'h1{font-size:40px}' ],
+        '/lse-capture/app.js' => [ 'application/javascript', 'window.capturedClassicScript=true;' ],
+        '/lse-capture/pixel.png' => [ 'image/png', base64_decode( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lS8AAAAASUVORK5CYII=' ) ],
+        '/lse-capture/pixel-copy.png' => [ 'image/png', base64_decode( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lS8AAAAASUVORK5CYII=' ) ],
+    ];
+    if ( $path === '/lse-capture/private-redirect' ) { return [ 'headers' => [ 'location' => 'http://127.0.0.1/private' ], 'body' => '', 'response' => [ 'code' => 302, 'message' => 'Found' ], 'cookies' => [] ]; }
+    if ( ! isset( $files[$path] ) ) { return [ 'headers' => [], 'body' => '', 'response' => [ 'code' => 404, 'message' => 'Not found' ], 'cookies' => [] ]; }
+    return [ 'headers' => [ 'content-type' => $files[$path][0] ], 'body' => $files[$path][1], 'response' => [ 'code' => 200, 'message' => 'OK' ], 'cookies' => [] ];
+}, 10, 3 );
 // Installed only into a disposable Playground site; never included in plugin ZIPs.
 add_action( 'wp_ajax_lse_test', static function() {
     if ( ! current_user_can( 'manage_options' ) || ! check_ajax_referer( 'lse_import', 'nonce', false ) ) { wp_send_json_error( [ 'message' => 'Forbidden test request.' ], 403 ); }

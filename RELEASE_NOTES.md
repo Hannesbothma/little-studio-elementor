@@ -1,10 +1,13 @@
-A redesigned workspace for Studio to Elementor.
+Capture a website link and bring it into the existing Elementor import review.
 
-* Browse imported websites from a dedicated sidebar.
-* Search and filter pages, then open Elementor or Preview from the selected-page inspector.
-* Edit page titles and addresses in a focused dialog.
-* Review new imports and page updates in a dialog with visible page selection.
-* Use the same workspace on smaller screens, with a website selector and collapsible inspector.
-* Find reports, shared sections, and homepage/menu setup under Import details.
+* Paste a public website URL directly inside Studio to Elementor.
+* Collect linked pages, styles, images, fonts and classic scripts with page/depth controls.
+* Package supported files into native Little Studio website JSON and download it before importing.
+* Review missing-resource and app-behavior warnings before creating Elementor drafts.
+* Retry interrupted resource requests without skipping capture progress, or cancel without creating pages.
 
-Page refresh, content recovery, Trash/restore, whole-import removal, and native WordPress updates continue through the existing permission and concurrent-edit checks.
+The WordPress capture engine needs no HTTrack installation or external service. It accepts public HTTP/HTTPS addresses on ports 80/443, checks redirects and bounds requests and overall size. Capturing a site does not recreate logins, ecommerce, server features or module-based apps automatically. Review layout and behavior before publishing.
+
+The alternative local route is now available in Little Studio Desktop: File > Website link to JSON, using locally installed HTTrack. The Desktop software is installed separately from this WordPress release.
+
+Existing refresh, content recovery, Trash/restore, whole-import removal and native WordPress updates retain their existing protections.

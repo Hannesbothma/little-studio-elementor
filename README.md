@@ -8,6 +8,19 @@ Headings, text, images, buttons and supported layouts become native Elementor
 elements. Complex regions are reported and may use small editable HTML widgets.
 Imports do not replace existing page content or publish the new drafts.
 
+## Website link capture
+
+Use **Import from website link** in the plugin sidebar. Paste a public URL and
+choose page/depth limits. Keep the tab open, review capture warnings, download the
+native JSON if needed, and import to editable Elementor drafts. Capture itself
+creates no posts or media. The host needs PHP DOM and public outbound HTTP/HTTPS;
+HTTrack is not required on WordPress. Captures are bounded to 600 resources and
+48 MB; only public ports 80/443 are accepted, including redirects.
+
+Alternatively use **Little Studio Desktop > File > Website link to JSON…** for
+the local HTTrack route. Both routes require review; server behavior and JavaScript
+module apps may need rebuilding.
+
 ## Manage imported websites
 
 Choose an imported website from the sidebar, then search or filter its pages. Select a page to open its inspector with **Edit in Elementor**, **Preview page**, title/address editing, Trash/restore, and recovery before the last update. New imports and page updates are reviewed in a dialog. Reports, shared sections, and homepage/menu setup are under **Import details**. On smaller screens, use the website selector and tap a page to open its inspector.
@@ -97,4 +110,4 @@ bundled. Import only assets and content you have permission to use.
 
 ## Repeatable testing
 
-Install development tools with `npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0`, then `npx playwright install chromium` and `node tests/run.mjs`. The runner builds the actual plugin ZIP, installs it into an isolated WordPress Playground site (not over the development source), exercises import management and uses a simulated next-version package to test the native updater. On this workstation it also reads the current portfolio and Opu JSON for validation and representative conversion checks. The simulated package is never released. See `docs/TESTING-0.5.0.md`.
+Install development tools with `npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0`, then `npx playwright install chromium` and `node tests/run.mjs`. The runner builds the actual plugin ZIP, installs it into an isolated WordPress Playground site (not over the development source), exercises import management and uses a simulated next-version package to test the native updater. On this workstation it also reads the current portfolio and Opu JSON for validation and representative conversion checks. The simulated package is never released. See `docs/TESTING-0.6.0.md`.

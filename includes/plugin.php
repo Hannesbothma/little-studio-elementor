@@ -52,7 +52,7 @@ final class LSE_Plugin {
                 },
             ] );
         } );
-        $actions = [ 'imports', 'remove_import', 'manage_page', 'restore_refresh', 'check', 'start', 'asset', 'page', 'finish', 'status', 'undo', 'activate', 'restore', 'update_check', 'update_install' ];
+        $actions = [ 'imports', 'remove_import', 'manage_page', 'restore_refresh', 'check', 'start', 'asset', 'page', 'finish', 'status', 'undo', 'activate', 'restore', 'update_check', 'update_install', 'capture_start', 'capture_step', 'capture_cancel' ];
         $requested = $_REQUEST['action'] ?? '';
         if ( defined( 'DOING_AJAX' ) && DOING_AJAX && is_string( $requested ) && in_array( $requested, array_map( static fn( $action ) => 'lse_' . $action, $actions ), true ) ) { self::$response_level = ob_get_level() + 1; ob_start(); }
         add_action( 'elementor/widgets/register', static function( $manager ) { require_once __DIR__ . '/shared-widget.php'; $manager->register( new LSE_Shared_Widget() ); } );
@@ -68,7 +68,7 @@ final class LSE_Plugin {
                     if ( ! current_user_can( 'manage_options' ) || ! current_user_can( 'edit_pages' ) || ! current_user_can( 'upload_files' ) ) { self::send( false, [ 'message' => 'An administrator with page and upload permissions is required.' ], 403 ); }
                     if ( ! check_ajax_referer( 'lse_import', 'nonce', false ) ) { self::send( false, [ 'message' => 'Your WordPress session expired. Reload the converter page and sign in if needed.' ], 403 ); }
                     $input = self::input( $action );
-                    self::send( true, in_array( $action, [ 'update_check', 'update_install' ], true ) ? LSE_Updates::$action( $input ) : LSE_Importer::$action( $input ) );
+                    self::send( true, str_starts_with( $action, 'capture_' ) ? LSE_Capture::$action( $input ) : ( in_array( $action, [ 'update_check', 'update_install' ], true ) ? LSE_Updates::$action( $input ) : LSE_Importer::$action( $input ) ) );
                 } catch ( Throwable $error ) { self::send( false, [ 'message' => $error->getMessage() ], 400 ); }
             } );
         }
@@ -89,6 +89,7 @@ final class LSE_Plugin {
         wp_enqueue_style( 'lse-admin', plugins_url( 'assets/admin.css', LSE_FILE ), [], LSE_VERSION );
         wp_enqueue_script( 'lse-converter', plugins_url( 'assets/converter.js', LSE_FILE ), [], LSE_VERSION, true );
         wp_enqueue_script( 'lse-admin', plugins_url( 'assets/admin.js', LSE_FILE ), [ 'lse-converter' ], LSE_VERSION, true );
+        wp_enqueue_script( 'lse-capture', plugins_url( 'assets/capture.js', LSE_FILE ), [ 'lse-admin', 'lse-manage' ], LSE_VERSION, true );
         wp_enqueue_script( 'lse-manage', plugins_url( 'assets/manage.js', LSE_FILE ), [ 'lse-admin' ], LSE_VERSION, true );
         if ( current_user_can( 'update_plugins' ) ) { wp_enqueue_script( 'lse-updates', plugins_url( 'assets/updates.js', LSE_FILE ), [ 'lse-admin' ], LSE_VERSION, true ); wp_add_inline_script( 'lse-updates', 'window.LSE_UPDATE_STATE=' . wp_json_encode( LSE_Updates::state() ) . ';', 'before' ); }
         wp_add_inline_script( 'lse-admin', 'window.LSE_CONFIG=' . wp_json_encode( [ 'version' => LSE_VERSION, 'ajax' => admin_url( 'admin-ajax.php' ), 'nonce' => wp_create_nonce( 'lse_import' ), 'elementor' => defined( 'ELEMENTOR_VERSION' ) ? ELEMENTOR_VERSION : '', 'pro' => defined( 'ELEMENTOR_PRO_VERSION' ), 'maxUpload' => wp_max_upload_size(), 'maxPost' => wp_convert_hr_to_bytes( ini_get( 'post_max_size' ) ), 'pageTransport' => function_exists( 'gzdecode' ) ? 'json-gzip-v1' : 'json-file-v1', 'pageRest' => rest_url( 'little-studio-elementor/v1/converted-page' ), 'restNonce' => wp_create_nonce( 'wp_rest' ), 'conversionVersion' => 'interactive-v1', 'maxPagePayload' => 16 * MB_IN_BYTES, 'canScripts' => current_user_can( 'unfiltered_html' ), 'home' => home_url( '/' ), 'lastJob' => get_user_meta( get_current_user_id(), '_lse_last_job', true ) ] ) . ';', 'before' );
@@ -114,6 +115,7 @@ final class LSE_Plugin {
             <div class="lse-layout">
                 <aside class="lse-sidebar" aria-labelledby="lse-sidebar-title">
                     <button type="button" class="button button-primary" id="lse-new-import"><span aria-hidden="true">+</span> New import</button>
+                    <button type="button" class="button" data-capture-open>Import from website link</button>
                     <label for="lse-import-list" class="screen-reader-text">Imported website</label>
                     <select id="lse-import-list"><option value="">New import</option></select>
                     <h2 id="lse-sidebar-title">Imported websites</h2>
@@ -121,7 +123,7 @@ final class LSE_Plugin {
                     <button type="button" class="button lse-subtle" id="lse-more-imports" hidden>More websites</button>
                 </aside>
                 <main class="lse-workspace">
-                    <div id="lse-status" class="lse-notice" role="status" aria-live="polite">Choose a JSON or HTML file to get started.</div>
+                    <div id="lse-status" class="lse-notice" role="status" aria-live="polite">Choose a file or capture a website link to get started.</div>
                     <p id="lse-manage-message" class="lse-notice" role="status" aria-live="polite"></p>
                     <?php if ( ! defined( 'ELEMENTOR_VERSION' ) ) : ?><p class="lse-notice is-error">Activate Elementor before importing.</p><?php endif; ?>
                     <input type="file" id="lse-file" accept=".json,.html,.htm,application/json,text/html" hidden>
@@ -131,6 +133,7 @@ final class LSE_Plugin {
                             <h1>Bring your website into Elementor</h1>
                             <p>Drop a Little Studio JSON export or an HTML file here.</p>
                             <button type="button" class="button button-primary" id="lse-choose-file">Choose file</button>
+                            <button type="button" class="button" data-capture-open>Paste website link</button>
                             <small>Imported pages are saved as drafts.</small>
                         </div>
                     </div>
@@ -184,10 +187,23 @@ final class LSE_Plugin {
                     <div class="lse-setup" id="lse-setup" hidden><div id="lse-findings"></div></div>
                     <details class="lse-details"><summary>Import options</summary><div class="lse-options"><label>Website name<input id="lse-name" type="text" maxlength="150"></label><label>Page layout<select id="lse-layout"><option value="elementor_canvas">Standalone pages</option><option value="elementor_header_footer">Use WordPress header and footer</option></select></label></div><label class="lse-check"><input type="checkbox" id="lse-scripts" checked> Keep website interactions</label><label class="lse-check"><input type="checkbox" id="lse-css" checked> Keep website styling</label></details>
                     <label class="lse-check" id="lse-overwrite-option" hidden><input type="checkbox" id="lse-overwrite"> Allow replacing selected edited or published pages.</label>
-                    <div class="lse-dialog-actions"><button type="button" class="button" id="lse-reset">Cancel</button><span id="lse-import-scope">New pages are saved as drafts.</span><button type="button" class="button button-primary" id="lse-import">Import</button></div>
+                    <div class="lse-dialog-actions"><button type="button" class="button" id="lse-reset">Cancel</button><button type="button" class="button" id="lse-source-download">Download JSON</button><span id="lse-import-scope">New pages are saved as drafts.</span><button type="button" class="button button-primary" id="lse-import">Import</button></div>
                 </div>
                 <div id="lse-progress" hidden><progress id="lse-meter" max="100" value="0"></progress><p id="lse-current" role="status"></p><div class="lse-actions"><button class="button" type="button" id="lse-retry" hidden>Retry</button><button class="button" type="button" id="lse-check" hidden>Check progress</button><button class="button" type="button" id="lse-error-details" hidden>Error details</button><button class="button lse-danger" type="button" id="lse-cancel" hidden>Remove import</button></div></div>
             </div>
+        </dialog>
+        <dialog id="lse-capture-dialog" class="lse-dialog" aria-labelledby="lse-capture-title">
+            <form id="lse-capture-form">
+                <header class="lse-dialog-head"><h2 id="lse-capture-title">Import from a website link</h2><button type="button" class="button" id="lse-capture-close">Close</button></header>
+                <div class="lse-dialog-body">
+                    <p>Capture public pages, styles, images and fonts into a Little Studio JSON, then review the Elementor import.</p>
+                    <label class="lse-field">Website address<input id="lse-capture-url" type="url" placeholder="https://your-website.com" required maxlength="2048"></label>
+                    <div class="lse-options"><label class="lse-field">Maximum pages<input id="lse-capture-pages" type="number" min="1" max="200" value="25" required></label><label class="lse-field">Link depth<select id="lse-capture-depth"><option value="0">Starting page only</option><option value="1">1 level</option><option value="3" selected>3 levels</option><option value="6">6 levels</option></select></label></div>
+                    <p class="lse-small">Keep this tab open. Review the result before publishing. Logins, stores, forms and JavaScript apps may need rebuilding.</p>
+                    <p id="lse-capture-status" class="lse-notice" role="status" aria-live="polite"></p>
+                </div>
+                <footer class="lse-dialog-actions"><button type="button" class="button" id="lse-capture-retry" hidden>Retry capture</button><button type="submit" class="button button-primary" id="lse-capture-start">Capture website</button></footer>
+            </form>
         </dialog>
         <dialog id="lse-page-dialog" class="lse-dialog lse-page-dialog" aria-labelledby="lse-page-dialog-title">
             <form id="lse-page-form">

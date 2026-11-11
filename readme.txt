@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 0.5.0
+Stable tag: 0.6.0
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -66,8 +66,8 @@ Website interactions are enabled during import for administrators with
 unfiltered HTML permission. The single interactions checkbox states that code
 from the selected file will run on imported drafts. Source analysis never runs
 that code. Keep interactions off for a file you do not trust. Inline handlers and external script tags are removed.
-External stylesheets/scripts, npm/PHP dependencies and missing/local-PC files are
-not fetched or installed. Package required images/fonts in Little Studio first.
+File imports do not fetch missing external files or install npm/PHP dependencies.
+Website link capture packages supported public files before the import review.
 Ordinary content uses computed native styles; interactive sections retain scoped
 source styles, attributes, breakpoints and state selectors.
 
@@ -93,8 +93,8 @@ There is no destructive uninstall routine or automatic media deletion.
 
 Only the most recent import can be resumed from the interface. Choose the same
 file, selection, name and options to continue it. A new import uses new drafts.
-Cross-import updates and arbitrary HTML-file uploads are outside version 0.1.
-HTML may be supplied through the existing code-canvas JSON format.
+Select an existing import and Update from file to refresh its pages.
+Native JSON and self-contained HTML files can be imported.
 
 Limits follow the native format: 200 pages, 200 packaged/inline files, 8 MB per
 file, 32 MB combined media, 2 MB source code per page, 16 MB total source code,
@@ -113,6 +113,9 @@ guarantee acceptance by every host. Nonces, permissions and content checks remai
 
 No converter service, AI API, CDN library, telemetry or API key is required.
 Analysis occurs in your browser; import sends data to your WordPress server.
+Website link capture makes public HTTP requests from your WordPress host to the
+source site and linked file hosts. Captured files are held in your browser until
+you download the JSON or import them. Crawl metadata expires after one hour.
 The source preview blocks scripts and external requests. Imported pages may still
 reference external media, fonts or links when those were not packaged; review them.
 Elementor itself can make its usual network requests. This plugin does not control
@@ -128,7 +131,36 @@ Elementor 4.3.6, PHP 8.3 and WordPress 7.1.3 in a disposable local Playground.
 Elementor Pro was not available for direct testing. Test on your own staging
 versions before production use. No live website is changed by building this ZIP.
 
+== Website link capture ==
+
+Choose Import from website link, paste a public HTTP/HTTPS address and choose
+page/depth limits. Your WordPress host captures one resource per request; it does
+not require HTTrack or an external capture service. Keep the tab open. Retry
+continues the current capture; reloading requires starting the capture again.
+Capture is limited to the same origin for pages, 600 resources and 48 MB fetched.
+Individual responses are bounded to 2 MB for pages or 8 MB for other resources.
+Only public addresses on ports 80/443 are accepted. Linked CDN assets may be
+packaged. Logins, browser-rendered module apps and server behavior are not cloned.
+
+Review capture warnings and download the website JSON from the review dialog.
+Import then creates ordinary protected Elementor drafts using the existing flow.
+Captured classic JavaScript can run on imported pages when Keep website
+interactions is enabled; only use trusted sources. The capture preview itself
+does not execute it. A capture does not publish or replace an existing import.
+
+Alternatively use Little Studio Desktop > File > Website link to JSON. Desktop
+uses the installed HTTrack engine and saves the same native JSON format.
+The WordPress capture engine fetches public pages on request; no source scripts,
+PHP files, account data or application backends are installed by capture.
+
 == Changelog ==
+
+= 0.6.0 =
+* Capture a public website link directly in the plugin and review it before importing.
+* Package linked styles, images, fonts and classic scripts into portable website JSON.
+* Download source JSON and review capture limits or missing resources.
+* Keep bounded, administrator-only captures separate from page and media imports.
+
 
 = 0.5.0 =
 * Navigate imported websites from a dedicated sidebar.

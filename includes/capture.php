@@ -1,0 +1,144 @@
+<?php
+if ( ! defined( 'ABSPATH' ) ) { exit; }
+
+/** A bounded, administrator-only public website capture. Each request fetches one resource. */
+final class LSE_Capture {
+    private static function url( $value, $base = '' ) {
+        if ( ! is_string( $value ) || strlen( $value ) > 2048 ) { return ''; }
+        $value = html_entity_decode( trim( $value ), ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+        if ( $value === '' || $value[0] === '#' || preg_match( '~^(?:data|javascript|mailto|tel|file):~i', $value ) ) { return ''; }
+        if ( $base ) { $value = WP_Http::make_absolute_url( $value, $base ); }
+        $value = preg_replace( '/#.*$/s', '', $value );
+        $p = wp_parse_url( $value );
+        if ( ! $p || ! in_array( strtolower( $p['scheme'] ?? '' ), [ 'http', 'https' ], true ) || empty( $p['host'] ) || isset( $p['user'] ) || isset( $p['pass'] ) || ! in_array( (int) ( $p['port'] ?? 443 ), [ 80, 443 ], true ) ) { return ''; }
+        $scheme = strtolower( $p['scheme'] ); $port = (int) ( $p['port'] ?? ( $scheme === 'https' ? 443 : 80 ) );
+        $segments = explode( '/', $p['path'] ?? '/' ); $normalized = [];
+        foreach ( $segments as $index => $segment ) {
+            $dot = strtolower( str_replace( '%2e', '.', strtolower( $segment ) ) );
+            if ( $dot === '.' || $dot === '..' ) {
+                if ( $dot === '..' && count( $normalized ) > 1 ) { array_pop( $normalized ); }
+                if ( $index === count( $segments ) - 1 ) { $normalized[] = ''; }
+            } else { $normalized[] = $segment; }
+        }
+        $path = '/' . ltrim( implode( '/', $normalized ), '/' );
+        return $scheme . '://' . strtolower( $p['host'] ) . ( $port === ( $scheme === 'https' ? 443 : 80 ) ? '' : ':' . $port ) . $path . ( isset( $p['query'] ) ? '?' . $p['query'] : '' );
+    }
+    private static function safe( $url ) {
+        $host = wp_parse_url( $url, PHP_URL_HOST );
+        $ip = $host ? gethostbyname( $host ) : '';
+        if ( ! $host || ! filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE ) || ! wp_http_validate_url( $url ) ) { throw new RuntimeException( 'Capture requires a public HTTP or HTTPS address on port 80 or 443.' ); }
+    }
+    private static function origin( $url ) { $p = wp_parse_url( $url ); return strtolower( ( $p['scheme'] ?? '' ) . '://' . ( $p['host'] ?? '' ) . ':' . ( $p['port'] ?? ( ( $p['scheme'] ?? '' ) === 'https' ? 443 : 80 ) ) ); }
+    private static function key( $id ) { return 'lse_capture_' . get_current_user_id() . '_' . $id; }
+    private static function load( $input ) {
+        $id = $input['capture'] ?? '';
+        if ( ! is_string( $id ) || ! preg_match( '/^[a-f0-9]{32}$/D', $id ) ) { throw new RuntimeException( 'Invalid capture session.' ); }
+        $job = get_transient( self::key( $id ) );
+        if ( ! is_array( $job ) ) { throw new RuntimeException( 'Capture expired. Start again from the website link.' ); }
+        return [ $id, $job ];
+    }
+    public static function capture_start( $input ) {
+        if ( ! class_exists( 'DOMDocument' ) ) { throw new RuntimeException( 'Website capture needs the PHP DOM extension. Use the Desktop capture option on this host.' ); }
+        $url = self::url( $input['url'] ?? '' ); self::safe( $url );
+        $id = bin2hex( random_bytes( 16 ) );
+        $job = [ 'source' => $url, 'origin' => self::origin( $url ), 'queue' => [ [ 'url' => $url, 'kind' => 'page', 'depth' => 0 ] ], 'seen' => [ $url => true ], 'pages' => 1, 'maxPages' => max( 1, min( 200, (int) ( $input['pages'] ?? 25 ) ) ), 'depth' => max( 0, min( 6, (int) ( $input['depth'] ?? 3 ) ) ), 'seq' => 0, 'bytes' => 0, 'warnings' => [], 'truncated' => false ];
+        // One live capture per administrator. Starting afresh discards only crawl metadata.
+        $previous = get_user_meta( get_current_user_id(), '_lse_capture', true );
+        if ( is_string( $previous ) && preg_match( '/^[a-f0-9]{32}$/D', $previous ) ) { delete_transient( self::key( $previous ) ); }
+        set_transient( self::key( $id ), $job, HOUR_IN_SECONDS ); update_user_meta( get_current_user_id(), '_lse_capture', $id );
+        return [ 'capture' => $id, 'source' => $url, 'seq' => 0 ];
+    }
+    private static function enqueue( &$job, $value, $base, $kind, $depth ) {
+        $url = self::url( $value, $base );
+        if ( ! $url || isset( $job['seen'][$url] ) ) { return; }
+        if ( count( $job['seen'] ) >= 600 ) { $job['truncated'] = true; return; }
+        if ( $kind === 'page' ) {
+            if ( self::origin( $url ) !== $job['origin'] ) { return; }
+            if ( $depth > $job['depth'] || $job['pages'] >= $job['maxPages'] ) { $job['truncated'] = true; return; }
+            if ( preg_match( '~\.(?:zip|pdf|xml|json|docx?|xlsx?|jpe?g|png|gif|webp|svg|mp[34]|webm)(?:\?|$)~i', $url ) ) { return; }
+            ++$job['pages'];
+        }
+        $job['seen'][$url] = true;
+        $job['queue'][] = [ 'url' => $url, 'kind' => $kind, 'depth' => $depth ];
+    }
+    private static function css( &$job, $css, $base ) {
+        preg_match_all( '~url\(\s*[\'"]?([^\'"\)]+)[\'"]?\s*\)|@import\s+[\'"]([^\'"]+)[\'"]~i', $css, $matches, PREG_SET_ORDER );
+        foreach ( $matches as $m ) { self::enqueue( $job, trim( $m[1] ?: ( $m[2] ?? '' ) ), $base, 'asset', 0 ); }
+    }
+    private static function discover( &$job, $body, $type, $url, $item ) {
+        if ( $type === 'text/css' ) { self::css( $job, $body, $url ); return; }
+        if ( $type !== 'text/html' || $item['kind'] !== 'page' ) { return; }
+        $dom = new DOMDocument(); $old = libxml_use_internal_errors( true );
+        try { $dom->loadHTML( '<?xml encoding="UTF-8">' . $body, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING ); }
+        finally { libxml_clear_errors(); libxml_use_internal_errors( $old ); }
+        $base = $url;
+        $bases = $dom->getElementsByTagName( 'base' );
+        if ( $bases->length ) { $base = self::url( $bases->item( 0 )->getAttribute( 'href' ), $url ) ?: $url; }
+        // Queue files before linked pages so a page limit never starves its styles or images.
+        foreach ( $dom->getElementsByTagName( '*' ) as $el ) {
+            $tag = strtolower( $el->tagName );
+            if ( $tag === 'style' ) { self::css( $job, $el->textContent, $base ); }
+            if ( $el->hasAttribute( 'style' ) ) { self::css( $job, $el->getAttribute( 'style' ), $base ); }
+            if ( in_array( $tag, [ 'img', 'script', 'source', 'video', 'audio' ], true ) ) {
+                foreach ( [ 'src', 'poster', 'data-src', 'data-lazy-src', 'data-original' ] as $attr ) { self::enqueue( $job, $el->getAttribute( $attr ), $base, 'asset', 0 ); }
+                foreach ( [ 'srcset', 'data-srcset' ] as $attr ) { foreach ( explode( ',', $el->getAttribute( $attr ) ) as $candidate ) { self::enqueue( $job, preg_split( '/\s+/', trim( $candidate ) )[0], $base, 'asset', 0 ); } }
+            }
+            if ( in_array( $tag, [ 'use', 'image' ], true ) ) { foreach ( [ 'href', 'xlink:href' ] as $attr ) { self::enqueue( $job, $el->getAttribute( $attr ), $base, 'asset', 0 ); } }
+            if ( $tag === 'link' && preg_match( '/(?:^|\s)(?:stylesheet|icon|preload)(?:\s|$)/i', $el->getAttribute( 'rel' ) ) ) { self::enqueue( $job, $el->getAttribute( 'href' ), $base, 'asset', 0 ); }
+        }
+        foreach ( $dom->getElementsByTagName( 'a' ) as $a ) { self::enqueue( $job, $a->getAttribute( 'href' ), $base, 'page', $item['depth'] + 1 ); }
+    }
+    public static function capture_step( $input ) {
+        [ $id, $job ] = self::load( $input );
+        $lock = self::key( $id ) . '_lock';
+        $held = get_option( $lock );
+        if ( $held && (int) $held < time() - 90 ) { delete_option( $lock ); }
+        if ( ! add_option( $lock, time(), '', false ) ) { throw new RuntimeException( 'This capture request is still running. Wait a moment, then retry.' ); }
+        try {
+            // Re-read after acquiring the lock. Only an acknowledged response advances the queue.
+            [ , $job ] = self::load( $input ); $seq = $input['seq'] ?? -1;
+            if ( ! is_int( $seq ) || ( $seq !== $job['seq'] && $seq !== $job['seq'] + 1 ) ) { throw new RuntimeException( 'Capture sequence changed. Start the capture again.' ); }
+            if ( $seq === $job['seq'] + 1 ) {
+                if ( ! isset( $job['pending'] ) ) { throw new RuntimeException( 'No capture response is awaiting acknowledgement.' ); }
+                array_shift( $job['queue'] ); $job['bytes'] += $job['pending']; unset( $job['pending'] ); $job['seq'] = $seq;
+            }
+            if ( ! $job['queue'] ) { set_transient( self::key( $id ), $job, HOUR_IN_SECONDS ); return [ 'done' => true, 'seq' => $job['seq'], 'warnings' => $job['warnings'], 'truncated' => $job['truncated'] ]; }
+            $item = $job['queue'][0]; $url = $item['url']; $record = null; $size = 0;
+            try {
+                $limit = $item['kind'] === 'page' ? 2 * MB_IN_BYTES : 8 * MB_IN_BYTES;
+                for ( $redirect = 0; $redirect <= 3; ++$redirect ) {
+                    self::safe( $url );
+                    if ( $item['kind'] === 'page' && $job['seq'] > 0 && self::origin( $url ) !== $job['origin'] ) { throw new RuntimeException( 'A linked page redirected outside the captured website.' ); }
+                    $response = wp_safe_remote_get( $url, [ 'timeout' => 6, 'redirection' => 0, 'limit_response_size' => $limit + 1, 'cookies' => [], 'user-agent' => 'LittleStudioCapture/' . LSE_VERSION, 'headers' => [ 'Accept' => '*/*' ] ] );
+                    if ( is_wp_error( $response ) ) { throw new RuntimeException( $response->get_error_message() ); }
+                    $code = wp_remote_retrieve_response_code( $response );
+                    if ( ! in_array( $code, [ 301, 302, 303, 307, 308 ], true ) ) { break; }
+                    $url = self::url( wp_remote_retrieve_header( $response, 'location' ), $url );
+                    if ( ! $url || $redirect === 3 ) { throw new RuntimeException( 'Unsupported or excessive redirects.' ); }
+                }
+                if ( $code < 200 || $code >= 300 ) { throw new RuntimeException( 'HTTP ' . $code ); }
+                $body = wp_remote_retrieve_body( $response ); $size = strlen( $body );
+                if ( $size > $limit || $job['bytes'] + $size > 48 * MB_IN_BYTES ) { throw new RuntimeException( 'Capture size limit reached. Reduce the page count or use Desktop capture.' ); }
+                $header = wp_remote_retrieve_header( $response, 'content-type' ); $type = strtolower( trim( explode( ';', $header )[0] ) );
+                if ( $type === 'application/xhtml+xml' ) { $type = 'text/html'; }
+                if ( ! $type ) { $type = $item['kind'] === 'page' ? 'text/html' : ( wp_check_filetype( wp_parse_url( $url, PHP_URL_PATH ) )['type'] ?: 'application/octet-stream' ); }
+                if ( $item['kind'] === 'page' && $type !== 'text/html' ) { throw new RuntimeException( 'The linked address did not return an HTML page.' ); }
+                if ( $item['kind'] === 'page' && $job['seq'] === 0 ) { $job['origin'] = self::origin( $url ); }
+                preg_match( '/charset\s*=\s*["\']?([\w-]+)/i', $header, $charset );
+                $text = str_starts_with( $type, 'text/' ) || str_contains( $type, 'javascript' );
+                $utf8 = $text && function_exists( 'mb_convert_encoding' ) ? mb_convert_encoding( $body, 'UTF-8', $charset[1] ?? 'UTF-8' ) : $body;
+                $job['seen'][$url] = true;
+                if ( $text ) { self::discover( $job, $utf8, $type, $url, $item ); }
+                $record = [ 'url' => $url, 'requested' => $item['url'], 'kind' => $item['kind'], 'type' => $type, 'data' => base64_encode( $text ? $utf8 : $body ) ];
+            } catch ( Throwable $e ) {
+                if ( $job['seq'] === 0 ) { throw new RuntimeException( 'The starting page could not be captured: ' . $e->getMessage() ); }
+                $job['warnings'][$item['url']] = 'Could not package ' . $item['url'] . ': ' . $e->getMessage(); $size = 0;
+            }
+            $job['pending'] = $size; set_transient( self::key( $id ), $job, HOUR_IN_SECONDS );
+            return [ 'done' => false, 'seq' => $job['seq'] + 1, 'record' => $record, 'remaining' => count( $job['queue'] ) - 1, 'message' => 'Captured ' . ( $job['seq'] + 1 ) . ' resources; ' . ( count( $job['queue'] ) - 1 ) . ' queued.' ];
+        } finally { delete_option( $lock ); }
+    }
+    public static function capture_cancel( $input ) {
+        [ $id ] = self::load( $input ); delete_transient( self::key( $id ) ); return [ 'cancelled' => true ];
+    }
+}

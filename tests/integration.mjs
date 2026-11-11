@@ -1,5 +1,6 @@
 import {chromium} from 'playwright';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {mkdir,writeFile,readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 const origin=process.env.LSE_TEST_URL||'http://127.0.0.1:9415';
@@ -30,6 +31,46 @@ try{
  await page.goto(origin+'/wp-admin/admin.php?page=little-studio-elementor');
  await page.waitForFunction(()=>window.LSEAdmin&&window.LSEManage);
  const versions=await rpc('test',{operation:'versions'});
+ // Exercise real URL capture, packaging, download and native Elementor import.
+ await page.waitForFunction(()=>window.LSECapture);
+ await assert.rejects(()=>rpc('capture_start',{url:'http://127.0.0.1/'}),/public HTTP/);
+ await assert.rejects(()=>rpc('capture_start',{url:'file:///etc/passwd'}),/public HTTP/);
+ const redirected=await rpc('capture_start',{url:'https://93.184.216.34/lse-capture/private-redirect',pages:1});
+ await assert.rejects(()=>rpc('capture_step',{capture:redirected.capture,seq:0}),/public HTTP/);
+ await rpc('capture_cancel',{capture:redirected.capture});
+ const repeated=await rpc('capture_start',{url:'https://93.184.216.34/lse-capture/',pages:2,depth:1});
+ const firstResponse=await rpc('capture_step',{capture:repeated.capture,seq:0});
+ const duplicateResponse=await rpc('capture_step',{capture:repeated.capture,seq:0});
+ assert.deepEqual(duplicateResponse,firstResponse,'Retry lost or advanced the resource response');
+ await assert.rejects(()=>rpc('capture_step',{capture:repeated.capture,seq:3}),/sequence/);
+ await rpc('capture_cancel',{capture:repeated.capture});
+ await page.locator('[data-capture-open]').first().click();
+ await page.locator('#lse-capture-url').fill('https://93.184.216.34/lse-capture/');
+ await page.locator('#lse-capture-pages').fill('2');
+ await page.locator('#lse-capture-depth').selectOption('1');
+ await page.locator('#lse-capture-start').click();
+ await page.waitForFunction(()=>window.LSEAdmin.project?.capture&&!window.LSECapture.busy,{},{timeout:120000});
+ const captured=await page.evaluate(()=>window.LSEAdmin.project);
+ await writeFile(new URL('captured-website.json',dir),JSON.stringify(captured,(key,value)=>key==='bytes'?undefined:value,2));
+ assert.equal(captured.site_id,'capture-'+createHash('sha256').update('https://93.184.216.34/lse-capture/').digest('hex').slice(0,24),'Desktop and WordPress capture identities differ');
+ assert.equal(captured.pages[0].key,'page-'+createHash('sha256').update(captured.pages[0].url).digest('hex').slice(0,20));
+ assert.equal(captured.pages.length,2);assert.equal(captured.assets.length,1,'Capture failed to deduplicate media');
+ assert.equal(captured.site.navigation.length,2);assert.match(captured.pages[0].css,/font-size:40px/);
+ assert.match(captured.pages[0].html,/capture-body/);assert.match(captured.pages[0].js,/capturedClassicScript/);
+ assert.equal(await page.evaluate(()=>window.capturedClassicScript),undefined,'Capture executed source scripts');
+ assert(captured.capture.warnings.some(w=>w.includes('JavaScript modules')));
+ assert.match(await page.locator('#lse-findings').innerText(),/JavaScript modules/);
+ const downloadEvent=page.waitForEvent('download');await page.locator('#lse-source-download').click();
+ const downloaded=JSON.parse(await readFile(await(await downloadEvent).path(),'utf8'));
+ assert.equal(downloaded.assets[0].bytes,undefined);assert(downloaded.assets[0].data.startsWith('data:image/png;base64,'));
+ const capturedImport=await run();
+ const capturedNative=await rpc('test',{id:capturedImport.pages[0].id});
+ assert.match(JSON.stringify(capturedNative.elements),/"widgetType":"heading"/);
+ assert.match(JSON.stringify(capturedNative.elements),/Captured native heading/);
+ const capturedSaved=await rpc('status',{job:capturedImport.id});
+ await rpc('remove_import',{job:capturedImport.id,consent:true,expected_stamps:Object.fromEntries(capturedSaved.pages.map(p=>[p.key,p.current_stamp]))});
+ await page.reload();await page.waitForFunction(()=>window.LSEAdmin&&window.LSEManage&&window.LSECapture);
+
  await choose(fixture);const original=await run();const id=original.pages[0].id;const ids=original.pages.map(p=>p.id);
  const native=await rpc('test',{id});assert(native.elements?.length);assert.match(native.js,/\\d/);
  // Exercise the new workspace through the same controls used in WordPress.
@@ -138,7 +179,7 @@ try{
  await page.screenshot({path:fileURLToPath(new URL('single-workspace.png',dir)),fullPage:true});
  assert.deepEqual(failures,[],'Unexpected browser errors');
  const updater=process.env.LSE_TEST_UPDATER?await rpc('test',{operation:'updater',id}):null;
- const result={ok:true,versions,initialImport:true,refreshSameIds:true,sourceJSBackslashes:true,restoreRefresh:true,nativeElementorEditProtected:true,publishedRefreshConsent:true,concurrentEditProtected:true,titleAndSlug:true,trashRestore:true,foreignPageAndAccountDenied:true,htmlImport:true,singleWorkspace:true,sidebarAndInspector:true,pageSearchAndFilters:true,mobileWorkspace:true,metadataDialog:true,wholeImportRemoval:true,staleBulkRemovalProtected:true,unrelatedImportRetained:true,actualWebsiteConversions:actual,updater};
+ const result={ok:true,versions,websiteURLCapture:true,captureRetryIdempotent:true,privateCaptureURLsDenied:true,privateRedirectDenied:true,capturedJSONDownload:true,capturedNativeElementor:true,initialImport:true,refreshSameIds:true,sourceJSBackslashes:true,restoreRefresh:true,nativeElementorEditProtected:true,publishedRefreshConsent:true,concurrentEditProtected:true,titleAndSlug:true,trashRestore:true,foreignPageAndAccountDenied:true,htmlImport:true,singleWorkspace:true,sidebarAndInspector:true,pageSearchAndFilters:true,mobileWorkspace:true,metadataDialog:true,wholeImportRemoval:true,staleBulkRemovalProtected:true,unrelatedImportRetained:true,actualWebsiteConversions:actual,updater};
  await writeFile(new URL('integration.json',dir),JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result));
 }catch(error){await writeFile(new URL('integration-error.json',dir),JSON.stringify({ok:false,error:error.message,stack:error.stack,browserErrors:failures},null,2));await page.screenshot({path:fileURLToPath(new URL('failure.png',dir)),fullPage:true}).catch(()=>{});throw error}
 finally{await browser.close()}
