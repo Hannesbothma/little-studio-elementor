@@ -13,5 +13,5 @@ jobs:
         with:
           node-version: '24'
       - run: npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install chromium
       - run: node tests/run.mjs

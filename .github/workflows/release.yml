@@ -3,7 +3,7 @@ on:
   push:
     tags: ['v*']
     branches: [main]
-    paths: ['little-studio-elementor.php']
+    paths: ['little-studio-elementor.php', '.github/workflows/release.yml']
   workflow_dispatch:
     inputs:
       tag:
@@ -14,7 +14,7 @@ permissions:
   contents: write
 concurrency:
   group: plugin-release
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -41,7 +41,7 @@ jobs:
       - name: Install test tools
         run: |
           npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0
-          npx playwright install --with-deps chromium
+          npx playwright install chromium
       - name: Check packaged imports, management, and native updates
         run: node tests/run.mjs
       - name: Attach and publish release
