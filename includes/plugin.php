@@ -17,12 +17,12 @@ final class LSE_Plugin {
             $temporary = $file['tmp_name'] ?? '';
             if ( ! is_string( $temporary ) || ! is_uploaded_file( $temporary ) ) { throw new RuntimeException( 'The converted page must be a valid upload.' ); }
             $size = filesize( $temporary );
-            if ( ! $size || $size > 16 * MB_IN_BYTES ) { throw new RuntimeException( 'The converted page upload is empty or exceeds 16 MB.' ); }
+            if ( ! $size ) { throw new RuntimeException( 'The converted page upload is empty.' ); }
             $raw = file_get_contents( $temporary );
             if ( ! is_string( $raw ) || strlen( $raw ) !== $size ) { throw new RuntimeException( 'The converted page upload could not be read completely.' ); }
             if ( str_starts_with( $raw, "\x1f\x8b" ) ) {
                 if ( ! function_exists( 'gzdecode' ) ) { throw new RuntimeException( 'Compressed page imports are unavailable on this server.' ); }
-                $raw = @gzdecode( $raw, 16 * MB_IN_BYTES + 1 );
+                $raw = @gzdecode( $raw );
                 if ( ! is_string( $raw ) ) { throw new RuntimeException( 'The compressed page could not be decoded.' ); }
             }
         } else {
@@ -30,8 +30,8 @@ final class LSE_Plugin {
             if ( ! is_string( $raw ) ) { throw new RuntimeException( 'The request payload must be JSON text.' ); }
             $raw = wp_unslash( $raw );
         }
-        if ( strlen( $raw ) > 16 * MB_IN_BYTES || ! str_starts_with( ltrim( $raw ), '{' ) ) { throw new RuntimeException( 'The request must contain one JSON object below 16 MB.' ); }
-        $input = json_decode( $raw, true, 512, JSON_THROW_ON_ERROR );
+        if ( ! str_starts_with( ltrim( $raw ), '{' ) ) { throw new RuntimeException( 'The request must contain one JSON object.' ); }
+        $input = json_decode( $raw, true, 2147483647, JSON_THROW_ON_ERROR );
         if ( ! is_array( $input ) ) { throw new RuntimeException( 'Invalid request.' ); }
         return $input;
     }
@@ -92,7 +92,7 @@ final class LSE_Plugin {
         wp_enqueue_script( 'lse-capture', plugins_url( 'assets/capture.js', LSE_FILE ), [ 'lse-admin', 'lse-manage' ], LSE_VERSION, true );
         wp_enqueue_script( 'lse-manage', plugins_url( 'assets/manage.js', LSE_FILE ), [ 'lse-admin' ], LSE_VERSION, true );
         if ( current_user_can( 'update_plugins' ) ) { wp_enqueue_script( 'lse-updates', plugins_url( 'assets/updates.js', LSE_FILE ), [ 'lse-admin' ], LSE_VERSION, true ); wp_add_inline_script( 'lse-updates', 'window.LSE_UPDATE_STATE=' . wp_json_encode( LSE_Updates::state() ) . ';', 'before' ); }
-        wp_add_inline_script( 'lse-admin', 'window.LSE_CONFIG=' . wp_json_encode( [ 'version' => LSE_VERSION, 'ajax' => admin_url( 'admin-ajax.php' ), 'nonce' => wp_create_nonce( 'lse_import' ), 'elementor' => defined( 'ELEMENTOR_VERSION' ) ? ELEMENTOR_VERSION : '', 'pro' => defined( 'ELEMENTOR_PRO_VERSION' ), 'maxUpload' => wp_max_upload_size(), 'maxPost' => wp_convert_hr_to_bytes( ini_get( 'post_max_size' ) ), 'pageTransport' => function_exists( 'gzdecode' ) ? 'json-gzip-v1' : 'json-file-v1', 'pageRest' => rest_url( 'little-studio-elementor/v1/converted-page' ), 'restNonce' => wp_create_nonce( 'wp_rest' ), 'conversionVersion' => 'capture-v2', 'maxPagePayload' => 16 * MB_IN_BYTES, 'canScripts' => current_user_can( 'unfiltered_html' ), 'home' => home_url( '/' ), 'lastJob' => get_user_meta( get_current_user_id(), '_lse_last_job', true ) ] ) . ';', 'before' );
+        wp_add_inline_script( 'lse-admin', 'window.LSE_CONFIG=' . wp_json_encode( [ 'version' => LSE_VERSION, 'ajax' => admin_url( 'admin-ajax.php' ), 'nonce' => wp_create_nonce( 'lse_import' ), 'elementor' => defined( 'ELEMENTOR_VERSION' ) ? ELEMENTOR_VERSION : '', 'pro' => defined( 'ELEMENTOR_PRO_VERSION' ), 'maxUpload' => wp_max_upload_size(), 'maxPost' => wp_convert_hr_to_bytes( ini_get( 'post_max_size' ) ), 'pageTransport' => function_exists( 'gzdecode' ) ? 'json-gzip-v1' : 'json-file-v1', 'pageRest' => rest_url( 'little-studio-elementor/v1/converted-page' ), 'restNonce' => wp_create_nonce( 'wp_rest' ), 'conversionVersion' => 'capture-v2', 'canScripts' => current_user_can( 'unfiltered_html' ), 'home' => home_url( '/' ), 'lastJob' => get_user_meta( get_current_user_id(), '_lse_last_job', true ) ] ) . ';', 'before' );
     }
     public static function screen() {
         ?><div class="wrap lse" id="lse-app">

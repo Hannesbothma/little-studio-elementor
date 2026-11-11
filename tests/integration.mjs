@@ -43,6 +43,7 @@ try{
  const redirected=await rpc('capture_start',{url:'https://93.184.216.34/lse-capture/private-redirect',pages:1});
  await assert.rejects(()=>rpc('capture_step',{capture:redirected.capture,seq:0}),/public HTTP/);
  await rpc('capture_cancel',{capture:redirected.capture});
+ const wide=await rpc('capture_start',{url:'https://93.184.216.34/lse-capture/wide/'});await rpc('capture_step',{capture:wide.capture,seq:0});const policy=await rpc('test',{operation:'capture-stats',capture:wide.capture});assert.equal(policy.seen,803);assert.equal(policy.maxPages,0);assert.equal(policy.depth,null);await rpc('capture_cancel',{capture:wide.capture});
  const repeated=await rpc('capture_start',{url:'https://93.184.216.34/lse-capture/',pages:2,depth:1});
  const firstResponse=await rpc('capture_step',{capture:repeated.capture,seq:0});
  const duplicateResponse=await rpc('capture_step',{capture:repeated.capture,seq:0});

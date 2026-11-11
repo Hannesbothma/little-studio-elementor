@@ -136,3 +136,30 @@ and 9,101 ms after (about 24% faster for that fixture). Eight requests became
 six: `check` plus `start` became `prepare`, and the post-media `status` request
 was removed. These timings use small reused files and do not predict a live
 website's total capture/import duration.
+
+
+## 0.7.1 large-content regression
+
+The final package is tested in disposable WordPress with PHP memory 1 GB and
+upload/post settings 64 MB. These are test-host resources, not plugin quotas.
+`tests/large-import.mjs` validates 201 pages and 201 packaged files, converts
+4,144 native elements including 140 nested source wrappers, and uploads a 9 MB
+PNG. It verifies reuse using the Suite builder's fingerprint only.
+
+The authenticated page-save path receives and saves 17 MB of generated CSS,
+4 MB of source CSS and an HTML widget with settings over 512 KB. Gzip transfer
+must pass the old 16 MB decoded-payload threshold; stored lengths are checked to
+reject silent truncation. A real frontend preview must render its final color
+rule. Unsafe CSS must still fail before a draft save.
+
+Capture tests discover 803 resources in a single page without the previous
+200-page/600-resource quotas, then cancel without fetching that queue. Existing
+explicit programmatic page/depth selections remain supported. Full management,
+preview/editor, adaptive-upload and simulated native upgrade tests remain active.
+The next-version upgrade fixture is 0.7.2 and is never published.
+
+The SSD was mounted read-only by a separate security scan and its canonical
+checkout/index could not be read or edited. Work uses the established fallback
+`/tmp/lse-layout-work` and publishes through the connected GitHub release workflow.
+No scan mounts or historical files are changed. Sync the clean canonical checkout
+and website index later when the SSD is accessible; do not overwrite local work.

@@ -10,12 +10,11 @@ Imports do not replace existing page content or publish the new drafts.
 
 ## Website link capture
 
-Use **Import from website link** in the plugin sidebar. Paste a public URL. Linked pages are followed automatically within the native
-200-page format limit. Keep the tab open, review capture warnings, download the
+Use **Import from website link** in the plugin sidebar. Paste a public URL. Linked pages are followed automatically without a plugin page-count or depth quota. Keep the tab open, review capture warnings, download the
 native JSON if needed, and import to editable Elementor drafts. Capture itself
 creates no posts or media. The host needs PHP DOM and public outbound HTTP/HTTPS;
-HTTrack is not required on WordPress. Captures are bounded to 600 resources and
-48 MB; only public ports 80/443 are accepted, including redirects.
+HTTrack is not required on WordPress. Captures have no fixed resource-count or byte quota; public ports 80/443, redirect
+validation and small checkpointed requests remain in place.
 
 Alternatively use **Little Studio Desktop > File > Website link to JSON…** for
 the local HTTrack route. Both routes require review; server behavior and JavaScript
@@ -57,7 +56,7 @@ Use the attached `little-studio-elementor-VERSION.zip`, which has the correct
 WordPress directory structure. GitHub’s automatically generated source archives
 are intended for developers.
 
-## Supported inputs and limits
+## Supported inputs and hosting resources
 
 Accepts `little-studio-website` version 1 and `code-canvas` version 1 JSON.
 Packaged images, sanitised SVG, supported media/documents and font files are
@@ -86,7 +85,7 @@ Keep the converter active for its supporting styles, fonts and shared sections.
 
 Elementor Pro was not available for direct certification. The conversion base was
 tested with Elementor Core 4.4.0, PHP 8.3 and WordPress 7.1.4. See `readme.txt` for
-full import limits, behaviour and licensing considerations.
+hosting constraints, behaviour and licensing considerations.
 
 ## Development and releases
 
@@ -111,6 +110,21 @@ bundled. Import only assets and content you have permission to use.
 ## Repeatable testing
 
 Install development tools with `npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0`, then `npx playwright install chromium` and `node tests/run.mjs`. The runner builds the actual plugin ZIP, installs it into an isolated WordPress Playground site (not over the development source), exercises import management and uses a simulated next-version package to test the native updater. On this workstation it also reads the current portfolio and Opu JSON for validation and representative conversion checks. The simulated package is never released. See `docs/TESTING.md` and `docs/TESTING-0.6.0.md`.
+
+## Content-size repair and media imports (0.7.1)
+
+The importer no longer imposes fixed CSS, source-code, shared-style, element-settings,
+JSON-file, converted-payload, element-count, page-count or asset-count/byte quotas.
+The website-link crawler also removes its automatic page/depth/resource/byte quotas.
+WordPress/Elementor and hosting upload, memory and execution constraints still apply.
+Metadata shape, permissions, file-type/content checks, safe public capture URLs and
+concurrent-edit protection remain enforced. Work is checkpointed in small batches.
+
+A failed 0.7.0 import can resume from the same JSON, selection and options after
+updating; the conversion identity is retained, so confirmed uploads/pages are kept.
+CSS selector lists now share declarations instead of repeating the complete block.
+Media imported by the Suite builder can be reused after verifying its file hash.
+Uploads can grow back to batches after temporary slow processing recovers.
 
 ## Preview, editor and media repairs (0.7.0)
 
@@ -143,8 +157,8 @@ save, and saves return compact acknowledgements. Final status, protections,
 shared sections and native Elementor saving remain in place.
 
 The converter caches source-asset lookups and parent geometry within each
-viewport. All four responsive samples are retained. Nested layouts now support
-128 editable container levels, with matching server and JSON transport limits.
-The element and payload limits remain enforced. Website-link capture uses a
+viewport. All four responsive samples are retained. Version 0.6.2 supported 128 editable container levels. Version 0.7.1 removes
+that plugin nesting cutoff and the fixed element/payload quotas. Native runtime
+resource constraints still apply. Website-link capture uses a
 short-lived temporary host file for its last batch checkpoint; normal completion
 or cancellation removes it, and WordPress cron cleans abandoned checkpoints.

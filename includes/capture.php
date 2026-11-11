@@ -1,7 +1,7 @@
 <?php
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
-/** A bounded, administrator-only public website capture. Each request fetches one resource. */
+/** Administrator-only public website capture, checkpointed between small requests. */
 final class LSE_Capture {
     private static function url( $value, $base = '' ) {
         if ( ! is_string( $value ) || strlen( $value ) > 2048 ) { return ''; }
@@ -41,7 +41,7 @@ final class LSE_Capture {
         if ( ! class_exists( 'DOMDocument' ) ) { throw new RuntimeException( 'Website capture needs the PHP DOM extension. Use the Desktop capture option on this host.' ); }
         $url = self::url( $input['url'] ?? '' ); self::safe( $url );
         $id = bin2hex( random_bytes( 16 ) );
-        $job = [ 'source' => $url, 'origin' => self::origin( $url ), 'queue' => [ [ 'url' => $url, 'kind' => 'page', 'depth' => 0 ] ], 'seen' => [ $url => true ], 'pages' => 1, 'maxPages' => max( 1, min( 200, (int) ( $input['pages'] ?? 200 ) ) ), 'depth' => max( 0, min( 200, (int) ( $input['depth'] ?? 200 ) ) ), 'seq' => 0, 'bytes' => 0, 'warnings' => [], 'truncated' => false ];
+        $job = [ 'source' => $url, 'origin' => self::origin( $url ), 'queue' => [ [ 'url' => $url, 'kind' => 'page', 'depth' => 0 ] ], 'seen' => [ $url => true ], 'pages' => 1, 'maxPages' => isset( $input['pages'] ) ? max( 1, (int) $input['pages'] ) : 0, 'depth' => isset( $input['depth'] ) ? max( 0, (int) $input['depth'] ) : null, 'seq' => 0, 'bytes' => 0, 'warnings' => [], 'truncated' => false ];
         // One live capture per administrator. Starting afresh discards only crawl metadata.
         $previous = get_user_meta( get_current_user_id(), '_lse_capture', true );
         if ( is_string( $previous ) && preg_match( '/^[a-f0-9]{32}$/D', $previous ) ) { self::remove_batch( $previous ); delete_transient( self::key( $previous ) ); }
@@ -52,10 +52,9 @@ final class LSE_Capture {
         $url = self::url( $value, $base );
         if ( ! $url || isset( $job['seen'][$url] ) ) { return; }
         if ( $kind === 'asset' && preg_match( '~(?:/(?:wp-includes/js/(?:jquery|dist)/|wp-content/plugins/elementor(?:-pro)?/).*\.js|/jquery(?:-[0-9.]+)?(?:\.min)?\.js)(?:\?|$)~i', $url ) ) { return; }
-        if ( count( $job['seen'] ) >= 600 ) { $job['truncated'] = true; return; }
         if ( $kind === 'page' ) {
             if ( self::origin( $url ) !== $job['origin'] ) { return; }
-            if ( $depth > $job['depth'] || $job['pages'] >= $job['maxPages'] ) { $job['truncated'] = true; return; }
+            if ( ( $job['depth'] !== null && $depth > $job['depth'] ) || ( $job['maxPages'] && $job['pages'] >= $job['maxPages'] ) ) { $job['truncated'] = true; return; }
             if ( preg_match( '~\.(?:zip|pdf|xml|json|docx?|xlsx?|jpe?g|png|gif|webp|svg|mp[34]|webm)(?:\?|$)~i', $url ) ) { return; }
             ++$job['pages'];
         }
@@ -107,11 +106,10 @@ final class LSE_Capture {
             if ( ! $job['queue'] ) { set_transient( self::key( $id ), $job, HOUR_IN_SECONDS ); return [ 'done' => true, 'seq' => $job['seq'], 'warnings' => $job['warnings'], 'truncated' => $job['truncated'] ]; }
             $item = $job['queue'][0]; $url = $item['url']; $record = null; $size = 0;
             try {
-                $limit = $item['kind'] === 'page' ? 2 * MB_IN_BYTES : 8 * MB_IN_BYTES;
                 for ( $redirect = 0; $redirect <= 3; ++$redirect ) {
                     self::safe( $url );
                     if ( $item['kind'] === 'page' && $job['seq'] > 0 && self::origin( $url ) !== $job['origin'] ) { throw new RuntimeException( 'A linked page redirected outside the captured website.' ); }
-                    $response = wp_safe_remote_get( $url, [ 'timeout' => 6, 'redirection' => 0, 'limit_response_size' => $limit + 1, 'cookies' => [], 'user-agent' => 'LittleStudioCapture/' . LSE_VERSION, 'headers' => [ 'Accept' => '*/*' ] ] );
+                    $response = wp_safe_remote_get( $url, [ 'timeout' => 6, 'redirection' => 0, 'cookies' => [], 'user-agent' => 'LittleStudioCapture/' . LSE_VERSION, 'headers' => [ 'Accept' => '*/*' ] ] );
                     if ( is_wp_error( $response ) ) { throw new RuntimeException( $response->get_error_message() ); }
                     $code = wp_remote_retrieve_response_code( $response );
                     if ( ! in_array( $code, [ 301, 302, 303, 307, 308 ], true ) ) { break; }
@@ -120,7 +118,6 @@ final class LSE_Capture {
                 }
                 if ( $code < 200 || $code >= 300 ) { throw new RuntimeException( 'HTTP ' . $code ); }
                 $body = wp_remote_retrieve_body( $response ); $size = strlen( $body );
-                if ( $size > $limit || $job['bytes'] + $size > 48 * MB_IN_BYTES ) { throw new RuntimeException( 'Capture size limit reached. Reduce the page count or use Desktop capture.' ); }
                 $header = wp_remote_retrieve_header( $response, 'content-type' ); $type = strtolower( trim( explode( ';', $header )[0] ) );
                 if ( $type === 'application/xhtml+xml' ) { $type = 'text/html'; }
                 if ( ! $type ) { $type = $item['kind'] === 'page' ? 'text/html' : ( wp_check_filetype( wp_parse_url( $url, PHP_URL_PATH ) )['type'] ?: 'application/octet-stream' ); }

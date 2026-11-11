@@ -18,7 +18,7 @@
   for (const r of records) { resources.set(r.url, r); resources.set(r.requested, r); }
   const pages = [...new Map(records.filter(r => r.kind === 'page' && r.type === 'text/html').map(r => [r.url, r])).values()];
   if (!pages.length) throw Error('No HTML pages were captured. Try Desktop capture for this website.');
-  let assetBytes = 0;const names=new Set(),nameRanks=new Map(),assetsByURL=new Map();let contextTitle='Website';
+  const names=new Set(),nameRanks=new Map(),assetsByURL=new Map();let contextTitle='Website';
   const label=(url,type,hint='')=>{let stem='';try{stem=decodeURIComponent(new URL(url).pathname.split('/').pop()).replace(/\.[a-z0-9]{1,8}$/i,'').replace(/[-_]\d{2,5}x\d{2,5}$/,'').replace(/[-_](?:scaled|optimized|compressed)$/i,'');}catch{}
    const generic=!stem||/^(?:[a-f0-9]{12,}|(?:img|dsc|image|photo|picture|asset)[-_ .\d]+)$/i.test(stem);let value=hint||(generic?contextTitle+' image':stem),rank=hint?3:generic?1:2;
    value=value.normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/([a-z])([A-Z])/g,'$1-$2').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,76).replace(/-+$/,'')||'website-image';
@@ -37,11 +37,10 @@
    const body = bytes(record.data), digest = await hash(body);
    if (type === 'image/svg+xml' && /<!DOCTYPE|<!ENTITY/i.test(text(record))) { notes.add('An SVG with document declarations was left external: ' + url); return url; }
    if (byHash.has(type + digest)) { const existing = byHash.get(type + digest); assetMap.set(url, existing);nameAsset(assetsByURL.get(existing),url,hint); return existing + fragment; }
-   if (body.length > 8 * 1048576 || assetBytes + body.length > 32 * 1048576 || assets.length >= 200) throw Error('Packaged media exceeds the import limit. Reduce the page count.');
    const ext = ({'image/jpeg':'jpg','image/svg+xml':'svg','audio/mpeg':'mp3'})[type] || type.split('/')[1];
    const packaged = 'https://little-studio-assets.invalid/capture/' + digest + '.' + ext;
    const item={url:packaged,name:'',type,data:'data:'+type+';base64,'+record.data};assets.push(item);assetsByURL.set(packaged,item);nameAsset(item,url,hint);
-   assetBytes += body.length; assetMap.set(url, packaged); byHash.set(type + digest, packaged); return packaged + fragment;
+   assetMap.set(url, packaged); byHash.set(type + digest, packaged); return packaged + fragment;
   };
   const replaceAsync = async (input, pattern, fn) => { const matches = [...input.matchAll(pattern)], values = await Promise.all(matches.map(fn)); let index = 0; return input.replace(pattern, () => values[index++]); };
   const css = async (input, base, stack = []) => {
@@ -112,7 +111,7 @@
   }
   if (output.some(p => p.js.trim())) notes.add('Captured scripts will run on imported pages when Keep website interactions is enabled. Use a source you trust.');
   notes.add('Review the imported layout and behavior. Forms, logins, stores, and JavaScript apps may need rebuilding in WordPress.');
-  return M.validate({format:'little-studio-website',version:1,site_id:'capture-' + (await hash(encoder.encode(source))).slice(0,24),title:first.title,site_css:'',pages:output,assets,fonts:[],site:{home_key:first.key,navigation:navigation.slice(0,100)},capture:{source,engine:'Little Studio public website capture',warnings:[...notes]}});
+  return M.validate({format:'little-studio-website',version:1,site_id:'capture-' + (await hash(encoder.encode(source))).slice(0,24),title:first.title,site_css:'',pages:output,assets,fonts:[],site:{home_key:first.key,navigation},capture:{source,engine:'Little Studio public website capture',warnings:[...notes]}});
  }
  const serializable = project => JSON.stringify(project, (key,value) => key === 'bytes' && value instanceof Uint8Array ? undefined : value, 2);
  let busy = false, cancelled = false, session = null, sequence = 0, records = [], pending = false;
@@ -123,7 +122,7 @@
   if (busy || A.busy || window.LSEManage?.busy) return;
   busy = true; cancelled = false; retry.hidden = true; buttons();
   try {
-   if (!resume) { records = []; sequence = 0; status.textContent = 'Starting website capture…'; const job = await A.request('capture_start',{url:$('#lse-capture-url').value,pages:200,depth:200}); session = job.capture; }
+   if (!resume) { records = []; sequence = 0; status.textContent = 'Starting website capture…'; const job = await A.request('capture_start',{url:$('#lse-capture-url').value}); session = job.capture; }
    while (!cancelled) {
     pending = true;
     const step = await A.request('capture_batch',{capture:session,seq:sequence}); pending = false;

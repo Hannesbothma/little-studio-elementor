@@ -14,6 +14,7 @@ add_filter( 'pre_http_request', static function( $reply, $args, $url ) {
         '/lse-capture/pixel.png' => [ 'image/png', base64_decode( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lS8AAAAASUVORK5CYII=' ) ],
         '/lse-capture/pixel-copy.png' => [ 'image/png', base64_decode( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lS8AAAAASUVORK5CYII=' ) ],
     ];
+    $files['/lse-capture/wide/'] = [ 'text/html', '<main>' . implode( '', array_map( static fn( $i ) => '<a href="page-' . $i . '/">Page</a>', range( 1, 201 ) ) ) . implode( '', array_map( static fn( $i ) => '<img src="image-' . $i . '.png">', range( 1, 601 ) ) ) . '</main>' ];
     $files['/lse-capture/'][1] = str_replace( '<main>', '<main>' . str_repeat( '<div class="deep-layout">', 80 ), $files['/lse-capture/'][1] );
     $files['/lse-capture/'][1] = str_replace( '</main>', str_repeat( '</div>', 80 ) . '</main>', $files['/lse-capture/'][1] );
     if ( $path === '/lse-capture/private-redirect' ) { return [ 'headers' => [ 'location' => 'http://127.0.0.1/private' ], 'body' => '', 'response' => [ 'code' => 302, 'message' => 'Found' ], 'cookies' => [] ]; }
@@ -23,7 +24,7 @@ add_filter( 'pre_http_request', static function( $reply, $args, $url ) {
 // Emulate slow image processing only for the partial-batch regression check.
 add_action( 'pre_get_posts', static function( $query ) {
     static $delayed = false;
-    if ( ! $delayed && ( $_POST['action'] ?? '' ) === 'lse_assets' && get_option( '_lse_test_slow_media' ) && ( $query->get( 'meta_key' ) === '_lse_sha256' ) ) { $delayed = true; usleep( 1100000 ); }
+    if ( ! $delayed && ( $_POST['action'] ?? '' ) === 'lse_assets' && get_option( '_lse_test_slow_media' ) && ( ( $query->get( 'meta_key' ) === '_lse_sha256' || ( $query->get( 'meta_query' )[0]['key'] ?? '' ) === '_lse_sha256' ) ) ) { $delayed = true; usleep( 1100000 ); }
 }, 10, 1 );
 // Installed only into a disposable Playground site; never included in plugin ZIPs.
 add_action( 'wp_ajax_lse_test', static function() {
@@ -31,6 +32,16 @@ add_action( 'wp_ajax_lse_test', static function() {
     $input = json_decode( wp_unslash( $_POST['payload'] ?? '{}' ), true ); $id = (int) ( $input['id'] ?? 0 );
     try {
         switch ( $input['operation'] ?? 'inspect' ) {
+            case 'capture-stats':
+                $capture = get_transient( 'lse_capture_' . get_current_user_id() . '_' . $input['capture'] );
+                wp_send_json_success( [ 'seen' => count( $capture['seen'] ), 'maxPages' => $capture['maxPages'], 'depth' => $capture['depth'] ] );
+            case 'suite-media-only':
+                $hash = get_post_meta( $id, '_lse_sha256', true ); if ( ! $hash ) { throw new RuntimeException( 'The test media hash is missing.' ); }
+                update_post_meta( $id, '_little_studio_import_sha256', $hash ); delete_post_meta( $id, '_lse_sha256' ); wp_send_json_success( [ 'ok' => true ] );
+            case 'large-stats':
+                $tree = json_decode( get_post_meta( $id, '_elementor_data', true ), true ); $settings_bytes = 0;
+                foreach ( $tree as $node ) { $settings_bytes = max( $settings_bytes, strlen( wp_json_encode( $node['settings'] ) ) ); }
+                wp_send_json_success( [ 'cssBytes' => strlen( get_post_meta( $id, '_lse_css', true ) ), 'sourceBytes' => strlen( wp_json_encode( get_post_meta( $id, '_lse_source', true ) ) ), 'settingsBytes' => $settings_bytes ] );
             case 'slow-media': update_option( '_lse_test_slow_media', ! empty( $input['enabled'] ) ); wp_send_json_success( [ 'ok' => true ] );
             case 'edit':
                 $doc = \Elementor\Plugin::$instance->documents->get( $id ); $tree = $doc->get_elements_data();

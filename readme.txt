@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 0.7.0
+Stable tag: 0.7.1
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -96,16 +96,18 @@ file, selection, name and options to continue it. A new import uses new drafts.
 Select an existing import and Update from file to refresh its pages.
 Native JSON and self-contained HTML files can be imported.
 
-Limits follow the native format: 200 pages, 200 packaged/inline files, 8 MB per
-file, 32 MB combined media, 2 MB source code per page, 16 MB total source code,
-128 KB shared CSS; 64 MB JSON file, 4,000 generated elements, 2 MB generated CSS
-per page. Hosting upload/post limits can be lower. Large websites take several
-minutes; leave the import tab open. Retry preserves completed work.
+The plugin imposes no fixed content-size, page/file-count or generated-element
+quota on imports. CSS, source code, shared styles, element settings, native JSON
+and converted draft payloads are accepted without the old plugin size caps.
+WordPress/Elementor, PHP memory/execution, browser storage/memory and hosting
+upload/post limits still apply. Large websites can take time; leave the tab open.
+Retry preserves completed drafts and media. Type, file, permission, content-safety
+and concurrent-edit validation remain active.
 
 Converted pages use authenticated WordPress REST uploads, compressed when
 supported, with a protected AJAX fallback if that route is unavailable. Original
-HTML/CSS/JavaScript is not put in a form argument. Page uploads are limited to 16 MB
-and the hosting upload/post limits, whichever is lower. This can avoid form-field
+HTML/CSS/JavaScript is not put in a form argument. Page uploads use the hosting
+upload/post limits; the plugin does not impose a separate decoded-payload cap. This can avoid form-field
 false positives on some security layers; it does not disable security rules or
 guarantee acceptance by every host. Nonces, permissions and content checks remain.
 
@@ -136,12 +138,13 @@ versions before production use. No live website is changed by building this ZIP.
 == Website link capture ==
 
 Choose Import website link and paste a public HTTP/HTTPS address. Capture follows
-linked pages automatically within the native format limits (200 pages). Small
+linked pages automatically without a plugin page-count or link-depth quota. Small
 resources are batched per request. No HTTrack or external service is required.
 Keep the tab open. Retry
 continues the current capture; reloading requires starting the capture again.
-Capture is limited to the same origin for pages, 600 resources and 48 MB fetched.
-Individual responses are bounded to 2 MB for pages or 8 MB for other resources.
+Linked pages stay on the same origin. Capture has no fixed resource-count,
+response-size or combined-byte quota. Per-request work remains checkpointed in
+small batches; cancellation and hosting/network resource limits still apply.
 Only public addresses on ports 80/443 are accepted. Linked CDN assets may be
 packaged. Logins, browser-rendered module apps and server behavior are not cloned.
 
@@ -158,6 +161,14 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.7.1 =
+* Remove fixed plugin content quotas, including generated CSS and converted-draft payload caps.
+* Remove automatic website-capture page, depth, resource and byte quotas.
+* Keep host limits, validation, resumable progress and small request batches.
+* Group shared selector declarations without changing responsive or state styles.
+* Reuse verified media previously imported by the Suite builder.
+* Increase upload groups again after temporary slow processing recovers.
 
 = 0.7.0 =
 * Include lazy/gallery images and backgrounds, and retain captured font rules in saved previews.
