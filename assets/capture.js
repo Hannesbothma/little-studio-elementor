@@ -117,11 +117,12 @@
   if (busy || A.busy || window.LSEManage?.busy) return;
   busy = true; cancelled = false; retry.hidden = true; buttons();
   try {
-   if (!resume) { records = []; sequence = 0; status.textContent = 'Starting website capture…'; const job = await A.request('capture_start',{url:$('#lse-capture-url').value,pages:Number($('#lse-capture-pages').value),depth:Number($('#lse-capture-depth').value)}); session = job.capture; }
+   if (!resume) { records = []; sequence = 0; status.textContent = 'Starting website capture…'; const job = await A.request('capture_start',{url:$('#lse-capture-url').value,pages:200,depth:200}); session = job.capture; }
    while (!cancelled) {
     pending = true;
-    const step = await A.request('capture_step',{capture:session,seq:sequence}); pending = false;
+    const step = await A.request('capture_batch',{capture:session,seq:sequence}); pending = false;
     if (cancelled) break;
+    records.push(...step.records); sequence = step.seq;
     if (step.done) {
      status.textContent = 'Packaging your website JSON…';
      const notes = Object.values(step.warnings || {}); if (step.truncated) notes.push('The capture reached a page, depth, or resource limit. Some linked content was not included.');
@@ -133,8 +134,7 @@
      await A.choose(new File([serializable(project)],new URL($('#lse-capture-url').value).hostname + '.website.json',{type:'application/json'}));
      return;
     }
-    if (step.record) records.push(step.record);
-    sequence = step.seq; status.textContent = step.message;
+    status.textContent = step.message;
    }
    await cleanup(); status.textContent = 'Capture cancelled. No WordPress pages were created.';
   } catch (error) {

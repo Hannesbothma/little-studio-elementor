@@ -1,13 +1,10 @@
-Capture a website link and bring it into the existing Elementor import review.
+Faster website capture and import, with a simpler website-link form.
 
-* Paste a public website URL directly inside Studio to Elementor.
-* Collect linked pages, styles, images, fonts and classic scripts with page/depth controls.
-* Package supported files into native Little Studio website JSON and download it before importing.
-* Review missing-resource and app-behavior warnings before creating Elementor drafts.
-* Retry interrupted resource requests without skipping capture progress, or cancel without creating pages.
+* Paste one website address; linked pages are discovered automatically within the native format limits.
+* Keep capture buttons and dialog actions inside the layout at smaller window sizes.
+* Batch small resource captures and media uploads with replay/resume support.
+* Prepare the next page while the current page saves to Elementor.
+* Cache metadata and avoid checking every page after each individual save.
+* Fix the source nesting error for layouts with up to 128 editable container levels.
 
-The WordPress capture engine needs no HTTrack installation or external service. It accepts public HTTP/HTTPS addresses on ports 80/443, checks redirects and bounds requests and overall size. Capturing a site does not recreate logins, ecommerce, server features or module-based apps automatically. Review layout and behavior before publishing.
-
-The alternative local route is now available in Little Studio Desktop: File > Website link to JSON, using locally installed HTTrack. The Desktop software is installed separately from this WordPress release.
-
-Existing refresh, content recovery, Trash/restore, whole-import removal and native WordPress updates retain their existing protections.
+The existing four responsive measurements, native Elementor saves, edit protections, media validation, shared sections, source JSON download and WordPress updater remain available. Timing depends on the source site, media and hosting; this release does not promise instantaneous or universally exact conversion.

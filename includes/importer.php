@@ -49,6 +49,30 @@ final class LSE_Importer {
             self::store( $job ); return self::status( [ 'job' => $id ] );
         } catch ( Throwable $error ) { $job['state'] = 'interrupted'; self::store( $job ); throw $error; }
     }
+    public static function assets( $input ) {
+        $items = $input['assets'] ?? null;
+        if ( ! is_array( $items ) || ! $items || count( $items ) > 4 ) { throw new RuntimeException( 'A media batch must contain 1–4 files.' ); }
+        $bytes = 0;
+        foreach ( $items as $i => $item ) {
+            $file = $_FILES['file_' . $i] ?? null;
+            if ( ! is_array( $item ) || ! is_array( $file ) || ! isset( $file['size'] ) ) { throw new RuntimeException( 'A media batch is incomplete. Retry the import.' ); }
+            $bytes += (int) $file['size'];
+        }
+        if ( $bytes > 2 * MB_IN_BYTES ) { throw new RuntimeException( 'This media batch exceeds 2 MB. Use individual uploads.' ); }
+        $original = $_FILES['file'] ?? null; $saved = []; $started = microtime( true );
+        try {
+            foreach ( $items as $i => $item ) {
+                $_FILES['file'] = $_FILES['file_' . $i];
+                $saved[] = self::asset( array_merge( $item, [ 'job' => $input['job'] ?? '' ] ) );
+                if ( microtime( true ) - $started >= 1 ) { break; }
+            }
+        } finally { if ( $original === null ) { unset( $_FILES['file'] ); } else { $_FILES['file'] = $original; } }
+        return [ 'assets' => $saved ];
+    }
+    private static function page_result( $job, $index, $input ) {
+        if ( ! empty( $input['compact'] ) ) { return [ 'saved' => true, 'key' => $job['pages'][$index]['key'], 'stamp' => $job['pages'][$index]['stamp'] ?? '' ]; }
+        return self::status( [ 'job' => $job['id'] ] );
+    }
     public static function asset( $input ) {
         $job = self::load( $input['job'] ?? '' ); $lock = self::lock( $job['id'] );
         try {
@@ -96,7 +120,7 @@ final class LSE_Importer {
     }
     private static function css( $css ) { if ( ! is_string( $css ) || strlen( $css ) > 2 * MB_IN_BYTES ) { throw new RuntimeException( 'Generated styles are too large.' ); } if ( preg_match( '~</?style|@import|expression\s*\(|javascript\s*:|-moz-binding|(?<![a-z-])behavior\s*:|[\x00]~i', $css ) ) { throw new RuntimeException( 'Unsafe CSS was rejected.' ); } return $css; }
     private static function tree( $items, $job, &$count, $depth = 0 ) {
-        if ( ! is_array( $items ) || $depth > 18 ) { throw new RuntimeException( 'Element nesting exceeds the conversion limit.' ); } $out = [];
+        if ( ! is_array( $items ) || $depth > 130 ) { throw new RuntimeException( 'Element nesting exceeds the conversion limit.' ); } $out = [];
         foreach ( $items as $item ) {
             if ( ++$count > 4000 || ! is_array( $item ) || ! preg_match( '/^[a-f0-9]{8}$/', $item['id'] ?? '' ) ) { throw new RuntimeException( 'Invalid or excessive Elementor elements.' ); }
             $type = $item['elType'] ?? ''; $widget = $item['widgetType'] ?? '';
@@ -112,7 +136,7 @@ final class LSE_Importer {
     public static function page( $input ) {
         $job = self::load( $input['job'] ?? '' ); $lock = self::lock( $job['id'] );
         try {
-            $index = array_search( $input['key'] ?? '', array_column( $job['pages'], 'key' ), true ); if ( $index === false ) { throw new RuntimeException( 'Unknown source page.' ); } $page = $job['pages'][$index]; if ( $page['done'] ) { return self::status( [ 'job' => $job['id'] ] ); }
+            $index = array_search( $input['key'] ?? '', array_column( $job['pages'], 'key' ), true ); if ( $index === false ) { throw new RuntimeException( 'Unknown source page.' ); } $page = $job['pages'][$index]; if ( $page['done'] ) { return self::page_result( $job, $index, $input ); }
             if ( $job['state'] !== 'importing' ) { throw new RuntimeException( 'This import no longer accepts pages.' ); }
             $id = $page['id']; if ( get_post_status( $id ) !== ( $page['target_status'] ?? 'draft' ) || ! current_user_can( 'edit_post', $id ) || isset( $page['initial_stamp'] ) && ! hash_equals( $page['initial_stamp'], self::stamp( $id ) ) ) { throw new RuntimeException( 'The destination draft changed. Review it before retrying.' ); }
             if ( isset( $page['initial_review_stamp'] ) && ! hash_equals( $page['initial_review_stamp'], self::review_stamp( $id ) ) ) { throw new RuntimeException( 'The page or a shared section changed while refreshing. Your edits were preserved.' ); }
@@ -138,7 +162,7 @@ final class LSE_Importer {
             $regions = []; foreach ( array_slice( $input['regions'] ?? [], 0, 20 ) as $region ) { if ( preg_match( '/^[a-f0-9]{64}$/', $region['hash'] ?? '' ) && preg_match( '/^[a-f0-9]{8}$/', $region['id'] ?? '' ) && in_array( $region['kind'] ?? '', [ 'header', 'footer' ], true ) ) { $regions[] = $region; } }
             $job['pages'][$index]['regions'] = $regions;
             $warnings = array_map( static fn( $s ) => self::text( $s, 1500 ), array_slice( $input['warnings'] ?? [], 0, 200 ) ); $fallbacks = max( 0, (int) ( $input['fallbacks'] ?? 0 ) ); $job['reports'][$page['key']] = [ 'native' => max( 0, $count - $fallbacks ), 'elements' => $count, 'fallbacks' => $fallbacks, 'warnings' => $warnings ];
-            $job['pages'][$index]['done'] = true; $job['pages'][$index]['stamp'] = self::stamp( $id ); self::store( $job ); return self::status( [ 'job' => $job['id'] ] );
+            $job['pages'][$index]['done'] = true; $job['pages'][$index]['stamp'] = self::stamp( $id ); self::store( $job ); return self::page_result( $job, $index, $input );
         } finally { delete_option( $lock ); }
     }
     private static function stamp( $id ) { return hash( 'sha256', wp_json_encode( [ get_post_field( 'post_title', $id ), get_post_field( 'post_content', $id ), get_post_field( 'post_status', $id ), get_post_meta( $id, '_elementor_data', true ), get_post_meta( $id, '_elementor_page_settings', true ), get_post_meta( $id, '_lse_css', true ), get_post_field( 'post_name', $id ), get_post_field( 'post_parent', $id ), get_post_meta( $id, '_lse_js', true ), get_post_meta( $id, '_lse_seo', true ), get_post_meta( $id, '_lse_scripts_enabled', true ) ] ) ); }
@@ -176,7 +200,8 @@ final class LSE_Importer {
             if ( $job['state'] === 'ready' ) { return self::status( $input ); }
             if ( ! in_array( $job['state'], [ 'importing', 'finishing' ], true ) ) { throw new RuntimeException( 'This import cannot be finished in its current state.' ); }
             foreach ( $job['pages'] as $page ) { if ( ! $page['done'] ) { throw new RuntimeException( 'Some pages have not finished. Retry the import.' ); } }
-            $job['state'] = 'finishing'; self::store( $job ); if ( self::share_one( $job ) ) { return self::status( $input ); }
+            $job['state'] = 'finishing'; self::store( $job ); $started = microtime( true );
+            for ( $i = 0; $i < 4; ++$i ) { if ( ! self::share_one( $job ) ) { break; } if ( $i === 3 || microtime( true ) - $started >= 1 ) { return self::status( $input ); } }
             if ( ! $job['menu'] && ! empty( $job['site']['navigation'] ) ) { $menu = wp_create_nav_menu( $job['title'] . ' — imported ' . substr( $job['id'], 0, 6 ) ); if ( is_wp_error( $menu ) ) { throw new RuntimeException( $menu->get_error_message() ); } $job['menu'] = $menu; self::store( $job ); $ids = array_column( $job['pages'], 'id', 'key' ); foreach ( array_slice( $job['site']['navigation'], 0, 100 ) as $item ) { if ( isset( $ids[$item['key'] ?? ''] ) ) { wp_update_nav_menu_item( $menu, 0, [ 'menu-item-title' => self::text( $item['label'] ?? '' ), 'menu-item-object' => 'page', 'menu-item-object-id' => $ids[$item['key']], 'menu-item-type' => 'post_type', 'menu-item-status' => 'publish' ] ); } } }
             $job['state'] = 'ready'; self::store( $job ); return self::status( [ 'job' => $job['id'] ] );
         } finally { delete_option( $lock ); }

@@ -31,7 +31,7 @@ final class LSE_Plugin {
             $raw = wp_unslash( $raw );
         }
         if ( strlen( $raw ) > 16 * MB_IN_BYTES || ! str_starts_with( ltrim( $raw ), '{' ) ) { throw new RuntimeException( 'The request must contain one JSON object below 16 MB.' ); }
-        $input = json_decode( $raw, true, 128, JSON_THROW_ON_ERROR );
+        $input = json_decode( $raw, true, 512, JSON_THROW_ON_ERROR );
         if ( ! is_array( $input ) ) { throw new RuntimeException( 'Invalid request.' ); }
         return $input;
     }
@@ -52,7 +52,7 @@ final class LSE_Plugin {
                 },
             ] );
         } );
-        $actions = [ 'imports', 'remove_import', 'manage_page', 'restore_refresh', 'check', 'start', 'asset', 'page', 'finish', 'status', 'undo', 'activate', 'restore', 'update_check', 'update_install', 'capture_start', 'capture_step', 'capture_cancel' ];
+        $actions = [ 'imports', 'remove_import', 'manage_page', 'restore_refresh', 'check', 'start', 'asset', 'page', 'finish', 'status', 'undo', 'activate', 'restore', 'update_check', 'update_install', 'capture_start', 'capture_step', 'capture_cancel', 'capture_batch', 'assets' ];
         $requested = $_REQUEST['action'] ?? '';
         if ( defined( 'DOING_AJAX' ) && DOING_AJAX && is_string( $requested ) && in_array( $requested, array_map( static fn( $action ) => 'lse_' . $action, $actions ), true ) ) { self::$response_level = ob_get_level() + 1; ob_start(); }
         add_action( 'elementor/widgets/register', static function( $manager ) { require_once __DIR__ . '/shared-widget.php'; $manager->register( new LSE_Shared_Widget() ); } );
@@ -115,7 +115,7 @@ final class LSE_Plugin {
             <div class="lse-layout">
                 <aside class="lse-sidebar" aria-labelledby="lse-sidebar-title">
                     <button type="button" class="button button-primary" id="lse-new-import"><span aria-hidden="true">+</span> New import</button>
-                    <button type="button" class="button" data-capture-open>Import from website link</button>
+                    <button type="button" class="button" data-capture-open aria-label="Import from website link">Import website link</button>
                     <label for="lse-import-list" class="screen-reader-text">Imported website</label>
                     <select id="lse-import-list"><option value="">New import</option></select>
                     <h2 id="lse-sidebar-title">Imported websites</h2>
@@ -132,8 +132,8 @@ final class LSE_Plugin {
                             <span class="lse-empty-icon" aria-hidden="true">↑</span>
                             <h1>Bring your website into Elementor</h1>
                             <p>Drop a Little Studio JSON export or an HTML file here.</p>
-                            <button type="button" class="button button-primary" id="lse-choose-file">Choose file</button>
-                            <button type="button" class="button" data-capture-open>Paste website link</button>
+                            <div class="lse-actions lse-import-methods"><button type="button" class="button button-primary" id="lse-choose-file">Choose file</button>
+                            <button type="button" class="button" data-capture-open>Paste website link</button></div>
                             <small>Imported pages are saved as drafts.</small>
                         </div>
                     </div>
@@ -198,7 +198,6 @@ final class LSE_Plugin {
                 <div class="lse-dialog-body">
                     <p>Capture public pages, styles, images and fonts into a Little Studio JSON, then review the Elementor import.</p>
                     <label class="lse-field">Website address<input id="lse-capture-url" type="url" placeholder="https://your-website.com" required maxlength="2048"></label>
-                    <div class="lse-options"><label class="lse-field">Maximum pages<input id="lse-capture-pages" type="number" min="1" max="200" value="25" required></label><label class="lse-field">Link depth<select id="lse-capture-depth"><option value="0">Starting page only</option><option value="1">1 level</option><option value="3" selected>3 levels</option><option value="6">6 levels</option></select></label></div>
                     <p class="lse-small">Keep this tab open. Review the result before publishing. Logins, stores, forms and JavaScript apps may need rebuilding.</p>
                     <p id="lse-capture-status" class="lse-notice" role="status" aria-live="polite"></p>
                 </div>

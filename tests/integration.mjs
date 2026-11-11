@@ -6,15 +6,18 @@ import {fileURLToPath} from 'node:url';
 const origin=process.env.LSE_TEST_URL||'http://127.0.0.1:9415';
 const browser=await chromium.launch({headless:true});
 const page=await browser.newPage({viewport:{width:1440,height:1000}});
+const requestCounts={},importTimings=[];
+await page.exposeFunction('recordLSERequest',action=>{requestCounts[action]=(requestCounts[action]||0)+1;});
+await page.addInitScript(()=>{const original=window.fetch;window.fetch=function(url,options){const action=options?.body instanceof FormData?options.body.get('action'):null;if(typeof action==='string'&&action.startsWith('lse_'))window.recordLSERequest(action.slice(4));return original.call(this,url,options);};});
 const failures=[];page.on('pageerror',e=>failures.push(e.message));page.on('dialog',d=>d.accept());
 const dir=new URL('./results/',import.meta.url);await mkdir(dir,{recursive:true});
-const rpc=(action,args={})=>page.evaluate(([action,args])=>window.LSEAdmin.request(action,args),[action,args]);
+const rpc=async(action,args={})=>JSON.parse(await page.evaluate(async([action,args])=>JSON.stringify(await window.LSEAdmin.request(action,args)),[action,args]));
 const choose=async(data,name='test.website.json')=>{
  await page.locator('#lse-file').setInputFiles({name,mimeType:name.endsWith('.html')?'text/html':'application/json',buffer:Buffer.from(typeof data==='string'?data:JSON.stringify(data))});
  await page.waitForFunction(()=>window.LSEAdmin.project!==null&&!window.LSEAdmin.busy);
 };
 const run=async()=>{
- await page.evaluate(()=>window.LSEAdmin.run());
+ const before={...requestCounts},started=performance.now();await page.evaluate(()=>window.LSEAdmin.run());importTimings.push({ms:Math.round(performance.now()-started),requests:Object.fromEntries(Object.entries(requestCounts).map(([key,value])=>[key,value-(before[key]||0)]).filter(([,n])=>n))});
  assert.equal(await page.evaluate(()=>window.LSEAdmin.job?.state),'ready',await page.locator('#lse-status').innerText());
  return page.evaluate(()=>window.LSEAdmin.job);
 };
@@ -27,6 +30,7 @@ const fixture={format:'little-studio-website',version:1,site_id:'management-fixt
  {key:'home',title:'Home',slug:'lse-test-home',url:'https://source.example/home/',parent_key:'',html:'<div class="fixture" data-page="index.html"><header><button type="button" aria-controls="fixture-dialog">Open dialog</button></header><main><h1>Original heading</h1><p>Local fixture content</p><img src="https://source.example/pixel.png" alt="Fixture pixel"><a href="https://source.example/about/">About</a></main><dialog id="fixture-dialog">Local dialog</dialog></div>',css:'main{padding:40px}h1{font-size:44px}',js:'window.fixture=/\\d+/.test("123");'},
  {key:'about',title:'About',slug:'lse-test-about',url:'https://source.example/about/',parent_key:'',html:'<main><h1>About fixture</h1><p>Second page</p></main>',css:'main{padding:32px}',js:''}
 ],assets:[{url:'https://source.example/pixel.png',name:'pixel.png',type:'image/png',data:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lS8AAAAASUVORK5CYII='}],fonts:[],site:{home_key:'home',navigation:[{key:'home',label:'Home'},{key:'about',label:'About'}]}};
+for(let i=1;i<=3;i++)fixture.assets.push({...fixture.assets[0],url:'https://source.example/pixel-'+i+'.png',name:'pixel-'+i+'.png'});
 try{
  await page.goto(origin+'/wp-admin/admin.php?page=little-studio-elementor');
  await page.waitForFunction(()=>window.LSEAdmin&&window.LSEManage);
@@ -44,10 +48,17 @@ try{
  assert.deepEqual(duplicateResponse,firstResponse,'Retry lost or advanced the resource response');
  await assert.rejects(()=>rpc('capture_step',{capture:repeated.capture,seq:3}),/sequence/);
  await rpc('capture_cancel',{capture:repeated.capture});
+ const batched=await rpc('capture_start',{url:'https://93.184.216.34/lse-capture/',pages:2,depth:1});
+ const delivered=await rpc('capture_batch',{capture:batched.capture,seq:0});assert(delivered.records.length>1,'Capture did not batch small resources');
+ assert.deepEqual(await rpc('capture_batch',{capture:batched.capture,seq:0}),delivered,'Lost batch response could not be replayed');
+ await rpc('capture_cancel',{capture:batched.capture});
  await page.locator('[data-capture-open]').first().click();
  await page.locator('#lse-capture-url').fill('https://93.184.216.34/lse-capture/');
- await page.locator('#lse-capture-pages').fill('2');
- await page.locator('#lse-capture-depth').selectOption('1');
+ assert.equal(await page.locator('#lse-capture-pages,#lse-capture-depth').count(),0);
+ await page.setViewportSize({width:958,height:1000});
+ const captureLayout=await page.evaluate(()=>{const d=document.querySelector('#lse-capture-dialog').getBoundingClientRect(),b=document.querySelector('#lse-capture-start').getBoundingClientRect();return {fits:d.left>=0&&d.right<=innerWidth,buttonFits:b.left>=d.left+10&&b.right<=d.right-10};});assert(captureLayout.fits&&captureLayout.buttonFits,'Capture dialog clips its controls');
+ await page.screenshot({path:fileURLToPath(new URL('capture-dialog.png',dir)),fullPage:true});
+ await page.setViewportSize({width:1440,height:1000});
  await page.locator('#lse-capture-start').click();
  await page.waitForFunction(()=>window.LSEAdmin.project?.capture&&!window.LSECapture.busy,{},{timeout:120000});
  const captured=await page.evaluate(()=>window.LSEAdmin.project);
@@ -67,6 +78,8 @@ try{
  const capturedNative=await rpc('test',{id:capturedImport.pages[0].id});
  assert.match(JSON.stringify(capturedNative.elements),/"widgetType":"heading"/);
  assert.match(JSON.stringify(capturedNative.elements),/Captured native heading/);
+ await rpc('test',{operation:'edit',id:capturedImport.pages[0].id});
+ assert.match(JSON.stringify((await rpc('test',{id:capturedImport.pages[0].id})).elements),/Native Elementor edit/,'Deeply nested captured content is not editable');
  const capturedSaved=await rpc('status',{job:capturedImport.id});
  await rpc('remove_import',{job:capturedImport.id,consent:true,expected_stamps:Object.fromEntries(capturedSaved.pages.map(p=>[p.key,p.current_stamp]))});
  await page.reload();await page.waitForFunction(()=>window.LSEAdmin&&window.LSEManage&&window.LSECapture);
@@ -97,7 +110,7 @@ try{
 
  assert.match(JSON.stringify(native.elements),/"widgetType":"heading"/,'Distant dialog controls swallowed native headings');
  const front=await page.evaluate(id=>fetch('/?page_id='+id+'&preview=true').then(r=>r.text()),id);assert.match(front,/data-page="index\.html"/,'Source data attributes were lost');
- assert.equal(original.assets.length,1);
+ assert.equal(original.assets.length,4);assert.equal(new Set(original.assets.map(a=>a.id)).size,1,'Batch upload duplicated identical media');assert(requestCounts.assets>=1,'Multi-file upload was not exercised');
  assert((await rpc('imports')).imports.some(j=>j.id===original.id));
  const updated=structuredClone(fixture);updated.pages[0].html=updated.pages[0].html.replace('Original heading','Refreshed heading');
  await refresh(updated);const refreshed=await run();assert.deepEqual(refreshed.pages.map(p=>p.id),ids);
@@ -179,7 +192,7 @@ try{
  await page.screenshot({path:fileURLToPath(new URL('single-workspace.png',dir)),fullPage:true});
  assert.deepEqual(failures,[],'Unexpected browser errors');
  const updater=process.env.LSE_TEST_UPDATER?await rpc('test',{operation:'updater',id}):null;
- const result={ok:true,versions,websiteURLCapture:true,captureRetryIdempotent:true,privateCaptureURLsDenied:true,privateRedirectDenied:true,capturedJSONDownload:true,capturedNativeElementor:true,initialImport:true,refreshSameIds:true,sourceJSBackslashes:true,restoreRefresh:true,nativeElementorEditProtected:true,publishedRefreshConsent:true,concurrentEditProtected:true,titleAndSlug:true,trashRestore:true,foreignPageAndAccountDenied:true,htmlImport:true,singleWorkspace:true,sidebarAndInspector:true,pageSearchAndFilters:true,mobileWorkspace:true,metadataDialog:true,wholeImportRemoval:true,staleBulkRemovalProtected:true,unrelatedImportRetained:true,actualWebsiteConversions:actual,updater};
+ const result={ok:true,requestCounts,importTimings,versions,websiteURLCapture:true,captureRetryIdempotent:true,privateCaptureURLsDenied:true,privateRedirectDenied:true,capturedJSONDownload:true,capturedNativeElementor:true,deeplyNestedURLImport:true,batchedCaptureReplay:true,mediaBatches:true,compactPageSaves:true,initialImport:true,refreshSameIds:true,sourceJSBackslashes:true,restoreRefresh:true,nativeElementorEditProtected:true,publishedRefreshConsent:true,concurrentEditProtected:true,titleAndSlug:true,trashRestore:true,foreignPageAndAccountDenied:true,htmlImport:true,singleWorkspace:true,sidebarAndInspector:true,pageSearchAndFilters:true,mobileWorkspace:true,metadataDialog:true,wholeImportRemoval:true,staleBulkRemovalProtected:true,unrelatedImportRetained:true,actualWebsiteConversions:actual,updater};
  await writeFile(new URL('integration.json',dir),JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result));
 }catch(error){await writeFile(new URL('integration-error.json',dir),JSON.stringify({ok:false,error:error.message,stack:error.stack,browserErrors:failures},null,2));await page.screenshot({path:fileURLToPath(new URL('failure.png',dir)),fullPage:true}).catch(()=>{});throw error}
 finally{await browser.close()}

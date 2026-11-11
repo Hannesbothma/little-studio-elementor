@@ -41,10 +41,10 @@ final class LSE_Capture {
         if ( ! class_exists( 'DOMDocument' ) ) { throw new RuntimeException( 'Website capture needs the PHP DOM extension. Use the Desktop capture option on this host.' ); }
         $url = self::url( $input['url'] ?? '' ); self::safe( $url );
         $id = bin2hex( random_bytes( 16 ) );
-        $job = [ 'source' => $url, 'origin' => self::origin( $url ), 'queue' => [ [ 'url' => $url, 'kind' => 'page', 'depth' => 0 ] ], 'seen' => [ $url => true ], 'pages' => 1, 'maxPages' => max( 1, min( 200, (int) ( $input['pages'] ?? 25 ) ) ), 'depth' => max( 0, min( 6, (int) ( $input['depth'] ?? 3 ) ) ), 'seq' => 0, 'bytes' => 0, 'warnings' => [], 'truncated' => false ];
+        $job = [ 'source' => $url, 'origin' => self::origin( $url ), 'queue' => [ [ 'url' => $url, 'kind' => 'page', 'depth' => 0 ] ], 'seen' => [ $url => true ], 'pages' => 1, 'maxPages' => max( 1, min( 200, (int) ( $input['pages'] ?? 200 ) ) ), 'depth' => max( 0, min( 200, (int) ( $input['depth'] ?? 200 ) ) ), 'seq' => 0, 'bytes' => 0, 'warnings' => [], 'truncated' => false ];
         // One live capture per administrator. Starting afresh discards only crawl metadata.
         $previous = get_user_meta( get_current_user_id(), '_lse_capture', true );
-        if ( is_string( $previous ) && preg_match( '/^[a-f0-9]{32}$/D', $previous ) ) { delete_transient( self::key( $previous ) ); }
+        if ( is_string( $previous ) && preg_match( '/^[a-f0-9]{32}$/D', $previous ) ) { self::remove_batch( $previous ); delete_transient( self::key( $previous ) ); }
         set_transient( self::key( $id ), $job, HOUR_IN_SECONDS ); update_user_meta( get_current_user_id(), '_lse_capture', $id );
         return [ 'capture' => $id, 'source' => $url, 'seq' => 0 ];
     }
@@ -138,7 +138,61 @@ final class LSE_Capture {
             return [ 'done' => false, 'seq' => $job['seq'] + 1, 'record' => $record, 'remaining' => count( $job['queue'] ) - 1, 'message' => 'Captured ' . ( $job['seq'] + 1 ) . ' resources; ' . ( count( $job['queue'] ) - 1 ) . ' queued.' ];
         } finally { delete_option( $lock ); }
     }
+    private static function batch_key( $id ) { return self::key( $id ) . '_batch'; }
+    private static function remove_batch( $id ) {
+        $batch = get_transient( self::batch_key( $id ) );
+        if ( is_array( $batch ) && ! empty( $batch['file'] ) && str_starts_with( basename( $batch['file'] ), 'lse-capture-' ) ) { wp_delete_file( $batch['file'] ); }
+        delete_transient( self::batch_key( $id ) );
+    }
+    public static function cleanup_batch( $user, $id, $file ) {
+        if ( ! is_string( $file ) || ! str_starts_with( basename( $file ), 'lse-capture-' ) ) { return; }
+        $active = get_transient( 'lse_capture_' . (int) $user . '_' . $id . '_batch' );
+        if ( is_array( $active ) && ( $active['file'] ?? '' ) === $file ) { wp_schedule_single_event( time() + HOUR_IN_SECONDS, 'lse_capture_cleanup', [ $user, $id, $file ] ); }
+        else { wp_delete_file( $file ); }
+    }
+    public static function capture_batch( $input ) {
+        [ $id ] = self::load( $input ); $seq = $input['seq'] ?? -1;
+        if ( ! is_int( $seq ) || $seq < 0 ) { throw new RuntimeException( 'Invalid capture sequence.' ); }
+        $lock = self::batch_key( $id ) . '_lock'; $held = get_option( $lock );
+        if ( $held && (int) $held < time() - 90 ) { delete_option( $lock ); }
+        if ( ! add_option( $lock, time(), '', false ) ) { throw new RuntimeException( 'This capture batch is still running. Wait a moment and retry.' ); }
+        try {
+            $cache = get_transient( self::batch_key( $id ) ); $result = null;
+            if ( is_array( $cache ) ) {
+                $raw = is_file( $cache['file'] ) ? file_get_contents( $cache['file'] ) : false;
+                $previous = is_string( $raw ) ? json_decode( $raw, true ) : null;
+                if ( ! is_array( $previous ) ) { throw new RuntimeException( 'The temporary capture cache is unavailable. Restart the capture.' ); }
+                if ( $seq === $previous['from'] && ( $previous['seq'] > $seq || $previous['done'] ) ) { return $previous; }
+                if ( $seq !== $previous['seq'] ) { throw new RuntimeException( 'Capture sequence changed. Start the capture again.' ); }
+                $file = $cache['file'];
+            } else {
+                require_once ABSPATH . 'wp-admin/includes/file.php';
+                $file = wp_tempnam( 'lse-capture-' . $id );
+                if ( ! $file ) { throw new RuntimeException( 'The host could not create a private capture cache. Use Desktop capture.' ); }
+                chmod( $file, 0600 );
+                wp_schedule_single_event( time() + HOUR_IN_SECONDS, 'lse_capture_cleanup', [ get_current_user_id(), $id, $file ] );
+            }
+            $result = [ 'from' => $seq, 'seq' => $seq, 'records' => [], 'done' => false, 'message' => 'Capturing website…' ];
+            // Persist an empty checkpoint before fetching. Every delivered resource has a replay copy
+            // before the next one is acknowledged, including if PHP stops between resources.
+            if ( file_put_contents( $file, wp_json_encode( $result ), LOCK_EX ) === false ) { throw new RuntimeException( 'The capture cache could not be written.' ); }
+            set_transient( self::batch_key( $id ), [ 'file' => $file ], HOUR_IN_SECONDS );
+            $started = microtime( true ); $bytes = 0;
+            for ( $i = 0; $i < 4; ++$i ) {
+                $step = self::capture_step( [ 'capture' => $id, 'seq' => $result['seq'] ] );
+                $result['seq'] = $step['seq']; $result['done'] = $step['done'];
+                if ( ! empty( $step['record'] ) ) { $result['records'][] = $step['record']; $bytes += strlen( $step['record']['data'] ); }
+                $result['message'] = $step['message'] ?? 'Website capture complete.';
+                if ( $step['done'] ) { $result['warnings'] = $step['warnings']; $result['truncated'] = $step['truncated']; }
+                if ( file_put_contents( $file, wp_json_encode( $result ), LOCK_EX ) === false ) { throw new RuntimeException( 'The capture checkpoint could not be saved. Restart the capture.' ); }
+                if ( $step['done'] || $bytes >= 2 * MB_IN_BYTES || microtime( true ) - $started >= 1 ) { break; }
+            }
+            return $result;
+        } finally { delete_option( $lock ); }
+    }
     public static function capture_cancel( $input ) {
-        [ $id ] = self::load( $input ); delete_transient( self::key( $id ) ); return [ 'cancelled' => true ];
+        [ $id ] = self::load( $input ); self::remove_batch( $id ); delete_transient( self::key( $id ) ); return [ 'cancelled' => true ];
     }
 }
+
+add_action( 'lse_capture_cleanup', [ 'LSE_Capture', 'cleanup_batch' ], 10, 3 );

@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 0.6.0
+Stable tag: 0.6.1
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -114,8 +114,10 @@ guarantee acceptance by every host. Nonces, permissions and content checks remai
 No converter service, AI API, CDN library, telemetry or API key is required.
 Analysis occurs in your browser; import sends data to your WordPress server.
 Website link capture makes public HTTP requests from your WordPress host to the
-source site and linked file hosts. Captured files are held in your browser until
-you download the JSON or import them. Crawl metadata expires after one hour.
+source site and linked file hosts. Captured files are held in your browser and in a temporary host checkpoint for
+reliable batch retries. Acknowledgement replaces that checkpoint; cancellation
+removes it. Abandoned checkpoints expire with crawl metadata after one hour and
+are removed by WordPress scheduled cleanup when cron runs.
 The source preview blocks scripts and external requests. Imported pages may still
 reference external media, fonts or links when those were not packaged; review them.
 Elementor itself can make its usual network requests. This plugin does not control
@@ -133,9 +135,10 @@ versions before production use. No live website is changed by building this ZIP.
 
 == Website link capture ==
 
-Choose Import from website link, paste a public HTTP/HTTPS address and choose
-page/depth limits. Your WordPress host captures one resource per request; it does
-not require HTTrack or an external capture service. Keep the tab open. Retry
+Choose Import website link and paste a public HTTP/HTTPS address. Capture follows
+linked pages automatically within the native format limits (200 pages). Small
+resources are batched per request. No HTTrack or external service is required.
+Keep the tab open. Retry
 continues the current capture; reloading requires starting the capture again.
 Capture is limited to the same origin for pages, 600 resources and 48 MB fetched.
 Individual responses are bounded to 2 MB for pages or 8 MB for other resources.
@@ -154,6 +157,14 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.6.1 =
+* Simplify URL capture to one website address and fix dialog/sidebar spacing.
+* Batch captures and small media uploads, and overlap conversion with page saves.
+* Reuse parsed metadata and avoid repeated checks of all pages after each save.
+* Accept deeply nested source layouts up to 128 editable container levels.
+* Keep source preview protections, media validation, saved-progress retries and edit protection.
+
 
 = 0.6.0 =
 * Capture a public website link directly in the plugin and review it before importing.

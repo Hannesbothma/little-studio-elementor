@@ -30,16 +30,16 @@
   const error=Error((actionNames[details.action]||'WordPress request')+': '+message+' (HTTP '+res.status+').');error.lseMessage=message;error.lseDetails={...details,responseKind:data===undefined?(/<[^>]+>/.test(clean)?'html':'text'):'json'};throw error;
  }
  async function request(action,payload,file){
-  const encoded=JSON.stringify(payload),bytes=new TextEncoder().encode(encoded).length;
+  const encoded=JSON.stringify(payload),bytes=new TextEncoder().encode(encoded).length;const files=Array.isArray(file)?file:(file?[file]:[]);
   const pageUpload=action==='page'&&['json-file-v1','json-gzip-v1'].includes(config.pageTransport);
   let upload=pageUpload?new Blob([encoded],{type:'application/json'}):null,compressed=false;
   if(pageUpload&&config.pageTransport==='json-gzip-v1'&&typeof CompressionStream==='function'){upload=await new Response(upload.stream().pipeThrough(new CompressionStream('gzip'))).blob();compressed=true;}
   const transferBytes=upload?.size||bytes;
-  if(config.maxPost&&transferBytes+(file?.size||0)+4096>config.maxPost)throw Error('This request exceeds the server post_max_size limit. Increase it in your hosting settings and retry.');
+  if(config.maxPost&&transferBytes+files.reduce((n,f)=>n+f.size,0)+8192>config.maxPost)throw Error('This request exceeds the server post_max_size limit. Increase it in your hosting settings and retry.');
   if(pageUpload&&((config.maxUpload&&transferBytes>config.maxUpload)||bytes>(config.maxPagePayload||16777216)))throw Error('The converted page exceeds the page-upload limit. Check the hosting upload limit before retrying this saved import.');
   const form=new FormData();form.set('action','lse_'+action);form.set('nonce',config.nonce);
   if(pageUpload)form.set('payload_file',upload,compressed?'converted-page.json.gz':'converted-page.json');else form.set('payload',encoded);
-  if(file)form.set('file',file,file.name);
+  if(Array.isArray(file))files.forEach((item,index)=>form.set('file_'+index,item,item.name));else if(file)form.set('file',file,file.name);
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),['check','status'].includes(action)?30000:120000);
   let details={action,httpStatus:0,contentType:'',redirected:false,transport:pageUpload?(compressed?'gzip-file':'json-file'):'form-field',requestBytes:bytes,transferBytes};
   try{
@@ -69,9 +69,22 @@
   for(const a of source.assets)if(a.bytes.length>config.maxUpload)throw Error(a.name+' exceeds this server’s upload limit. Increase the hosting limit before importing.');progress(1,'Preparing your website drafts…');const optionKey=fingerprint+':'+(config.conversionVersion||'legacy')+':'+source.title+':'+source.pages.map(p=>p.key).join(',')+':'+$('#lse-layout').value+':'+$('#lse-css').checked+':'+$('#lse-scripts').checked+':'+(target?.id||'new');const importIdentity=[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(optionKey)))].map(v=>v.toString(16).padStart(2,'0')).join('');
   pendingFingerprint=importIdentity;$('#lse-check').hidden=true;progress(1,'Checking the WordPress connection…');const connection=await request('check',{fingerprint:importIdentity});if(!connection.elementor)throw Error('Activate Elementor before importing.');job=connection.import;if(target&&job?.id!==target.id)job=null;
   if(!job||target&&job.state==='ready'){progress(2,target?'Preparing existing pages for refresh…':'Preparing new draft pages…');job=await request('start',{fingerprint:importIdentity,site_id:source.site_id,target_job:target?.id||'',expected_stamps:target?Object.fromEntries(target.pages.map(p=>[p.key,p.current_stamp])):{},overwrite:$('#lse-overwrite').checked,title:source.title,pages:source.pages.map(({key,title,slug,url,parent_key})=>({key,title,slug,url,parent_key})),site:source.site,layout:$('#lse-layout').value,scripts:$('#lse-scripts').checked});}if(job.state==='ready'){result(job);return;}if(job.state==='interrupted'||(!target&&job.pages.length!==source.pages.length)||job.pages.some(p=>!p.url||!p.edit_url))throw Error('Draft preparation stopped early. Remove this import’s unchanged drafts before starting it again.');
-  for(let i=0;i<source.assets.length;i++){const asset=source.assets[i];if(job.assets.some(a=>a.source===asset.url))continue;progress(5+35*i/Math.max(1,source.assets.length),'Importing file '+(i+1)+' of '+source.assets.length+': '+asset.name);const matching=source.fonts.filter(f=>f.url===asset.url).map(f=>f.family);const doc=new DOMParser().parseFromString(source.pages.map(p=>p.html).join('\n'),'text/html');const image=[...doc.images].find(img=>img.getAttribute('src')===asset.url);await request('asset',{job:job.id,url:asset.url,families:matching,alt:image?.getAttribute('alt')||''},new File([asset.bytes],asset.name,{type:asset.type}));}
+  const imageAlt=new Map(),fontFamilies=new Map();for(const page of source.pages){const doc=new DOMParser().parseFromString(page.html,'text/html');for(const img of doc.images)if(!imageAlt.has(img.getAttribute('src')))imageAlt.set(img.getAttribute('src'),img.getAttribute('alt')||'');}for(const font of source.fonts){if(!fontFamilies.has(font.url))fontFamilies.set(font.url,[]);fontFamilies.get(font.url).push(font.family);}
+  const pendingAssets=source.assets.filter(asset=>!job.assets.some(a=>a.source===asset.url));let uploaded=0;
+  const batchLimit=Math.max(1,Math.min(2*1048576,(config.maxPost||Infinity)-16384));
+  for(let i=0;i<pendingAssets.length;){const group=[];let size=0;while(i<pendingAssets.length&&group.length<4){const asset=pendingAssets[i];if(group.length&&size+asset.bytes.length>batchLimit)break;group.push(asset);size+=asset.bytes.length;i++;if(size>batchLimit)break;}
+   progress(5+35*uploaded/Math.max(1,pendingAssets.length),'Importing files '+(uploaded+1)+'–'+(uploaded+group.length)+' of '+pendingAssets.length+'…');
+   const inputs=group.map(asset=>({url:asset.url,families:fontFamilies.get(asset.url)||[],alt:imageAlt.get(asset.url)||''}));const files=group.map(asset=>new File([asset.bytes],asset.name,{type:asset.type}));
+   let completed=1;if(group.length===1)await request('asset',{job:job.id,...inputs[0]},files[0]);else{const response=await request('assets',{job:job.id,assets:inputs},files);completed=response.assets?.length||0;if(completed<1||completed>group.length)throw Error('Media batch progress was not confirmed. Retry the saved import.');}i-=group.length-completed;uploaded+=completed;
+  }
   job=await request('status',{job:job.id});
-  for(let i=0;i<source.pages.length;i++){const page=source.pages[i];if(job.pages.find(p=>p.key===page.key)?.done)continue;progress(40+55*i/source.pages.length,'Converting page '+(i+1)+' of '+source.pages.length+': '+page.title);const converted=await M.convert(source,page,{map:job.map,layout:job.layout,preserveCSS:$('#lse-css').checked});job=await request('page',{job:job.id,key:page.key,...converted});}
+  const pendingPages=source.pages.filter(page=>!job.pages.find(p=>p.key===page.key)?.done);
+  const prepare=page=>M.convert(source,page,{map:job.map,layout:job.layout,preserveCSS:$('#lse-css').checked}).then(value=>({value}),error=>({error}));
+  let prepared=pendingPages.length?prepare(pendingPages[0]):null;
+  for(let i=0;i<pendingPages.length;i++){const page=pendingPages[i];progress(40+55*i/Math.max(1,pendingPages.length),'Converting and saving page '+(i+1)+' of '+pendingPages.length+': '+page.title);const converted=await prepared;if(converted.error)throw converted.error;
+   const saving=request('page',{job:job.id,key:page.key,...converted.value,compact:true});prepared=i+1<pendingPages.length?prepare(pendingPages[i+1]):null;
+   const saved=await saving;if(!saved.saved||saved.key!==page.key)throw Error('The page save was not confirmed. Check saved progress before retrying.');const entry=job.pages.find(p=>p.key===page.key);entry.done=true;entry.stamp=saved.stamp;
+  }
   progress(98,'Checking pages and preparing shared sections and navigation…');do{job=await request('finish',{job:job.id});}while(job.state==='finishing');progress(100,'Website import complete.');result(job);
  }catch(e){const phase=$('#lse-current').textContent;recordError(e,phase);$('#lse-retry').hidden=false;$('#lse-cancel').hidden=!job;$('#lse-check').hidden=!pendingFingerprint;status(e.message,true);$('#lse-current').textContent='Import paused. Check saved progress before continuing. Completed drafts and uploaded files are kept.';}finally{setBusy(false);}}
  $('#lse-file').addEventListener('change',e=>choose(e.target.files[0]));const drop=$('.lse-drop');drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('is-over');});drop.addEventListener('dragleave',()=>drop.classList.remove('is-over'));drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('is-over');if(e.dataTransfer.files.length!==1){status('Drop one complete website JSON file.',true);return;}choose(e.dataTransfer.files[0]);});

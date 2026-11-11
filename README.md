@@ -10,8 +10,8 @@ Imports do not replace existing page content or publish the new drafts.
 
 ## Website link capture
 
-Use **Import from website link** in the plugin sidebar. Paste a public URL and
-choose page/depth limits. Keep the tab open, review capture warnings, download the
+Use **Import from website link** in the plugin sidebar. Paste a public URL. Linked pages are followed automatically within the native
+200-page format limit. Keep the tab open, review capture warnings, download the
 native JSON if needed, and import to editable Elementor drafts. Capture itself
 creates no posts or media. The host needs PHP DOM and public outbound HTTP/HTTPS;
 HTTrack is not required on WordPress. Captures are bounded to 600 resources and
@@ -110,4 +110,21 @@ bundled. Import only assets and content you have permission to use.
 
 ## Repeatable testing
 
-Install development tools with `npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0`, then `npx playwright install chromium` and `node tests/run.mjs`. The runner builds the actual plugin ZIP, installs it into an isolated WordPress Playground site (not over the development source), exercises import management and uses a simulated next-version package to test the native updater. On this workstation it also reads the current portfolio and Opu JSON for validation and representative conversion checks. The simulated package is never released. See `docs/TESTING-0.6.0.md`.
+Install development tools with `npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0`, then `npx playwright install chromium` and `node tests/run.mjs`. The runner builds the actual plugin ZIP, installs it into an isolated WordPress Playground site (not over the development source), exercises import management and uses a simulated next-version package to test the native updater. On this workstation it also reads the current portfolio and Opu JSON for validation and representative conversion checks. The simulated package is never released. See `docs/TESTING.md` and `docs/TESTING-0.6.0.md`.
+
+## Faster capture and import (0.6.1)
+
+Small captures and media uploads are batched to reduce WordPress bootstrap and
+network overhead. Batches stop early when work is slow, preserving hosting time
+budgets. Capture checkpoints are replayed after a lost response; successful
+media uploads remain resumable. Large files use the existing individual upload.
+Source metadata is parsed once per page, page conversion overlaps the preceding
+save, and saves return compact acknowledgements. Final status, protections,
+shared sections and native Elementor saving remain in place.
+
+The converter caches source-asset lookups and parent geometry within each
+viewport. All four responsive samples are retained. Nested layouts now support
+128 editable container levels, with matching server and JSON transport limits.
+The element and payload limits remain enforced. Website-link capture uses a
+short-lived temporary host file for its last batch checkpoint; normal completion
+or cancellation removes it, and WordPress cron cleans abandoned checkpoints.
