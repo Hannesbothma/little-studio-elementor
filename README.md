@@ -185,3 +185,21 @@ that plugin nesting cutoff and the fixed element/payload quotas. Native runtime
 resource constraints still apply. Website-link capture uses a
 short-lived temporary host file for its last batch checkpoint; normal completion
 or cancellation removes it, and WordPress cron cleans abandoned checkpoints.
+
+
+## Source CSS preservation (0.7.3)
+
+Copied text, lists, SVG icons and other HTML content retain their scoped source
+rules, variables, pseudo-elements, hover/focus and responsive styling. Every inline
+source stylesheet participates, alongside packaged page/shared CSS. SVG IDs,
+sanitized inline styles and source-content markers survive the import. Generated
+HTML content selectors support both Elementor widget-wrapper layouts. Standalone
+imported Canvas pages omit destination-theme stylesheets that would override the
+source CSS; the WordPress-header/footer layout retains them. Native
+headings and other supported controls remain editable.
+
+After updating an existing installation, select the affected website and use
+**Update from file** with its existing JSON. This rebuilds the saved CSS on the same
+page IDs, with the normal review/backup and edited/published-page protections.
+Updating the plugin or retrying an already completed import alone does not
+reconvert it. If a stylesheet was absent from the captured JSON, capture again.

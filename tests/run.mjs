@@ -21,6 +21,7 @@ const args=['node_modules/@wp-playground/cli/cli.js','server','--mount='+root+'/
 const server=spawn(process.execPath,args,{stdio:['ignore','pipe','pipe']});
 try{
  await new Promise((resolve,reject)=>{let output='';const timer=setTimeout(()=>reject(Error('Playground startup timed out')),180000);server.stdout.on('data',chunk=>{process.stdout.write(chunk);output+=chunk;if(output.includes('Ready!')){clearTimeout(timer);resolve()}});server.stderr.on('data',chunk=>process.stderr.write(chunk));server.once('exit',code=>{clearTimeout(timer);reject(Error('Playground exited '+code))})});
+ await run(process.execPath,['tests/css-regression.mjs'],{env:{...process.env,LSE_TEST_URL:'http://127.0.0.1:9416'}});
  await run(process.execPath,['tests/large-import.mjs'],{env:{...process.env,LSE_TEST_URL:'http://127.0.0.1:9416'}});
  await run(process.execPath,['tests/resources.mjs'],{env:{...process.env,LSE_TEST_URL:'http://127.0.0.1:9416'}});
  await run(process.execPath,['tests/integration.mjs'],{env:{...process.env,LSE_TEST_URL:'http://127.0.0.1:9416',LSE_TEST_UPDATER:'1'}});

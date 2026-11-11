@@ -1,3 +1,4 @@
+import {handleEditorPrompts} from './editor-prompts.mjs';
 import {chromium} from 'playwright';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -100,7 +101,7 @@ try{
  const editor=await page.context().newPage(),editorStarted=performance.now();
  try{
   await editor.goto(capturedImport.pages[1].edit_url,{waitUntil:'domcontentloaded'});
-  const canvas=editor.frameLocator('#elementor-preview-iframe');const heading=canvas.getByRole('heading',{name:'Captured About',exact:true});await heading.waitFor({state:'visible',timeout:90000});
+  const canvas=editor.frameLocator('#elementor-preview-iframe');await handleEditorPrompts(editor,canvas.locator('.elementor-widget-heading').first());const heading=canvas.getByRole('heading',{name:'Captured About',exact:true});await heading.waitFor({state:'visible',timeout:90000});
   assert(!(await editor.locator('#elementor-preview-iframe').contentFrame().locator('body').innerHTML()).includes('capturedEditorScriptShouldNotRun'),'Source scripts were injected into Elementor editor preview');
   await editor.waitForFunction(()=>window.elementor?.loaded&&window.elementor?.previewLoadedOnce,{},{timeout:90000});await editor.locator('#elementor-loading').waitFor({state:'hidden',timeout:90000});const closeStructure=editor.getByRole('button',{name:'Close structure',exact:true});if(await closeStructure.isVisible())await closeStructure.click();const widget=canvas.locator('.elementor-widget-heading').filter({hasText:'Captured About'}).first();await widget.hover();await widget.locator('[aria-label="Edit Heading"]').click();const control=editor.locator('.elementor-control-title textarea').first();await control.waitFor({state:'visible',timeout:45000});await control.fill('Changed in the real Elementor editor');
   await canvas.getByRole('heading',{name:'Changed in the real Elementor editor',exact:true}).waitFor({state:'visible',timeout:15000});

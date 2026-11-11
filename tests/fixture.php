@@ -84,3 +84,10 @@ add_action( 'wp_ajax_lse_test', static function() {
         wp_send_json_success( [ 'post' => $post ? [ 'id' => $post->ID, 'title' => $post->post_title, 'slug' => $post->post_name, 'status' => $post->post_status ] : null, 'elements' => json_decode( get_post_meta( $id, '_elementor_data', true ), true ), 'css' => get_post_meta( $id, '_lse_css', true ), 'js' => get_post_meta( $id, '_lse_js', true ), 'backup' => metadata_exists( 'post', $id, '_lse_refresh_backup' ), 'page_count' => (int) wp_count_posts( 'page' )->draft + (int) wp_count_posts( 'page' )->publish ] );
     } catch ( Throwable $e ) { wp_send_json_error( [ 'message' => $e->getMessage() ], 400 ); }
 } );
+
+// A real theme-path stylesheet distinguishes standalone imports from theme layouts.
+add_action( 'wp_enqueue_scripts', static function() {
+    if ( get_post_field( 'post_title', get_queried_object_id() ) !== 'Source CSS regression' ) { return; }
+    wp_enqueue_style( 'lse-test-theme', get_stylesheet_directory_uri() . '/style.css', [], '1' );
+    wp_add_inline_style( 'lse-test-theme', 'a{--lse-theme-marker:theme;}' );
+}, 29 );

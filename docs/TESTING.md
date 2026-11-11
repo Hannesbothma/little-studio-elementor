@@ -199,3 +199,52 @@ The 17 MB CSS/4 MB source/600 KB settings/9 MB media regression and all previous
 management, refresh, protection, preview, editor and native-upgrade checks remain.
 The simulated next-version upgrade is 0.7.3; that fixture is never published.
 The SSD is accessible again, and work continues in its existing canonical checkout.
+
+
+## 0.7.3 copied-content CSS regression
+
+`tests/css-regression.mjs` imports through the actual browser controls into the
+packaged plugin. The 0.7.2 baseline failed because the copied list rendered with
+`list-style-type: disc` instead of the source `none`. Its standalone SVG also lost
+the source-content marker during SVG sanitization; old generated selectors only
+addressed the legacy `.elementor-widget-container` layout.
+
+The fixture includes a converted source Elementor kit class supplying variables,
+inline head CSS, a copied list containing SVG/text, a standalone SVG, a copied
+paragraph link and an interactive button. Assertions cover list/flex layout,
+spacing, SVG width/height/fill, variable inheritance, inline background/radius,
+pseudo-element content, link decoration and hover. The same styles are checked in
+WordPress Preview at desktop/mobile widths and in the actual Elementor iframe.
+The test then changes a heading through Elementor’s real control and removes only
+its own disposable import. No source scripts or production site are changed.
+
+CSS is constrained to marked copied content; ancestor variable declarations are
+retained under page scope. Native sampled controls remain active. All source
+stylesheets participate in document order. Font rules, recursive conditional
+rules and keyframes are retained as needed. Existing large-content, 148-resource,
+capture/replay, management/protection and native updater checks remain enabled.
+The simulated next-version upgrade is 0.7.4 and is never published.
+
+Public Le Petit Paris homepage HTML and its linked stylesheets were inspected
+read-only to trace the source theme. A CSS-only diagnostic import in disposable
+WordPress confirmed that basic native heading colours/sizes survived while inner
+source styling was missing; this was not a complete-site fidelity benchmark.
+The affected live import URL was not supplied, so its exact live state remains
+unverified. Existing completed imports require Update from file to regenerate
+saved CSS; native edit/replacement protections must still be respected.
+
+The first new CSS check also caught Twenty Twenty-Five’s forced 1 px link
+underline overriding the source’s 3 px rule. Imported standalone Canvas pages now
+dequeue stylesheets located under the active parent/child theme directories at
+style-print time. Plugin/Elementor assets stay registered; ordinary pages and the
+explicit WordPress-header/footer layout are unaffected. The fixture adds a real
+theme-path stylesheet and verifies its absence on the standalone page and its
+presence on a second header/footer import. The strict 3 px source assertion is
+kept in both Preview and the editor.
+
+The added CSS editor visit exposed Elementor 4.4’s Angie installation promotion
+on the third editor visit. Its own promotion code confirms that visit threshold.
+`tests/editor-prompts.mjs` uses Playwright’s overlay handler to click only that
+promotion’s normal Close button, then restores canvas hover for the edit toolbar.
+It never installs the promoted plugin or hides/removes DOM. Native editor loading,
+visibility and actual control editing assertions remain strict.

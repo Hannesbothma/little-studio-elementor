@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 0.7.2
+Stable tag: 0.7.3
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -161,6 +161,11 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.7.3 =
+* Preserve scoped source CSS for copied text, lists, SVG and HTML content, including variables, pseudo-elements, states and responsive rules.
+* Retain inline source stylesheets and safely preserved SVG styles/IDs; support both Elementor widget wrapper layouts.
+* Keep native controls editable and retain the faster resource batches and resumable imports.
 
 = 0.7.2 =
 * Fix URL replacement failing on large resource maps and returning null instead of CSS.

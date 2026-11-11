@@ -79,6 +79,7 @@ final class LSE_Plugin {
             }
         } );
         add_action( 'wp_enqueue_scripts', [ __CLASS__, 'front' ], 30 );
+        add_action( 'wp_print_styles', [ __CLASS__, 'canvas_styles' ], PHP_INT_MAX );
         add_action( 'wp_head', [ __CLASS__, 'seo' ], 2 );
         add_filter( 'pre_get_document_title', static function( $title ) { if ( ! is_singular() || defined( 'WPSEO_VERSION' ) || defined( 'RANK_MATH_VERSION' ) || defined( 'AIOSEO_VERSION' ) ) { return $title; } $seo = get_post_meta( get_queried_object_id(), '_lse_seo', true ); return ! empty( $seo['title'] ) ? $seo['title'] : $title; } );
         add_filter( 'wp_robots', static function( $robots ) { if ( is_singular() && ! defined( 'WPSEO_VERSION' ) && ! defined( 'RANK_MATH_VERSION' ) && ! defined( 'AIOSEO_VERSION' ) ) { $seo = get_post_meta( get_queried_object_id(), '_lse_seo', true ); if ( ( $seo['indexing'] ?? '' ) === 'noindex' ) { $robots['noindex'] = true; unset( $robots['index'] ); } } return $robots; } );
@@ -213,6 +214,19 @@ final class LSE_Plugin {
         </dialog>
         <footer class="lse-foot">Keep this plugin active for your imported website.</footer>
         </div><?php
+    }
+    public static function canvas_styles() {
+        $id = get_queried_object_id();
+        if ( ! is_singular() || get_page_template_slug( $id ) !== 'elementor_canvas' || ! get_post_meta( $id, '_lse_css', true ) ) { return; }
+        $urls = array_unique( array_map( static fn( $url ) => trailingslashit( (string) wp_parse_url( $url, PHP_URL_PATH ) ), [ get_template_directory_uri(), get_stylesheet_directory_uri() ] ) );
+        $paths = array_unique( array_map( static fn( $path ) => trailingslashit( wp_normalize_path( $path ) ), [ get_template_directory(), get_stylesheet_directory() ] ) );
+        $styles = wp_styles();
+        foreach ( $styles->queue as $handle ) {
+            $style = $styles->registered[$handle] ?? null; if ( ! $style ) { continue; }
+            $url = (string) wp_parse_url( (string) $style->src, PHP_URL_PATH ); $file = wp_normalize_path( $style->extra['path'] ?? '' );
+            foreach ( $urls as $prefix ) { if ( $url && str_starts_with( $url, $prefix ) ) { wp_dequeue_style( $handle ); continue 2; } }
+            foreach ( $paths as $prefix ) { if ( $file && str_starts_with( $file, $prefix ) ) { wp_dequeue_style( $handle ); continue 2; } }
+        }
     }
     public static function front() {
         if ( ! is_singular() ) { return; }
