@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 0.6.2
+Stable tag: 0.7.0
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -129,7 +129,7 @@ Elementor and Elementor Pro are separate products, not bundled with this plugin.
 
 See the accompanying workspace test report and Arena record for exact checks,
 versions and remaining limitations. Core compatibility was exercised with
-Elementor 4.3.6, PHP 8.3 and WordPress 7.1.3 in a disposable local Playground.
+Elementor 4.4.0, PHP 8.3 and WordPress 7.1.4 in a disposable local Playground.
 Elementor Pro was not available for direct testing. Test on your own staging
 versions before production use. No live website is changed by building this ZIP.
 
@@ -149,7 +149,8 @@ Review capture warnings and download the website JSON from the review dialog.
 Import then creates ordinary protected Elementor drafts using the existing flow.
 Captured classic JavaScript can run on imported pages when Keep website
 interactions is enabled; only use trusted sources. The capture preview itself
-does not execute it. A capture does not publish or replace an existing import.
+does not execute it. Source WordPress/Elementor framework scripts are omitted;
+custom imported scripts pause inside the Elementor editor. A capture does not publish or replace an existing import.
 
 Alternatively use Little Studio Desktop > File > Website link to JSON. Desktop
 uses the installed HTTrack engine and saves the same native JSON format.
@@ -157,6 +158,14 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.7.0 =
+* Include lazy/gallery images and backgrounds, and retain captured font rules in saved previews.
+* Isolate source Elementor identities/runtime and pause imported scripts in the editor.
+* Populate native image sizing and editable responsive photo grids.
+* Use readable media filenames/titles, preserving reused URLs and custom titles.
+* Remove redundant preparation/status requests and cache recursive URL rewrites.
+* Recapture old sources and use Update from file to repair previously missing files.
 
 = 0.6.2 =
 * Simplify URL capture to one website address and fix dialog/sidebar spacing.

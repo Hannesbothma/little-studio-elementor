@@ -52,7 +52,7 @@ final class LSE_Plugin {
                 },
             ] );
         } );
-        $actions = [ 'imports', 'remove_import', 'manage_page', 'restore_refresh', 'check', 'start', 'asset', 'page', 'finish', 'status', 'undo', 'activate', 'restore', 'update_check', 'update_install', 'capture_start', 'capture_step', 'capture_cancel', 'capture_batch', 'assets' ];
+        $actions = [ 'imports', 'remove_import', 'manage_page', 'restore_refresh', 'check', 'start', 'asset', 'page', 'finish', 'status', 'undo', 'activate', 'restore', 'update_check', 'update_install', 'prepare', 'capture_start', 'capture_step', 'capture_cancel', 'capture_batch', 'assets' ];
         $requested = $_REQUEST['action'] ?? '';
         if ( defined( 'DOING_AJAX' ) && DOING_AJAX && is_string( $requested ) && in_array( $requested, array_map( static fn( $action ) => 'lse_' . $action, $actions ), true ) ) { self::$response_level = ob_get_level() + 1; ob_start(); }
         add_action( 'elementor/widgets/register', static function( $manager ) { require_once __DIR__ . '/shared-widget.php'; $manager->register( new LSE_Shared_Widget() ); } );
@@ -75,7 +75,7 @@ final class LSE_Plugin {
         add_action( 'elementor/frontend/before_render', static function( $element ) {
             $settings = $element->get_data( 'settings' );
             foreach ( is_array( $settings['lse_attributes'] ?? null ) ? $settings['lse_attributes'] : [] as $name => $value ) {
-                if ( preg_match( '/^(?:data-[a-z0-9_-]+|aria-[a-z0-9_-]+|role)$/iD', $name ) && is_string( $value ) && strlen( $value ) <= 4096 ) { $element->add_render_attribute( '_wrapper', $name, $value ); }
+                if ( ! preg_match( '/^(?:data-(?:id|element_type|widget_type|settings|model-cid)|data-elementor-(?:id|type|post-type)|data-e-action-hash)$/iD', $name ) && preg_match( '/^(?:data-[a-z0-9_-]+|aria-[a-z0-9_-]+|role)$/iD', $name ) && is_string( $value ) && strlen( $value ) <= 4096 ) { $element->add_render_attribute( '_wrapper', $name, $value ); }
             }
         } );
         add_action( 'wp_enqueue_scripts', [ __CLASS__, 'front' ], 30 );
@@ -92,7 +92,7 @@ final class LSE_Plugin {
         wp_enqueue_script( 'lse-capture', plugins_url( 'assets/capture.js', LSE_FILE ), [ 'lse-admin', 'lse-manage' ], LSE_VERSION, true );
         wp_enqueue_script( 'lse-manage', plugins_url( 'assets/manage.js', LSE_FILE ), [ 'lse-admin' ], LSE_VERSION, true );
         if ( current_user_can( 'update_plugins' ) ) { wp_enqueue_script( 'lse-updates', plugins_url( 'assets/updates.js', LSE_FILE ), [ 'lse-admin' ], LSE_VERSION, true ); wp_add_inline_script( 'lse-updates', 'window.LSE_UPDATE_STATE=' . wp_json_encode( LSE_Updates::state() ) . ';', 'before' ); }
-        wp_add_inline_script( 'lse-admin', 'window.LSE_CONFIG=' . wp_json_encode( [ 'version' => LSE_VERSION, 'ajax' => admin_url( 'admin-ajax.php' ), 'nonce' => wp_create_nonce( 'lse_import' ), 'elementor' => defined( 'ELEMENTOR_VERSION' ) ? ELEMENTOR_VERSION : '', 'pro' => defined( 'ELEMENTOR_PRO_VERSION' ), 'maxUpload' => wp_max_upload_size(), 'maxPost' => wp_convert_hr_to_bytes( ini_get( 'post_max_size' ) ), 'pageTransport' => function_exists( 'gzdecode' ) ? 'json-gzip-v1' : 'json-file-v1', 'pageRest' => rest_url( 'little-studio-elementor/v1/converted-page' ), 'restNonce' => wp_create_nonce( 'wp_rest' ), 'conversionVersion' => 'interactive-v1', 'maxPagePayload' => 16 * MB_IN_BYTES, 'canScripts' => current_user_can( 'unfiltered_html' ), 'home' => home_url( '/' ), 'lastJob' => get_user_meta( get_current_user_id(), '_lse_last_job', true ) ] ) . ';', 'before' );
+        wp_add_inline_script( 'lse-admin', 'window.LSE_CONFIG=' . wp_json_encode( [ 'version' => LSE_VERSION, 'ajax' => admin_url( 'admin-ajax.php' ), 'nonce' => wp_create_nonce( 'lse_import' ), 'elementor' => defined( 'ELEMENTOR_VERSION' ) ? ELEMENTOR_VERSION : '', 'pro' => defined( 'ELEMENTOR_PRO_VERSION' ), 'maxUpload' => wp_max_upload_size(), 'maxPost' => wp_convert_hr_to_bytes( ini_get( 'post_max_size' ) ), 'pageTransport' => function_exists( 'gzdecode' ) ? 'json-gzip-v1' : 'json-file-v1', 'pageRest' => rest_url( 'little-studio-elementor/v1/converted-page' ), 'restNonce' => wp_create_nonce( 'wp_rest' ), 'conversionVersion' => 'capture-v2', 'maxPagePayload' => 16 * MB_IN_BYTES, 'canScripts' => current_user_can( 'unfiltered_html' ), 'home' => home_url( '/' ), 'lastJob' => get_user_meta( get_current_user_id(), '_lse_last_job', true ) ] ) . ';', 'before' );
     }
     public static function screen() {
         ?><div class="wrap lse" id="lse-app">
@@ -218,6 +218,7 @@ final class LSE_Plugin {
         if ( ! is_singular() ) { return; }
         $id = get_queried_object_id(); $css = get_post_meta( $id, '_lse_css', true );
         if ( $css ) { wp_register_style( 'lse-page', false, [], LSE_VERSION ); wp_enqueue_style( 'lse-page' ); wp_add_inline_style( 'lse-page', $css ); }
+        if ( class_exists( '\\Elementor\\Plugin' ) && isset( \Elementor\Plugin::$instance ) && ( \Elementor\Plugin::$instance->editor->is_edit_mode() || \Elementor\Plugin::$instance->preview->is_preview_mode() ) ) { return; }
         $js = get_post_meta( $id, '_lse_js', true );
         wp_enqueue_script( 'lse-interactions', plugins_url( 'assets/interactions.js', LSE_FILE ), [], LSE_VERSION, true );
         if ( $js && get_post_meta( $id, '_lse_scripts_enabled', true ) ) { wp_add_inline_script( 'lse-interactions', 'window.LSEInteractions.register(' . wp_json_encode( (string) $id ) . ', function(){' . "\n" . $js . "\n" . '});' ); }

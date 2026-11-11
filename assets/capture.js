@@ -18,24 +18,29 @@
   for (const r of records) { resources.set(r.url, r); resources.set(r.requested, r); }
   const pages = [...new Map(records.filter(r => r.kind === 'page' && r.type === 'text/html').map(r => [r.url, r])).values()];
   if (!pages.length) throw Error('No HTML pages were captured. Try Desktop capture for this website.');
-  let assetBytes = 0;
-  const asset = async (value, base) => {
+  let assetBytes = 0;const names=new Set(),nameRanks=new Map(),assetsByURL=new Map();let contextTitle='Website';
+  const label=(url,type,hint='')=>{let stem='';try{stem=decodeURIComponent(new URL(url).pathname.split('/').pop()).replace(/\.[a-z0-9]{1,8}$/i,'').replace(/[-_]\d{2,5}x\d{2,5}$/,'').replace(/[-_](?:scaled|optimized|compressed)$/i,'');}catch{}
+   const generic=!stem||/^(?:[a-f0-9]{12,}|(?:img|dsc|image|photo|picture|asset)[-_ .\d]+)$/i.test(stem);let value=hint||(generic?contextTitle+' image':stem),rank=hint?3:generic?1:2;
+   value=value.normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/([a-z])([A-Z])/g,'$1-$2').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,76).replace(/-+$/,'')||'website-image';
+   const ext=({'image/jpeg':'jpg','image/svg+xml':'svg','audio/mpeg':'mp3'})[type]||type.split('/')[1];return {stem:value,ext,rank};};
+  const nameAsset=(item,url,hint)=>{const candidate=label(url,item.type,hint);if((nameRanks.get(item.url)||0)>=candidate.rank)return;names.delete(item.name);let name=candidate.stem+'.'+candidate.ext,index=2;while(names.has(name))name=candidate.stem+'-'+(index++)+'.'+candidate.ext;item.name=name;names.add(name);nameRanks.set(item.url,candidate.rank);};
+  const asset = async (value, base, hint='') => {
    if (!value || value.startsWith('#')) return value;
    if (value.startsWith('data:')) return value; // Native validation safely packages embedded media.
    const url = absolute(value, base);
    if (!url) return '';
    const fragment = new URL(value, base).hash;
    if (assets.some(a => a.url === url)) return url + fragment;
-   if (assetMap.has(url)) return assetMap.get(url) + fragment;
+   if (assetMap.has(url)){const mapped=assetMap.get(url);nameAsset(assetsByURL.get(mapped),url,hint);return mapped + fragment;}
    const record = resources.get(url), type = record && mediaType(record, url);
    if (!record || !type) { notes.add('External file needs review: ' + url); return url + fragment; }
    const body = bytes(record.data), digest = await hash(body);
    if (type === 'image/svg+xml' && /<!DOCTYPE|<!ENTITY/i.test(text(record))) { notes.add('An SVG with document declarations was left external: ' + url); return url; }
-   if (byHash.has(type + digest)) { const existing = byHash.get(type + digest); assetMap.set(url, existing); return existing + fragment; }
+   if (byHash.has(type + digest)) { const existing = byHash.get(type + digest); assetMap.set(url, existing);nameAsset(assetsByURL.get(existing),url,hint); return existing + fragment; }
    if (body.length > 8 * 1048576 || assetBytes + body.length > 32 * 1048576 || assets.length >= 200) throw Error('Packaged media exceeds the import limit. Reduce the page count.');
    const ext = ({'image/jpeg':'jpg','image/svg+xml':'svg','audio/mpeg':'mp3'})[type] || type.split('/')[1];
    const packaged = 'https://little-studio-assets.invalid/capture/' + digest + '.' + ext;
-   assets.push({url:packaged, name:digest.slice(0,20) + '.' + ext, type, data:'data:' + type + ';base64,' + record.data});
+   const item={url:packaged,name:'',type,data:'data:'+type+';base64,'+record.data};assets.push(item);assetsByURL.set(packaged,item);nameAsset(item,url,hint);
    assetBytes += body.length; assetMap.set(url, packaged); byHash.set(type + digest, packaged); return packaged + fragment;
   };
   const replaceAsync = async (input, pattern, fn) => { const matches = [...input.matchAll(pattern)], values = await Promise.all(matches.map(fn)); let index = 0; return input.replace(pattern, () => values[index++]); };
@@ -51,7 +56,8 @@
   };
   const output = [], navigation = [], documents = new Map();
   for (const record of pages) {
-   const doc = new DOMParser().parseFromString(text(record), 'text/html');
+   const doc = new DOMParser().parseFromString(text(record), 'text/html');contextTitle=doc.title.trim()||new URL(record.url).hostname;notesFor(doc);
+   function notesFor(document){for(const warning of M.prepareSource(document))notes.add(warning);}
    const base = absolute(doc.querySelector('base[href]')?.getAttribute('href') || record.url, record.url) || record.url;
    documents.set(record.url, {doc, base});
    const key = 'page-' + (await hash(encoder.encode(record.url))).slice(0,20);
@@ -64,8 +70,8 @@
    for (const script of [...doc.querySelectorAll('script')]) {
     const type = script.getAttribute('type') || '';
     if (!type || /^(?:text|application)\/(?:java|ecma)script$/i.test(type)) {
-     if (script.src) { const url = absolute(script.getAttribute('src'), base), code = resources.get(url); if (code) scripts.push(text(code)); else notes.add('A script could not be packaged: ' + url); }
-     else scripts.push(script.textContent);
+     if(script.src){const url=absolute(script.getAttribute('src'),base),code=resources.get(url);if(/\/(?:wp-includes\/js\/(?:jquery|dist)|wp-content\/plugins\/elementor(?:-pro)?)\//i.test(url)){notes.add('The source WordPress/Elementor runtime was omitted; the destination supplies its own runtime.');}else if(code)scripts.push(text(code));else notes.add('A script could not be packaged: '+url);}
+     else if(/(?:elementor(?:Pro)?FrontendConfig|webpackChunk(?:elementor|elementor_pro))/.test(script.textContent))notes.add('Source Elementor initialization was omitted to keep the destination editor independent.');else scripts.push(script.textContent);
     } else if (type === 'module') notes.add('This site uses JavaScript modules. App behavior needs manual rebuilding.');
     script.remove();
    }
@@ -74,7 +80,7 @@
     if (el.hasAttribute('style')) el.setAttribute('style', await css(el.getAttribute('style'), base));
     for (const attr of ['src','poster','data-src','data-lazy-src','data-original']) {
      if (!el.hasAttribute(attr)) continue;
-     if (['IMG','SOURCE','VIDEO','AUDIO','INPUT'].includes(el.tagName)) el.setAttribute(attr, await asset(el.getAttribute(attr), base));
+     if (['IMG','SOURCE','VIDEO','AUDIO','INPUT'].includes(el.tagName)) el.setAttribute(attr, await asset(el.getAttribute(attr), base,el.tagName==='IMG'?(el.getAttribute('alt')||el.getAttribute('aria-label')||el.closest('figure')?.querySelector('figcaption')?.textContent.trim()||''):''));
      else { const url = absolute(el.getAttribute(attr), base); if (url) el.setAttribute(attr, url); else el.removeAttribute(attr); }
     }
     if (el.tagName === 'IMG' && !el.getAttribute('src')) { const lazy = el.getAttribute('data-src') || el.getAttribute('data-lazy-src') || el.getAttribute('data-original'); if (lazy) el.setAttribute('src', lazy); }
@@ -86,7 +92,7 @@
      if (['use','image'].includes(el.tagName.toLowerCase())) continue;
      const value = el.getAttribute(attr);
      if (/^(?:#|mailto:|tel:)/i.test(value)) continue;
-     const url = absolute(value, base); if (url) { const original = resources.get(url)?.url || url; let fragment = ''; try { fragment = new URL(value, base).hash; } catch {} el.setAttribute(attr, original + fragment); } else el.removeAttribute(attr);
+     const url = absolute(value, base);if(url&&el.tagName==='A'&&resources.has(url)&&mediaType(resources.get(url),url)){el.setAttribute(attr,await asset(value,base));continue;} if (url) { const original = resources.get(url)?.url || url; let fragment = ''; try { fragment = new URL(value, base).hash; } catch {} el.setAttribute(attr, original + fragment); } else el.removeAttribute(attr);
     }
    }
    const title = (doc.title.trim() || new URL(record.url).pathname || 'Home').slice(0,300);

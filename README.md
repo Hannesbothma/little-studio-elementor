@@ -62,7 +62,7 @@ are intended for developers.
 Accepts `little-studio-website` version 1 and `code-canvas` version 1 JSON.
 Packaged images, sanitised SVG, supported media/documents and font files are
 registered in the Media Library. Identical imported files are reused.
-Original source JavaScript is retained. Interactions default on when the importing
+Custom source JavaScript is retained; URL capture omits the source WordPress/Elementor framework runtime. Imported scripts pause inside the Elementor editor to keep its controls independent. Interactions default on when the importing
 administrator has the required permission; enable them only for a trusted file.
 Navigation and calculator regions retain their structure and responsive state
 styles in HTML widgets, while ordinary content remains native Elementor elements.
@@ -85,7 +85,7 @@ Shared imported sections are native saved sections, not Pro Theme Builder rules.
 Keep the converter active for its supporting styles, fonts and shared sections.
 
 Elementor Pro was not available for direct certification. The conversion base was
-tested with Elementor Core 4.3.6, PHP 8.3 and WordPress 7.1.3. See `readme.txt` for
+tested with Elementor Core 4.4.0, PHP 8.3 and WordPress 7.1.4. See `readme.txt` for
 full import limits, behaviour and licensing considerations.
 
 ## Development and releases
@@ -111,6 +111,25 @@ bundled. Import only assets and content you have permission to use.
 ## Repeatable testing
 
 Install development tools with `npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0`, then `npx playwright install chromium` and `node tests/run.mjs`. The runner builds the actual plugin ZIP, installs it into an isolated WordPress Playground site (not over the development source), exercises import management and uses a simulated next-version package to test the native updater. On this workstation it also reads the current portfolio and Opu JSON for validation and representative conversion checks. The simulated package is never released. See `docs/TESTING.md` and `docs/TESTING-0.6.0.md`.
+
+## Preview, editor and media repairs (0.7.0)
+
+Capture includes lazy images, gallery thumbnails and backgrounds. Source Elementor
+photo grids become responsive native image widgets; captured font-face rules are
+retained in saved previews. Source builder IDs/classes and framework scripts are
+isolated from the destination Elementor runtime. Custom interactions still run
+on the ordinary frontend when enabled, and pause in the editor iframe.
+
+Images receive readable filenames and Media Library titles from alt text,
+captions or meaningful source filenames, with page-name fallbacks. Identical
+files are still reused. Custom attachment titles and existing media URLs are kept.
+Combined draft preparation and acknowledged media mappings remove two redundant
+WordPress requests per new import; URL rewriting also reuses compiled patterns.
+
+To repair previously missing files, capture the source again, download its JSON,
+select the existing website and use **Update from file**. Review the selected
+pages and replacement consent. Their WordPress IDs and addresses are retained;
+updating the plugin alone cannot recover media absent from an older capture.
 
 ## Faster capture and import (0.6.2)
 

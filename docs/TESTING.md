@@ -86,3 +86,53 @@ for two pages and four small media references: approximately 28% faster in that
 fixture. Four media-upload requests became one. This uses already available
 media and isolates request overhead; it is not a benchmark of real-site network
 capture, large fresh uploads or every hosting environment.
+
+
+## 0.7.0 preview, editor and media coverage
+
+The 0.7.0 package was exercised with WordPress 7.1.4, PHP 8.3.36 and
+Elementor Core 4.4.0. The URL fixture includes source Elementor identity attributes, a lazy gallery
+whose image lives in `data-thumbnail`, a real WOFF2 font, source framework scripts
+and a custom interaction. It still contains 80 nested wrappers. Tests verify
+local media, readable filenames and Media Library titles, preserved font-face
+rules, native heading typography, isolated destination IDs and a linked SVG
+rendered at gallery-cell width rather than Elementor's 48-pixel icon default.
+The file-import fixture also checks that a legacy hash filename becomes a name
+based on its alt text.
+
+The actual Elementor editor is opened headlessly for a captured page. After its
+preview is ready and its loading overlay is gone, its floating Structure panel
+is closed so it does not cover the toolbar. The native Edit Heading toolbar is
+clicked. The native title textarea is filled and its
+visible canvas text is checked. Imported custom scripts must be absent from the
+editor iframe. This checks editor loading and native control editing; it does
+not certify the inaccessible live WordPress installation or
+interaction with every editor toolbar.
+
+The full suite retains refresh/recovery, concurrent-edit protection, published
+replacement consent, adaptive media uploads and a simulated native upgrade to
+0.7.1. That upgrade fixture is never published. The Desktop HTTrack-to-JSON
+integration test also passes with the current standalone converter.
+
+Performance work combines draft preparation and applies acknowledged media
+mappings without another status request. The optional same-server benchmark uses
+`assets/admin.js` from release 0.6.2 as its baseline. It isolates frontend request
+overhead on two pages with four small reused media references; it does not measure
+real-site crawling or fresh large media processing.
+
+The source site inspected for diagnosis was the public Le Petit Paris homepage.
+No production drafts or editor were accessible through the available connection,
+and no live WordPress content was changed. Old incomplete captures need recapture
+and Update from file before missing files can appear. Exact arbitrary-site
+appearance, Pro features and instant imports remain unproven.
+
+The current Opu export still validates with 38 pages and 116 assets. Its homepage
+converts to 341 native elements and 20 reported HTML regions (1,566 ms in the
+isolated check). This is compatibility evidence, not an Elementor load-time
+measurement or a fidelity guarantee.
+
+The 0.6.2-to-0.7.0 same-server frontend benchmark recorded 11,954 ms before
+and 9,101 ms after (about 24% faster for that fixture). Eight requests became
+six: `check` plus `start` became `prepare`, and the post-media `status` request
+was removed. These timings use small reused files and do not predict a live
+website's total capture/import duration.

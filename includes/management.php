@@ -167,7 +167,7 @@ trait LSE_Management {
                 $job['pages'][$index]['source_slug'] = $source['slug'] ?? '';
                 $job['pages'][$index]['regions'] = [];
             }
-            $job['assets'] = []; $job['fonts'] = []; $job['font_map'] = [];
+            $job['engine'] = 'capture-v2'; $job['assets'] = []; $job['fonts'] = []; $job['font_map'] = [];
             $job['fingerprint'] = $input['fingerprint']; $job['state'] = 'importing'; $job['refreshing'] = true; $job['updated'] = time();
             $job['scripts'] = ! empty( $input['scripts'] ) && current_user_can( 'unfiltered_html' );
             // Keep existing destinations and their addresses; never create replacement posts.

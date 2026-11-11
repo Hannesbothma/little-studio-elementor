@@ -51,6 +51,7 @@ final class LSE_Capture {
     private static function enqueue( &$job, $value, $base, $kind, $depth ) {
         $url = self::url( $value, $base );
         if ( ! $url || isset( $job['seen'][$url] ) ) { return; }
+        if ( $kind === 'asset' && preg_match( '~(?:/(?:wp-includes/js/(?:jquery|dist)/|wp-content/plugins/elementor(?:-pro)?/).*\.js|/jquery(?:-[0-9.]+)?(?:\.min)?\.js)(?:\?|$)~i', $url ) ) { return; }
         if ( count( $job['seen'] ) >= 600 ) { $job['truncated'] = true; return; }
         if ( $kind === 'page' ) {
             if ( self::origin( $url ) !== $job['origin'] ) { return; }
@@ -78,6 +79,7 @@ final class LSE_Capture {
         foreach ( $dom->getElementsByTagName( '*' ) as $el ) {
             $tag = strtolower( $el->tagName );
             if ( $tag === 'style' ) { self::css( $job, $el->textContent, $base ); }
+            foreach ( [ 'data-thumbnail', 'data-bg', 'data-background', 'data-lazy-background-image' ] as $attr ) { self::enqueue( $job, $el->getAttribute( $attr ), $base, 'asset', 0 ); }
             if ( $el->hasAttribute( 'style' ) ) { self::css( $job, $el->getAttribute( 'style' ), $base ); }
             if ( in_array( $tag, [ 'img', 'script', 'source', 'video', 'audio' ], true ) ) {
                 foreach ( [ 'src', 'poster', 'data-src', 'data-lazy-src', 'data-original' ] as $attr ) { self::enqueue( $job, $el->getAttribute( $attr ), $base, 'asset', 0 ); }

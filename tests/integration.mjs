@@ -5,7 +5,8 @@ import {mkdir,writeFile,readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 const origin=process.env.LSE_TEST_URL||'http://127.0.0.1:9415';
 const browser=await chromium.launch({headless:true});
-const page=await browser.newPage({viewport:{width:1440,height:1000}});
+const context=await browser.newContext({viewport:{width:1440,height:1000}});
+const page=await context.newPage();
 const requestCounts={},importTimings=[];
 await page.exposeFunction('recordLSERequest',action=>{requestCounts[action]=(requestCounts[action]||0)+1;});
 await page.addInitScript(()=>{const original=window.fetch;window.fetch=function(url,options){const action=options?.body instanceof FormData?options.body.get('action'):null;if(typeof action==='string'&&action.startsWith('lse_'))window.recordLSERequest(action.slice(4));return original.call(this,url,options);};});
@@ -29,7 +30,7 @@ const refresh=async(data,name='test.website.json')=>{
 const fixture={format:'little-studio-website',version:1,site_id:'management-fixture',title:'Management test site',site_css:'body{color:#243442;font-family:Arial}',pages:[
  {key:'home',title:'Home',slug:'lse-test-home',url:'https://source.example/home/',parent_key:'',html:'<div class="fixture" data-page="index.html"><header><button type="button" aria-controls="fixture-dialog">Open dialog</button></header><main><h1>Original heading</h1><p>Local fixture content</p><img src="https://source.example/pixel.png" alt="Fixture pixel"><a href="https://source.example/about/">About</a></main><dialog id="fixture-dialog">Local dialog</dialog></div>',css:'main{padding:40px}h1{font-size:44px}',js:'window.fixture=/\\d+/.test("123");'},
  {key:'about',title:'About',slug:'lse-test-about',url:'https://source.example/about/',parent_key:'',html:'<main><h1>About fixture</h1><p>Second page</p></main>',css:'main{padding:32px}',js:''}
-],assets:[{url:'https://source.example/pixel.png',name:'pixel.png',type:'image/png',data:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lS8AAAAASUVORK5CYII='}],fonts:[],site:{home_key:'home',navigation:[{key:'home',label:'Home'},{key:'about',label:'About'}]}};
+],assets:[{url:'https://source.example/pixel.png',name:'aabbccddeeff00112233.png',type:'image/png',data:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lS8AAAAASUVORK5CYII='}],fonts:[],site:{home_key:'home',navigation:[{key:'home',label:'Home'},{key:'about',label:'About'}]}};
 for(let i=1;i<=3;i++)fixture.assets.push({...fixture.assets[0],url:'https://source.example/pixel-'+i+'.png',name:'pixel-'+i+'.png'});
 try{
  await page.goto(origin+'/wp-admin/admin.php?page=little-studio-elementor');
@@ -65,19 +66,46 @@ try{
  await writeFile(new URL('captured-website.json',dir),JSON.stringify(captured,(key,value)=>key==='bytes'?undefined:value,2));
  assert.equal(captured.site_id,'capture-'+createHash('sha256').update('https://93.184.216.34/lse-capture/').digest('hex').slice(0,24),'Desktop and WordPress capture identities differ');
  assert.equal(captured.pages[0].key,'page-'+createHash('sha256').update(captured.pages[0].url).digest('hex').slice(0,20));
- assert.equal(captured.pages.length,2);assert.equal(captured.assets.length,1,'Capture failed to deduplicate media');
+ assert.equal(captured.pages.length,2);assert.equal(captured.assets.length,3,'Capture lost gallery/font files or failed to deduplicate media');
  assert.equal(captured.site.navigation.length,2);assert.match(captured.pages[0].css,/font-size:40px/);
+ assert(captured.assets.some(a=>a.name==='courtyard-view.svg'),'Gallery image filename is not descriptive');
+ assert.match(captured.pages[0].css,/@font-face/);assert(!captured.pages[0].js.includes('elementorFrontendConfig'),'Foreign Elementor initialization was embedded');
  assert.match(captured.pages[0].html,/capture-body/);assert.match(captured.pages[0].js,/capturedClassicScript/);
  assert.equal(await page.evaluate(()=>window.capturedClassicScript),undefined,'Capture executed source scripts');
  assert(captured.capture.warnings.some(w=>w.includes('JavaScript modules')));
  assert.match(await page.locator('#lse-findings').innerText(),/JavaScript modules/);
  const downloadEvent=page.waitForEvent('download');await page.locator('#lse-source-download').click();
  const downloaded=JSON.parse(await readFile(await(await downloadEvent).path(),'utf8'));
- assert.equal(downloaded.assets[0].bytes,undefined);assert(downloaded.assets[0].data.startsWith('data:image/png;base64,'));
+ assert.equal(downloaded.assets[0].bytes,undefined);assert(downloaded.assets.find(a=>a.type==='image/png').data.startsWith('data:image/png;base64,'));
  const capturedImport=await run();
  const capturedNative=await rpc('test',{id:capturedImport.pages[0].id});
  assert.match(JSON.stringify(capturedNative.elements),/"widgetType":"heading"/);
  assert.match(JSON.stringify(capturedNative.elements),/Captured native heading/);
+ assert.match(JSON.stringify(capturedNative.elements),/Captured heading region/,'Source region semantics were lost while omitting empty wrappers');
+ assert.match(capturedNative.css,/@font-face/,'Captured fonts were dropped from the saved styles');
+ const galleryAsset=capturedImport.assets.find(a=>a.name==='courtyard-view.svg');assert(galleryAsset,'Gallery file was not uploaded');
+ assert.equal((await rpc('test',{id:galleryAsset.id})).post.title,'Courtyard View');
+ const frontend=await page.context().newPage();
+ try{
+  await frontend.goto(capturedImport.pages[0].preview_url,{waitUntil:'domcontentloaded'});
+  await frontend.waitForFunction(()=>[...document.images].some(img=>img.complete&&img.naturalWidth===320));await frontend.waitForFunction(()=>window.capturedClassicScript===true);
+  assert(await frontend.evaluate(()=>[...document.images].some(img=>img.naturalWidth===320&&img.getBoundingClientRect().width>600)),'Imported gallery image collapsed to an icon-sized thumbnail');
+  const actual=await frontend.evaluate(()=>{const heading=[...document.querySelectorAll('h1')].find(n=>n.textContent==='Captured native heading');return{fontSize:getComputedStyle(heading).fontSize,color:getComputedStyle(heading).color,badIds:[...document.querySelectorAll('.elementor-element[data-id]')].map(n=>n.dataset.id).filter(id=>id.includes(' ')),foreignConfig:window.elementorFrontendConfig?.foreignSource,classicScript:window.capturedClassicScript};});
+  assert.equal(actual.fontSize,'40px');assert.equal(actual.color,'rgb(17, 34, 51)');assert.deepEqual(actual.badIds,[]);assert.notEqual(actual.foreignConfig,true);assert.equal(actual.classicScript,true,'Enabled custom frontend interactions did not run on ordinary WordPress Preview');
+  await writeFile(new URL('preview-geometry.json',dir),JSON.stringify(await frontend.evaluate(()=>[...document.images].map(img=>({src:img.currentSrc,width:img.getBoundingClientRect().width,height:img.getBoundingClientRect().height,parents:[img.parentElement,img.parentElement.parentElement,img.parentElement.parentElement.parentElement].map(el=>({className:el.className,width:el.getBoundingClientRect().width,display:getComputedStyle(el).display,grid:getComputedStyle(el).gridTemplateColumns}))}))),null,2));
+  await frontend.screenshot({path:fileURLToPath(new URL('captured-preview.png',dir)),fullPage:true});
+ }finally{await frontend.close();}
+ const editor=await page.context().newPage(),editorStarted=performance.now();
+ try{
+  await editor.goto(capturedImport.pages[1].edit_url,{waitUntil:'domcontentloaded'});
+  const canvas=editor.frameLocator('#elementor-preview-iframe');const heading=canvas.getByRole('heading',{name:'Captured About',exact:true});await heading.waitFor({state:'visible',timeout:90000});
+  assert(!(await editor.locator('#elementor-preview-iframe').contentFrame().locator('body').innerHTML()).includes('capturedEditorScriptShouldNotRun'),'Source scripts were injected into Elementor editor preview');
+  await editor.waitForFunction(()=>window.elementor?.loaded&&window.elementor?.previewLoadedOnce,{},{timeout:90000});await editor.locator('#elementor-loading').waitFor({state:'hidden',timeout:90000});const closeStructure=editor.getByRole('button',{name:'Close structure',exact:true});if(await closeStructure.isVisible())await closeStructure.click();const widget=canvas.locator('.elementor-widget-heading').filter({hasText:'Captured About'}).first();await widget.hover();await widget.locator('[aria-label="Edit Heading"]').click();const control=editor.locator('.elementor-control-title textarea').first();await control.waitFor({state:'visible',timeout:45000});await control.fill('Changed in the real Elementor editor');
+  await canvas.getByRole('heading',{name:'Changed in the real Elementor editor',exact:true}).waitFor({state:'visible',timeout:15000});
+  await editor.screenshot({path:fileURLToPath(new URL('elementor-editor-loaded.png',dir)),fullPage:true});
+  console.log(JSON.stringify({actualElementorEditorLoadedAndEdited:true,ms:Math.round(performance.now()-editorStarted)}));
+ }catch(error){await editor.screenshot({path:fileURLToPath(new URL('elementor-editor-failure.png',dir)),fullPage:true});await writeFile(new URL('elementor-editor-dom.json',dir),JSON.stringify(await editor.evaluate(()=>({text:document.body.innerText.slice(0,10000),controls:[...document.querySelectorAll('textarea,input')].map(n=>({tag:n.tagName,name:n.name,id:n.id,setting:n.dataset.setting,value:n.value?.slice(0,80)})),bodyClass:document.body.className})),null,2));throw error;}finally{await editor.close();}
+
  await rpc('test',{operation:'edit',id:capturedImport.pages[0].id});
  assert.match(JSON.stringify((await rpc('test',{id:capturedImport.pages[0].id})).elements),/Native Elementor edit/,'Deeply nested captured content is not editable');
  const capturedSaved=await rpc('status',{job:capturedImport.id});
@@ -85,7 +113,7 @@ try{
  await page.reload();await page.waitForFunction(()=>window.LSEAdmin&&window.LSEManage&&window.LSECapture);
 
  await rpc('test',{operation:'slow-media',enabled:true});const uploadsBefore={assets:requestCounts.assets||0,asset:requestCounts.asset||0};
- await choose(fixture);const original=await run();
+ await choose(fixture);const original=await run();assert.equal(original.assets[0].name,'fixture-pixel.png','Legacy hash filename was not replaced using image alt text');
  assert.equal(requestCounts.assets-uploadsBefore.assets,1,'A slow host kept receiving oversized batches');assert.equal(requestCounts.asset-uploadsBefore.asset,3,'Unprocessed media was skipped instead of uploaded individually');await rpc('test',{operation:'slow-media',enabled:false});const id=original.pages[0].id;const ids=original.pages.map(p=>p.id);
  const native=await rpc('test',{id});assert(native.elements?.length);assert.match(native.js,/\\d/);
  // Exercise the new workspace through the same controls used in WordPress.
@@ -194,7 +222,7 @@ try{
  await page.screenshot({path:fileURLToPath(new URL('single-workspace.png',dir)),fullPage:true});
  assert.deepEqual(failures,[],'Unexpected browser errors');
  const updater=process.env.LSE_TEST_UPDATER?await rpc('test',{operation:'updater',id}):null;
- const result={ok:true,requestCounts,importTimings,versions,websiteURLCapture:true,captureRetryIdempotent:true,privateCaptureURLsDenied:true,privateRedirectDenied:true,capturedJSONDownload:true,capturedNativeElementor:true,deeplyNestedURLImport:true,batchedCaptureReplay:true,mediaBatches:true,compactPageSaves:true,initialImport:true,refreshSameIds:true,sourceJSBackslashes:true,restoreRefresh:true,nativeElementorEditProtected:true,publishedRefreshConsent:true,concurrentEditProtected:true,titleAndSlug:true,trashRestore:true,foreignPageAndAccountDenied:true,htmlImport:true,singleWorkspace:true,sidebarAndInspector:true,pageSearchAndFilters:true,mobileWorkspace:true,metadataDialog:true,wholeImportRemoval:true,staleBulkRemovalProtected:true,unrelatedImportRetained:true,actualWebsiteConversions:actual,updater};
+ const result={ok:true,requestCounts,importTimings,versions,websiteURLCapture:true,captureRetryIdempotent:true,privateCaptureURLsDenied:true,privateRedirectDenied:true,capturedJSONDownload:true,capturedNativeElementor:true,actualElementorEditor:true,previewImagesAndStyles:true,descriptiveImageNames:true,deeplyNestedURLImport:true,batchedCaptureReplay:true,mediaBatches:true,compactPageSaves:true,initialImport:true,refreshSameIds:true,sourceJSBackslashes:true,restoreRefresh:true,nativeElementorEditProtected:true,publishedRefreshConsent:true,concurrentEditProtected:true,titleAndSlug:true,trashRestore:true,foreignPageAndAccountDenied:true,htmlImport:true,singleWorkspace:true,sidebarAndInspector:true,pageSearchAndFilters:true,mobileWorkspace:true,metadataDialog:true,wholeImportRemoval:true,staleBulkRemovalProtected:true,unrelatedImportRetained:true,actualWebsiteConversions:actual,updater};
  await writeFile(new URL('integration.json',dir),JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result));
 }catch(error){await writeFile(new URL('integration-error.json',dir),JSON.stringify({ok:false,error:error.message,stack:error.stack,browserErrors:failures},null,2));await page.screenshot({path:fileURLToPath(new URL('failure.png',dir)),fullPage:true}).catch(()=>{});throw error}
 finally{await browser.close()}
