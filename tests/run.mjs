@@ -130,6 +130,7 @@ try {
   });
   const selected = process.env.LSE_TEST_ONLY?.split(",");
   for (const name of [
+    "conversion-memory",
     "media-regression",
     "import-regression",
     "maps-regression",

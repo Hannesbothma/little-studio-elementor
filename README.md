@@ -289,6 +289,7 @@ the import. It is still real work, not an instant full completion claim.
 
 Repeated imports verify existing attachment file hashes before uploading their
 bytes. Conversion shares temporary resource blobs and rewrite-map caches across
-pages. Capture prefetches at most four public resources where native cURL and the
+pages. Each cached CSS rule holds its own output, avoiding retained copies of
+accumulated styles during large whole-site conversions. Capture prefetches at most four public resources where native cURL and the
 host configuration allow it; custom HTTP/TLS/proxy handlers keep the normal
 WordPress path. Public-URL validation and redirect checks remain enforced.

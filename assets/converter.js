@@ -2305,14 +2305,14 @@
         );
       }
       function sourceStyles(rules) {
-        let result = "";
+        const fragments = [];
         for (const rule of rules) {
           const key = String(!!options.preserveCSS) + rule.cssText;
           if (resources.styles.has(key)) {
-            result += resources.styles.get(key);
+            fragments.push(resources.styles.get(key));
             continue;
           }
-          const before = result.length;
+          let fragment = "";
           if (rule.type === 1) {
             const declarations = namespaceCSS(rule.style.cssText),
               variables = [...rule.style]
@@ -2378,19 +2378,20 @@
                 );
               }
             }
-            result +=
+            fragment =
               groupedRule(variableSelectors, variables) +
               groupedRule(stateSelectors, declarations);
-          } else if (rule.type === 7) result += rule.cssText + "\n";
+          } else if (rule.type === 7) fragment = rule.cssText + "\n";
           else if (rule.cssRules)
-            result +=
+            fragment =
               rule.cssText.slice(0, rule.cssText.indexOf("{")) +
               "{" +
               sourceStyles(rule.cssRules) +
               "}\n";
-          resources.styles.set(key, result.slice(before));
+          resources.styles.set(key, fragment);
+          fragments.push(fragment);
         }
-        return result;
+        return fragments.join("");
       }
       if (options.preserveCSS || islands.size)
         css += sourceSheets

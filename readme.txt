@@ -179,6 +179,7 @@ automatic widths, source box sizing and normal line height. Verify reusable medi
 before uploading. Share conversion resources and safely prefetch public capture
 files. Persist derived image-size work separately from ready drafts, show progress,
 and support file/size retry and explicit skip without losing existing metadata.
+Cache individual CSS rules to avoid retaining accumulated styles across pages.
 
 
 = 0.10.0 =
