@@ -48,6 +48,9 @@ final class LSE_Styles
         $filename = absint($id) . '-' . $hash . '.css';
         $path = $directory . '/' . $filename;
         if (!is_file($path) || filesize($path) !== strlen($css)) {
+            if (!function_exists('wp_tempnam')) {
+                require_once ABSPATH . 'wp-admin/includes/file.php';
+            }
             $temporary = wp_tempnam($filename, $directory);
             if (!$temporary) {
                 return false;
