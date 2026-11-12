@@ -3,7 +3,7 @@ on:
   push:
     tags: ['v*']
     branches: [main]
-    paths: ['little-studio-elementor.php', '.github/workflows/release.yml']
+    paths: ['little-studio-elementor.php', 'assets/**', 'includes/**', 'scripts/**', 'tests/**', 'package*.json', '.github/workflows/release.yml']
   workflow_dispatch:
     inputs:
       tag:

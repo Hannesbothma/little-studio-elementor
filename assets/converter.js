@@ -1472,6 +1472,11 @@
                 target["lse_text_color" + suffix] = s.color;
               target["align" + suffix] = s["text-align"];
               if (widget === "button") {
+                // Older Elementor keeps an extra widget container. Let its native
+                // justified button fill the imported width in either markup layout.
+                target["lse_button_container_width" + suffix] = s.explicitWidth
+                  ? "100%"
+                  : "auto";
                 target["background_color" + suffix] = s["background-color"];
                 if (s.explicitHeight && parseFloat(s.height) > 0)
                   target["lse_button_min_height" + suffix] = px(s.height);

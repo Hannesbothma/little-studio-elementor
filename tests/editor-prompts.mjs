@@ -3,7 +3,9 @@
 export async function handleEditorPrompts(page, hoverTarget) {
  const promotion=page.getByRole('dialog').filter({hasText:'Ask Angie to build you full pages'});
  await page.addLocatorHandler(promotion,async dialog=>{
-  await dialog.getByRole('button',{name:'Close',exact:true}).click();
+  // Wait for the editor's own loader; a visible promotion can sit underneath it.
+  await page.locator('#elementor-loading').waitFor({state:'hidden',timeout:90000});
+  await dialog.getByRole('button',{name:'Close',exact:true}).click({timeout:90000});
   // Closing moves the pointer off the canvas. Restore hover for its edit toolbar.
   if(hoverTarget&&await hoverTarget.isVisible())await hoverTarget.hover();
  });

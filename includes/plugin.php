@@ -370,6 +370,16 @@ final class LSE_Plugin
                     'selectors' => [$selector => 'font-weight: {{VALUE}};'],
                 ]);
                 if ($element->get_name() === 'button') {
+                    $element->add_responsive_control(
+                        'lse_button_container_width',
+                        [
+                            'type' => \Elementor\Controls_Manager::HIDDEN,
+                            'selectors' => [
+                                '{{WRAPPER}} > .elementor-widget-container' =>
+                                    'width:{{VALUE}};',
+                            ],
+                        ],
+                    );
                     $element->add_responsive_control('lse_button_min_height', [
                         'label' => 'Minimum height',
                         'type' => \Elementor\Controls_Manager::SLIDER,

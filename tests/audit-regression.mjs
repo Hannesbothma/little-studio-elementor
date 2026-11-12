@@ -56,6 +56,7 @@ const result = new Proxy(
 let page;
 try {
   page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  page.setDefaultNavigationTimeout(90000);
   page.on("dialog", (dialog) => dialog.accept());
   const admin = async () => {
     await page.goto(

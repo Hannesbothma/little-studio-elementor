@@ -3,6 +3,8 @@ import { readFile, writeFile, mkdir, mkdtemp, cp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 const root = process.cwd();
+const port = process.env.LSE_TEST_PORT || "9416";
+const blueprintPath = "tests/results/blueprint-" + port + ".json";
 const run = (command, args, options = {}) =>
   new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: "inherit", ...options });
@@ -71,7 +73,7 @@ blueprint.steps = blueprint.steps.map((step) =>
     : step,
 );
 await mkdir("tests/results", { recursive: true });
-await writeFile("tests/results/blueprint.json", JSON.stringify(blueprint));
+await writeFile(blueprintPath, JSON.stringify(blueprint));
 // Use one PHP worker and shared uploads for deterministic CSS regeneration.
 // Playground worker-local VFS deletion propagation can lose recreated files.
 const uploads = await mkdtemp(join(tmpdir(), "lse-wp-uploads-"));
@@ -81,8 +83,8 @@ const args = [
   "--mount-before-install=" + uploads + ":/wordpress/wp-content/uploads",
   "--mount=" + root + "/tests:/tests",
   "--mount=" + root + "/dist:/packages",
-  "--blueprint=tests/results/blueprint.json",
-  "--port=9416",
+  "--blueprint=" + blueprintPath,
+  "--port=" + port,
   "--workers=1",
   "--php=" + blueprint.preferredVersions.php,
   "--wp=" + blueprint.preferredVersions.wp,
@@ -136,14 +138,14 @@ try {
     await run(process.execPath, ["tests/" + name + ".mjs"], {
       env: {
         ...process.env,
-        LSE_TEST_URL: "http://127.0.0.1:9416",
+        LSE_TEST_URL: "http://127.0.0.1:" + port,
         ...(name === "integration" ? { LSE_TEST_UPDATER: "1" } : {}),
       },
     });
   }
   if (process.env.LSE_BENCH_BASELINE)
     await run(process.execPath, ["tests/performance.mjs"], {
-      env: { ...process.env, LSE_TEST_URL: "http://127.0.0.1:9416" },
+      env: { ...process.env, LSE_TEST_URL: "http://127.0.0.1:" + port },
     });
 } finally {
   server.kill("SIGTERM");
