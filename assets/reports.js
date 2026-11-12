@@ -13,6 +13,7 @@
         })[c],
     );
   function kind(message) {
+    if (/^Skipped /i.test(message)) return "skipped";
     if (
       /could not (?:package|be packaged)|stylesheet.*not fetched|stylesheet.*must be packaged/i.test(
         message,
@@ -41,6 +42,11 @@
   }
   function groups(messages) {
     const result = [
+      {
+        id: "skipped",
+        title: "Skipped items — retry with Update from file",
+        items: [],
+      },
       { id: "missing", title: "Missing resources", items: [] },
       { id: "review", title: "Resources and styling to review", items: [] },
       {

@@ -486,13 +486,7 @@ final class LSE_Capture
                             'A linked page redirected outside the captured website.',
                         );
                     }
-                    $response = wp_safe_remote_get($url, [
-                        'timeout' => 6,
-                        'redirection' => 0,
-                        'cookies' => [],
-                        'user-agent' => 'LittleStudioCapture/' . LSE_VERSION,
-                        'headers' => ['Accept' => '*/*'],
-                    ]);
+                    $response = LSE_Fetch::get($url);
                     if (is_wp_error($response)) {
                         $transient_failure = true;
                         throw new RuntimeException(
@@ -782,11 +776,36 @@ final class LSE_Capture
             $started = microtime(true);
             $bytes = 0;
             $budget = LSE_Importer::batch_seconds();
+            $waveRemaining = 0;
             for ($i = 0; $i < 32; ++$i) {
+                if ($waveRemaining <= 0) {
+                    [, $fresh] = self::load(['capture' => $id]);
+                    $queue = array_values($fresh['queue']);
+                    if (
+                        isset($fresh['pending']) &&
+                        $result['seq'] === $fresh['seq'] + 1
+                    ) {
+                        array_shift($queue);
+                    }
+                    $waveRemaining = max(
+                        1,
+                        min(LSE_Fetch::concurrency(), count($queue)),
+                    );
+                    LSE_Fetch::prime(
+                        array_column(
+                            array_slice($queue, 0, LSE_Fetch::concurrency()),
+                            'url',
+                        ),
+                        static function ($url) {
+                            self::safe($url);
+                        },
+                    );
+                }
                 $step = self::capture_step([
                     'capture' => $id,
                     'seq' => $result['seq'],
                 ]);
+                --$waveRemaining;
                 $result['seq'] = $step['seq'];
                 $result['done'] = $step['done'];
                 if (!empty($step['record'])) {
@@ -814,8 +833,9 @@ final class LSE_Capture
                 }
                 if (
                     $step['done'] ||
-                    $bytes >= 4 * MB_IN_BYTES ||
-                    microtime(true) - $started >= $budget
+                    ($waveRemaining <= 0 &&
+                        ($bytes >= 4 * MB_IN_BYTES ||
+                            microtime(true) - $started >= $budget))
                 ) {
                     break;
                 }

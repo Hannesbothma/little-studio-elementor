@@ -135,12 +135,11 @@ final class LSE_Plugin
                     },
                     'callback' => static function () {
                         try {
+                            $input = self::input('page');
                             $response = new WP_REST_Response(
                                 [
                                     'success' => true,
-                                    'data' => LSE_Importer::page(
-                                        self::input('page'),
-                                    ),
+                                    'data' => LSE_Importer::page($input),
                                 ],
                                 200,
                             );
@@ -148,11 +147,16 @@ final class LSE_Plugin
                             $response = new WP_REST_Response(
                                 [
                                     'success' => false,
-                                    'data' => [
-                                        'message' => $error->getMessage(),
-                                    ],
+                                    'data' => LSE_Import_Error::response(
+                                        $error,
+                                        'page',
+                                        isset($input) ? $input : [],
+                                    ),
                                 ],
-                                400,
+                                $error instanceof RuntimeException ||
+                                $error instanceof JsonException
+                                    ? 400
+                                    : 500,
                             );
                         }
                         $response->header(
@@ -186,6 +190,10 @@ final class LSE_Plugin
             'capture_cancel',
             'capture_batch',
             'assets',
+            'skip_asset',
+            'asset_lookup',
+            'media_process',
+            'media_skip',
         ];
         $requested = $_REQUEST['action'] ?? '';
         if (
@@ -313,7 +321,18 @@ final class LSE_Plugin
                                 : LSE_Importer::$action($input)),
                     );
                 } catch (Throwable $error) {
-                    self::send(false, ['message' => $error->getMessage()], 400);
+                    self::send(
+                        false,
+                        LSE_Import_Error::response(
+                            $error,
+                            $action,
+                            $input ?? [],
+                        ),
+                        $error instanceof RuntimeException ||
+                        $error instanceof JsonException
+                            ? 400
+                            : 500,
+                    );
                 }
             });
         }
@@ -346,6 +365,13 @@ final class LSE_Plugin
                     'label' => 'Text color',
                     'type' => \Elementor\Controls_Manager::COLOR,
                     'selectors' => [$selector => 'color: {{VALUE}};'],
+                ]);
+                $element->add_responsive_control('lse_line_height', [
+                    'label' => 'Imported line height',
+                    'description' =>
+                        'Preserves the source normal line height. Clear to use Typography instead.',
+                    'type' => \Elementor\Controls_Manager::TEXT,
+                    'selectors' => [$selector => 'line-height:{{VALUE}};'],
                 ]);
                 $element->add_responsive_control('lse_font_family', [
                     'label' => 'Font family',
@@ -688,7 +714,7 @@ final class LSE_Plugin
                     <label class="lse-check" id="lse-overwrite-option" hidden><input type="checkbox" id="lse-overwrite"> Allow replacing selected edited or published pages.</label>
                     <div class="lse-dialog-actions"><button type="button" class="button" id="lse-reset">Cancel</button><button type="button" class="button" id="lse-source-download">Download JSON</button><span id="lse-import-scope">New pages are saved as drafts.</span><button type="button" class="button button-primary" id="lse-import">Import</button></div>
                 </div>
-                <div id="lse-progress" hidden><progress id="lse-meter" max="100" value="0"></progress><p id="lse-current" role="status"></p><div class="lse-actions"><button class="button" type="button" id="lse-retry" hidden>Retry</button><button class="button" type="button" id="lse-check" hidden>Check progress</button><button class="button" type="button" id="lse-error-details" hidden>Error details</button><button class="button lse-danger" type="button" id="lse-cancel" hidden>Remove import</button></div></div>
+                <div id="lse-progress" hidden><progress id="lse-meter" max="100" value="0"></progress><p id="lse-current" role="status"></p><div id="lse-error-item" class="lse-notice is-error" hidden><strong id="lse-error-item-title"></strong><p id="lse-error-item-location"></p><pre id="lse-error-item-snippet" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><p id="lse-error-item-effect"></p></div><div class="lse-actions"><button class="button" type="button" id="lse-retry" hidden>Retry</button><button class="button" type="button" id="lse-check" hidden>Check progress</button><button class="button" type="button" id="lse-error-details" hidden>Error details</button><button class="button" type="button" id="lse-skip-item" hidden>Skip this item and continue</button><button class="button" type="button" id="lse-pause-import" hidden>Pause import</button><button class="button lse-danger" type="button" id="lse-cancel" hidden>Remove import</button></div></div>
             </div>
         </dialog>
         <dialog id="lse-capture-dialog" class="lse-dialog" aria-labelledby="lse-capture-title">
@@ -717,7 +743,7 @@ final class LSE_Plugin
                 <footer class="lse-dialog-actions"><button type="button" class="button" id="lse-page-cancel">Cancel</button><button type="submit" class="button button-primary" id="lse-page-save">Save details</button></footer>
             </form>
         </dialog>
-        <footer class="lse-foot">Keep this plugin active for your imported website.</footer>
+        <section id="lse-media-status" class="lse-notice" hidden><strong id="lse-media-summary"></strong><p id="lse-media-message"></p><div class="lse-actions"><button type="button" class="button" id="lse-media-retry" hidden>Retry image sizes</button><button type="button" class="button" id="lse-media-details" hidden>Download error details</button><button type="button" class="button" id="lse-media-skip" hidden>Skip this image size</button></div></section><footer class="lse-foot">Keep this plugin active for your imported website.</footer>
         </div><?php
     }
     public static function canvas_styles()

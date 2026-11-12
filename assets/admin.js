@@ -13,7 +13,11 @@
     originalFile = "",
     selectionStarted = false,
     pendingFingerprint = "",
-    lastError = null;
+    lastError = null,
+    failureChoice = null,
+    mediaTimer = null,
+    mediaRunning = false,
+    mediaPaused = false;
   const status = (message, error = false) => {
     for (const element of [$("#lse-status"), $("#lse-dialog-status")]) {
       element.textContent = message;
@@ -47,6 +51,10 @@
     start: "Preparing new draft pages",
     asset: "Importing a file",
     page: "Saving a converted draft",
+    assets: "Importing files",
+    asset_lookup: "Checking reusable files",
+    media_process: "Generating image sizes",
+    media_skip: "Skipping one image size",
     finish: "Finishing the draft import",
     status: "Checking saved progress",
     undo: "Removing unchanged imported drafts",
@@ -137,6 +145,7 @@
     error.lseMessage = message;
     error.lseDetails = {
       ...details,
+      error: data?.data?.error || null,
       responseKind:
         data === undefined ? (/<[^>]+>/.test(clean) ? "html" : "text") : "json",
     };
@@ -145,6 +154,7 @@
   async function request(action, payload, file) {
     if (action === "prepare")
       payload = { converter_version: config.conversionVersion, ...payload };
+    const requestStarted = performance.now();
     const encoded = JSON.stringify(payload),
       bytes = new TextEncoder().encode(encoded).length;
     const files = Array.isArray(file) ? file : file ? [file] : [];
@@ -166,17 +176,44 @@
       compressed = true;
     }
     const transferBytes = upload?.size || bytes;
-    if (
-      config.maxPost &&
-      transferBytes + files.reduce((n, f) => n + f.size, 0) + 16384 >
-        config.maxPost
-    )
-      throw Error(
-        "This request exceeds the server post_max_size limit. Increase it in your hosting settings and retry.",
+    const fileBytes = files.reduce((n, f) => n + f.size, 0);
+    const limitError = (message, code, limit) => {
+      const error = Error(message);
+      error.lseDetails = {
+        action,
+        transport: pageUpload
+          ? compressed
+            ? "gzip-file"
+            : "json-file"
+          : "form-field",
+        requestBytes: bytes,
+        transferBytes,
+        fileBytes,
+        fileCount: files.length,
+        error: {
+          code,
+          limit,
+          recoverable: action === "asset",
+          skip: action === "asset" ? { kind: "asset", url: payload.url } : null,
+        },
+      };
+      return error;
+    };
+    if (config.maxPost && transferBytes + fileBytes + 16384 > config.maxPost)
+      throw limitError(
+        "This request exceeds the server post_max_size limit. Increase it or skip the affected file.",
+        "host_post_limit",
+        config.maxPost,
       );
-    if (pageUpload && config.maxUpload && transferBytes > config.maxUpload)
-      throw Error(
-        "The converted page exceeds the hosting upload limit. Increase it before retrying this saved import.",
+    if (
+      config.maxUpload &&
+      ((pageUpload && transferBytes > config.maxUpload) ||
+        files.some((f) => f.size > config.maxUpload))
+    )
+      throw limitError(
+        "The file exceeds the hosting upload limit. Increase it or skip this file.",
+        "host_upload_limit",
+        config.maxUpload,
       );
     const form = new FormData();
     form.set("action", "lse_" + action);
@@ -209,6 +246,8 @@
         : "form-field",
       requestBytes: bytes,
       transferBytes,
+      fileBytes: fileBytes + (upload?.size || 0),
+      fileCount: files.length + (pageUpload ? 1 : 0),
     };
     try {
       const target =
@@ -242,6 +281,7 @@
       }
       details = {
         ...details,
+        durationMs: Math.round(performance.now() - requestStarted),
         httpStatus: res.status,
         contentType: res.headers.get("content-type") || "",
         redirected: res.redirected,
@@ -282,8 +322,228 @@
     };
     $("#lse-error-details").hidden = false;
   }
+  async function decideFailure(error, context = {}, canSkip = false) {
+    error.lseDetails = {
+      ...(error.lseDetails || {}),
+      item: context,
+      job: job?.id,
+    };
+    recordError(error, $("#lse-current").textContent);
+    const issue = error.lseDetails.error || {};
+    $("#lse-error-item").hidden = false;
+    $("#lse-error-item-title").textContent =
+      context.name || context.title || "Import item";
+    $("#lse-error-item-location").textContent = [
+      issue.reason || error.lseMessage || error.message,
+      issue.field,
+      issue.selector,
+      issue.line ? "Line " + issue.line + ", column " + issue.column : "",
+      context.url,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    $("#lse-error-item-snippet").textContent = issue.snippet || "";
+    $("#lse-error-item-effect").textContent = canSkip
+      ? issue.skip?.kind === "css"
+        ? "Skip removes only this flagged CSS item. Other styling stays. The omission is recorded for review."
+        : "Skip leaves this file unimported and keeps its source reference. It is recorded for review and can be retried with Update from file."
+      : "This failure cannot be isolated safely. Retry this request or pause; completed work is kept.";
+    status(error.message, true);
+    $("#lse-retry").hidden = false;
+    $("#lse-skip-item").hidden = !canSkip;
+    $("#lse-pause-import").hidden = false;
+    $("#lse-retry").focus();
+    const choice = await new Promise((resolve) => {
+      failureChoice = resolve;
+    });
+    failureChoice = null;
+    for (const id of [
+      "#lse-error-item",
+      "#lse-retry",
+      "#lse-skip-item",
+      "#lse-pause-import",
+    ])
+      $(id).hidden = true;
+    if (choice === "pause") throw error;
+    status(
+      choice === "skip"
+        ? "Continuing with this item omitted…"
+        : "Retrying this item…",
+    );
+    return choice;
+  }
+  async function recoverableRequest(action, payload, files, context) {
+    const approved = [...(payload.skip_css || [])];
+    for (;;) {
+      try {
+        return await request(
+          action,
+          { ...payload, ...(action === "page" ? { skip_css: approved } : {}) },
+          files,
+        );
+      } catch (error) {
+        const issue = error.lseDetails?.error;
+        const canSkip = !!(
+          issue?.recoverable &&
+          (issue.skip?.kind === "css" ||
+            (action === "asset" && issue.skip?.kind === "asset"))
+        );
+        const choice = await decideFailure(error, context, canSkip);
+        if (choice === "skip") {
+          if (issue.skip.kind === "css") approved.push(issue.skip.id);
+          else {
+            await request("skip_asset", {
+              job: job.id,
+              url: payload.url,
+              name: context.name,
+              reason: error.lseMessage || error.message,
+            });
+            return null;
+          }
+        }
+      }
+    }
+  }
+  function showMedia() {
+    const media = job?.media;
+    const visible =
+      job?.state === "ready" &&
+      media &&
+      (media.pending || media.skipped?.length);
+    $("#lse-media-status").hidden = !visible;
+    if (!visible) return;
+    const error = media.errors?.[0];
+    $("#lse-media-status").setAttribute(
+      "role",
+      error || mediaPaused ? "alert" : "status",
+    );
+    $("#lse-media-details").hidden = !(error || mediaPaused);
+    $("#lse-media-summary").textContent = media.pending
+      ? "Pages ready · image sizes remaining for " + media.pending + " file(s)"
+      : "Image processing complete with skipped sizes";
+    $("#lse-media-message").textContent = error
+      ? error.name +
+        (error.size ? " · " + error.size : "") +
+        ": " +
+        error.message
+      : mediaPaused
+        ? "Image processing paused after a request failed. Retry to check saved progress. Original images remain available."
+        : media.pending
+          ? "Original images and pages are available. WordPress is creating the requested image sizes. This work resumes here and through WordPress background tasks."
+          : media.skipped
+              .map((x) => x.name + " · " + x.size + ": " + x.reason)
+              .join("; ");
+    $("#lse-media-retry").hidden = !(
+      error ||
+      mediaPaused ||
+      media.skipped?.length
+    );
+    $("#lse-media-retry").disabled = mediaRunning || busy;
+    $("#lse-media-retry").textContent =
+      !media.pending && media.skipped?.length
+        ? "Retry skipped image sizes"
+        : "Retry image sizes";
+    $("#lse-media-skip").hidden = !error?.skip;
+    $("#lse-media-skip").disabled = mediaRunning || busy;
+  }
+  function scheduleMedia(delay = 1000) {
+    clearTimeout(mediaTimer);
+    showMedia();
+    if (
+      !busy &&
+      !mediaRunning &&
+      !mediaPaused &&
+      job?.state === "ready" &&
+      job.media?.pending &&
+      !job.media.errors?.length
+    )
+      mediaTimer = setTimeout(() => processMedia(), delay);
+  }
+  async function processMedia(retry = false) {
+    if (busy || mediaRunning || !job || job.state !== "ready") return;
+    const current = job,
+      item = current.media?.items?.[0];
+    mediaRunning = true;
+    showMedia();
+    try {
+      const response = await request("media_process", {
+        job: current.id,
+        ...(item ? { attachment: item.id } : {}),
+        retry,
+        restore_skipped: retry && !current.media?.pending,
+      });
+      if (job !== current) return;
+      current.media = response.media;
+      mediaPaused = false;
+      const issue = response.media.errors?.[0];
+      if (issue) {
+        const error = Error(issue.message);
+        error.lseDetails = {
+          action: "media_process",
+          job: current.id,
+          item: { name: issue.name, attachment: issue.id, size: issue.size },
+          error: issue,
+        };
+        recordError(error, "Generating WordPress image sizes");
+      }
+    } catch (error) {
+      if (job !== current) return;
+      mediaPaused = true;
+      error.lseDetails = { ...(error.lseDetails || {}), job: current.id, item };
+      recordError(error, "Generating WordPress image sizes");
+    } finally {
+      mediaRunning = false;
+      scheduleMedia(1500);
+    }
+  }
+  $("#lse-media-details").addEventListener("click", () => {
+    const issue = job?.media?.errors?.[0];
+    if (issue) {
+      const error = Error(issue.message);
+      error.lseDetails = {
+        action: "media_process",
+        job: job.id,
+        item: { name: issue.name, attachment: issue.id, size: issue.size },
+        error: issue,
+      };
+      recordError(error, "Generating WordPress image sizes");
+    }
+    if (lastError) $("#lse-error-details").click();
+  });
+  $("#lse-media-retry").addEventListener("click", () => {
+    mediaPaused = false;
+    processMedia(true);
+  });
+  $("#lse-media-skip").addEventListener("click", async () => {
+    const current = job,
+      issue = current?.media?.errors?.[0];
+    if (busy || mediaRunning || !issue?.skip) return;
+    mediaRunning = true;
+    showMedia();
+    try {
+      const response = await request("media_skip", {
+        job: current.id,
+        attachment: issue.id,
+        size: issue.skip.size,
+        token: issue.skip.token,
+      });
+      if (job === current) {
+        current.media = response.media;
+        mediaPaused = false;
+      }
+    } catch (error) {
+      if (job === current) {
+        mediaPaused = true;
+        recordError(error, "Skipping one WordPress image size");
+      }
+    } finally {
+      mediaRunning = false;
+      scheduleMedia();
+    }
+  });
   function setBusy(value) {
     busy = value;
+    scheduleMedia();
     for (const n of app.querySelectorAll(
       "#lse-review input,#lse-review select,#lse-review button,#lse-file",
     ))
@@ -331,8 +591,10 @@
     selectionStarted = true;
     operationId = crypto.randomUUID();
     job = null;
+    mediaPaused = false;
+    scheduleMedia();
     pendingFingerprint = "";
-    lastError = null;
+    ((lastError = null), (failureChoice = null));
     $("#lse-error-details").hidden = true;
     $("#lse-check").hidden = true;
     try {
@@ -465,6 +727,8 @@
   }
   function result(data) {
     job = data;
+    mediaPaused = false;
+    scheduleMedia();
     $("#lse-choose").hidden = true;
     $("#lse-progress").hidden = true;
     $("#lse-review").hidden = true;
@@ -501,18 +765,14 @@
     $("#lse-cancel").hidden = true;
     step(2);
     window.dispatchEvent(new Event("lse:import-started"));
+    let resources = null,
+      currentItem = null;
     const progress = (n, message) => {
       $("#lse-meter").value = n;
       $("#lse-current").textContent = message;
       status(message);
     };
     try {
-      for (const a of source.assets)
-        if (a.bytes.length > config.maxUpload)
-          throw Error(
-            a.name +
-              " exceeds this server’s upload limit. Increase the hosting limit before importing.",
-          );
       progress(1, "Preparing your website drafts…");
       const optionKey =
         fingerprint +
@@ -624,6 +884,42 @@
             .replace(/-+$/, "") || "website-media";
         return label + "." + extension;
       };
+      // Match existing Library files before sending their bytes over the network.
+      const knownURLs = new Set(job.assets.map((asset) => asset.source));
+      const checks = source.assets.filter((asset) => !knownURLs.has(asset.url));
+      for (let offset = 0; offset < checks.length; offset += 128) {
+        const assets = await Promise.all(
+          checks.slice(offset, offset + 128).map(async (asset) => ({
+            url: asset.url,
+            type: asset.type,
+            name: uploadName(asset),
+            hash: [
+              ...new Uint8Array(
+                await crypto.subtle.digest("SHA-256", asset.bytes),
+              ),
+            ]
+              .map((n) => n.toString(16).padStart(2, "0"))
+              .join(""),
+            families: fontFamilies.get(asset.url) || [],
+          })),
+        );
+        progress(
+          4,
+          "Checking existing files " +
+            (offset + 1) +
+            "–" +
+            Math.min(offset + 128, checks.length) +
+            " of " +
+            checks.length +
+            "…",
+        );
+        const reused = await request("asset_lookup", { job: job.id, assets });
+        for (const saved of reused.assets) {
+          job.map[saved.source] = saved.url;
+          job.assets.push(saved);
+          knownURLs.add(saved.source);
+        }
+      }
       const savedURLs = new Set(job.assets.map((asset) => asset.source));
       const pendingAssets = source.assets.filter(
         (asset) => !savedURLs.has(asset.url),
@@ -692,21 +988,43 @@
           savedAssets = [];
         if (group.length === 1)
           savedAssets = [
-            await request("asset", { job: job.id, ...inputs[0] }, files[0]),
+            await recoverableRequest(
+              "asset",
+              { job: job.id, ...inputs[0] },
+              files[0],
+              { kind: "asset", name: group[0].name, url: group[0].url },
+            ),
           ];
         else {
-          const response = await request(
+          const response = await recoverableRequest(
             "assets",
             { job: job.id, assets: inputs },
             files,
+            { kind: "media-batch", name: "Media upload batch" },
           );
           savedAssets = response.assets || [];
           completed = response.assets?.length || 0;
+          if (response.failure) {
+            const failedIndex = savedAssets.length;
+            const saved = await recoverableRequest(
+              "asset",
+              { job: job.id, ...inputs[failedIndex] },
+              files[failedIndex],
+              {
+                kind: "asset",
+                name: group[failedIndex].name,
+                url: group[failedIndex].url,
+              },
+            );
+            savedAssets.push(saved);
+            completed++;
+          }
           if (completed < 1 || completed > group.length)
             throw Error(
               "Media batch progress was not confirmed. Retry the saved import.",
             );
         }
+        savedAssets = savedAssets.filter(Boolean);
         const timings = savedAssets
           .map((asset) => asset.processing_ms)
           .filter(Number.isFinite);
@@ -742,11 +1060,13 @@
       const pendingPages = source.pages.filter(
         (page) => !job.pages.find((p) => p.key === page.key)?.done,
       );
+      resources = M.resourceSession(source, job.map);
       const prepare = (page) =>
         M.convert(source, page, {
           map: job.map,
           layout: job.layout,
           preserveCSS: $("#lse-css").checked,
+          resources,
         }).then(
           (value) => ({ value }),
           (error) => ({ error }),
@@ -754,6 +1074,12 @@
       let prepared = pendingPages.length ? prepare(pendingPages[0]) : null;
       for (let i = 0; i < pendingPages.length; i++) {
         const page = pendingPages[i];
+        currentItem = {
+          kind: "page",
+          key: page.key,
+          title: page.title,
+          url: page.url,
+        };
         progress(
           40 + (55 * i) / Math.max(1, pendingPages.length),
           "Converting and saving page " +
@@ -765,12 +1091,17 @@
         );
         const converted = await prepared;
         if (converted.error) throw converted.error;
-        const saving = request("page", {
-          job: job.id,
-          key: page.key,
-          ...converted.value,
-          compact: true,
-        });
+        const saving = recoverableRequest(
+          "page",
+          {
+            job: job.id,
+            key: page.key,
+            ...converted.value,
+            compact: true,
+          },
+          undefined,
+          { kind: "page", key: page.key, title: page.title, url: page.url },
+        );
         prepared =
           i + 1 < pendingPages.length ? prepare(pendingPages[i + 1]) : null;
         const saved = await saving;
@@ -789,11 +1120,23 @@
       do {
         job = await request("finish", { job: job.id });
       } while (job.state === "finishing");
-      progress(100, "Website import complete.");
+      progress(
+        100,
+        job.media?.pending
+          ? "Pages saved; image sizes are processing."
+          : "Website import complete.",
+      );
       result(job);
     } catch (e) {
       const phase = $("#lse-current").textContent;
+      e.lseDetails = {
+        ...(e.lseDetails || {}),
+        item: e.lseDetails?.item || currentItem,
+        job: job?.id,
+      };
       recordError(e, phase);
+      $("#lse-skip-item").hidden = true;
+      $("#lse-pause-import").hidden = true;
       $("#lse-retry").hidden = false;
       $("#lse-cancel").hidden = !job;
       $("#lse-check").hidden = !pendingFingerprint;
@@ -801,6 +1144,7 @@
       $("#lse-current").textContent =
         "Import paused. Check saved progress before continuing. Completed drafts and uploaded files are kept.";
     } finally {
+      resources?.dispose();
       setBusy(false);
     }
   }
@@ -828,7 +1172,13 @@
   });
   $("#lse-pages").addEventListener("change", refreshSelect);
   $("#lse-import").addEventListener("click", run);
-  $("#lse-retry").addEventListener("click", run);
+  $("#lse-retry").addEventListener("click", () =>
+    failureChoice ? failureChoice("retry") : run(),
+  );
+  $("#lse-skip-item").addEventListener("click", () => failureChoice?.("skip"));
+  $("#lse-pause-import").addEventListener("click", () =>
+    failureChoice?.("pause"),
+  );
   $("#lse-reset").addEventListener("click", () => {
     if (busy) return;
     project = null;
@@ -970,6 +1320,8 @@
     run,
     setJob(data) {
       job = data;
+      mediaPaused = false;
+      scheduleMedia();
       selectionStarted = true;
     },
     get busy() {

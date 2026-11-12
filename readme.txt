@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1.4
 Requires PHP: 8.0
-Stable tag: 0.10.0
+Stable tag: 0.11.0
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -170,6 +170,16 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.11.0 =
+Identify CSS errors by field, selector, line and snippet; accept harmless selector
+text and retain executable-CSS checks. Offer explicit single-item Skip, Retry and
+Pause with durable omission reports. Preserve inline/full-width and boxed layouts,
+automatic widths, source box sizing and normal line height. Verify reusable media
+before uploading. Share conversion resources and safely prefetch public capture
+files. Persist derived image-size work separately from ready drafts, show progress,
+and support file/size retry and explicit skip without losing existing metadata.
+
 
 = 0.10.0 =
 * Use a compact in-plugin import removal confirmation with existing protections.

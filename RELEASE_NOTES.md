@@ -1,11 +1,11 @@
-Restore imported maps and layout alignment, reduce editor styling overhead, and simplify removing an import.
+Improve import accuracy, identify individual failures, and make usable drafts available sooner.
 
-* Replace the browser removal prompt with one compact confirmation inside the plugin. Keep Trash recovery, media preservation, ownership and concurrent-edit protections.
-* Convert supported Google Maps address embeds into native, editable Elementor maps, including zoom and responsive height. Unknown or unsafe remote frames remain excluded with a clear report.
-* Preserve automatic sizing and alignment in grids, inline content and navigation. Restore full-width mobile dropdown placement and original panel styles when closing.
-* Reuse captured page CSS for linked shared sections instead of injecting another full page-sized stylesheet. Deliver eligible CSS as a versioned, cacheable file; preserve inline delivery when URL semantics or hosting require it. Standalone template editing retains its own styling.
-* Add checks for native map editing, unsafe frames, desktop/mobile map and navigation geometry, shared styles and in-plugin deletion.
+* Report CSS failures with the page, CSS field, selector, line, column, reason and a bounded source snippet. Accept harmless selector/string text such as the Green Valley print selector containing `javascript:`; keep checks for executable CSS and unbundled imports.
+* Add Retry, Skip this item and continue, and Pause. Skip only an identified CSS declaration/rule or individual failed file. Keep completed work and a durable skipped-items report. Unknown, permission and save-conflict failures remain non-skippable.
+* Preserve inline layout, authored automatic widths, source box sizing and normal line height. Full-width galleries stay full width while intentionally boxed content retains its width.
+* Check verified Media Library hashes before uploading unchanged files. Share conversion resource blobs and compiled URL maps across pages. Fetch up to four independent public capture resources together where the host supports it, with safe redirect checks and a normal WordPress fallback.
+* Make original images and pages available before derived image sizes finish. Persist the requested sizes, resume core metadata checkpoints, and show remaining work separately. Image-size failures identify the file/size and support explicit Retry or Skip; skipped sizes can be retried later. Custom remote/offloaded storage keeps synchronous processing.
 
-Update using the existing WordPress plugin button. Use **Update from file** on the existing import to rebuild its maps and layouts with the same page IDs, addresses and publication status. Review replacement of edited or published pages. Styling-delivery improvements also apply when viewing existing imports.
+Update through the existing WordPress plugin button. Rebuild affected existing pages with **Update from file**, using the same JSON and reviewing replacement of edited or published pages. Capture again if the old JSON omitted source resources. CSS/file omissions remain listed for review.
 
-The source post-682.css still returns HTTP 404. Lottie animations and application/form backends can require rebuilding. This release does not establish a universal exact replica or instant editor loading. Live destination timing remains unverified where the WordPress connector cannot authenticate.
+Draft readiness and completed image processing are separate states. Network transfers, source failures, image processing and host capacity still take time. Review responsive layouts and interactions before publishing; universal exact replication is not established.

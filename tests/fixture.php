@@ -28,6 +28,18 @@ add_action( 'pre_get_posts', static function( $query ) {
     static $delayed = false;
     if ( ! $delayed && ( $_POST['action'] ?? '' ) === 'lse_assets' && get_option( '_lse_test_slow_media' ) && ( ( $query->get( 'meta_key' ) === '_lse_sha256' || ( $query->get( 'meta_query' )[0]['key'] ?? '' ) === '_lse_sha256' ) ) ) { $delayed = true; usleep( 3100000 ); }
 }, 10, 1 );
+// Deterministic core-image failure; only enabled by the disposable image queue test.
+add_filter('wp_image_editors', static function ($editors) {
+    if (!get_option('_lse_test_image_failure')) return $editors;
+    require_once ABSPATH . 'wp-includes/class-wp-image-editor.php';
+    require_once ABSPATH . 'wp-includes/class-wp-image-editor-gd.php';
+    if (!class_exists('LSE_Test_Image_Failure')) {
+        class LSE_Test_Image_Failure extends WP_Image_Editor_GD {
+            public function make_subsize($size_data) { return new WP_Error('fixture_image_size', 'Disposable image resize failure'); }
+        }
+    }
+    return ['LSE_Test_Image_Failure'];
+});
 // Installed only into a disposable Playground site; never included in plugin ZIPs.
 add_action( 'wp_ajax_lse_test', static function() {
     if ( ! current_user_can( 'manage_options' ) || ! check_ajax_referer( 'lse_import', 'nonce', false ) ) { wp_send_json_error( [ 'message' => 'Forbidden test request.' ], 403 ); }
@@ -49,6 +61,14 @@ add_action( 'wp_ajax_lse_test', static function() {
                 $tree = json_decode( get_post_meta( $id, '_elementor_data', true ), true ); $settings_bytes = 0;
                 foreach ( $tree as $node ) { $settings_bytes = max( $settings_bytes, strlen( wp_json_encode( $node['settings'] ) ) ); }
                 wp_send_json_success( [ 'cssBytes' => strlen( get_post_meta( $id, '_lse_css', true ) ), 'sourceBytes' => strlen( wp_json_encode( get_post_meta( $id, '_lse_source', true ) ) ), 'settingsBytes' => $settings_bytes ] );
+            case 'image-failure': update_option('_lse_test_image_failure', !empty($input['enabled'])); wp_send_json_success(['ok'=>true]);
+            case 'image-state':
+                wp_send_json_success(['meta'=>wp_get_attachment_metadata($id), 'task'=>get_post_meta($id,'_lse_image_task',true), 'queue'=>get_option('_lse_image_queue',[]), 'file'=>get_attached_file($id)]);
+            case 'image-partial':
+                $meta=wp_get_attachment_metadata($id); $size=$input['size'];
+                if (!isset($meta['sizes'][$size])) throw new RuntimeException('Fixture size was not generated.');
+                $sizes=wp_get_registered_image_subsizes();
+                unset($meta['sizes'][$size]); wp_update_attachment_metadata($id,$meta); LSE_Media::enqueue($id,[$size=>$sizes[$size]]); wp_send_json_success(['ok'=>true]);
             case 'slow-media': update_option( '_lse_test_slow_media', ! empty( $input['enabled'] ) ); wp_send_json_success( [ 'ok' => true ] );
             case 'edit':
                 $doc = \Elementor\Plugin::$instance->documents->get( $id ); $tree = $doc->get_elements_data();

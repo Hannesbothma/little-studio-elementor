@@ -239,9 +239,11 @@ stable identities independent of preview URLs and random native element IDs.
 Media batches adapt to measured processing time. Capture checkpoints append
 individual records rather than rewriting the growing response; queues avoid
 shifting every remaining item. Conversion previews use temporary blob URLs, and
-raw capture buffers are released on completion/cancellation. Normal WordPress
-image metadata and thumbnail generation remain enabled and can dominate fresh
-large-photo imports; no instant or universal speed guarantee is made.
+raw capture buffers are released on completion/cancellation. Original image metadata remains available during import. On local storage, requested
+derived image sizes run through a durable queue after the pages become ready;
+WordPress background tasks and the open workspace resume it. Remote/offloaded
+storage retains synchronous processing. Large originals and native image scaling
+still take time; no instant or universal speed guarantee is made.
 
 Missing capture resources remain visible in the JSON and import report, including
 failed stylesheets. Temporary HTTP failures get bounded retries. CSS imports keep
@@ -260,3 +262,33 @@ Development dependencies are pinned in `package-lock.json`; use `npm ci`,
 versions instead of treating a moving latest download as a compatibility result.
 `node tests/seo-regression.mjs` also checks frontend metadata using pinned Yoast,
 Rank Math and AIOSEO plugins in an isolated disposable WordPress installation.
+
+
+## Precise errors and import work (0.11.0)
+
+CSS validation identifies the page, field, selector, line, column, token, reason
+and a bounded contextual snippet. It examines CSS context rather than rejecting
+harmless comments, content strings or attribute selectors containing words such
+as `javascript:`. Actual executable URLs, expressions, legacy executable
+properties and unpackaged imports remain checked. The downloadable error report
+includes the structured issue and transport timing without a PHP stack trace.
+
+Retry repeats the current item. **Skip this item and continue** appears only for
+an isolated CSS unit or optional failed asset. It retains independent declarations,
+files and saved drafts, and records omissions for review. Retry skipped source
+content using **Update from file**. Login failures, unknown server errors and
+save conflicts cannot be skipped as if they were harmless content errors.
+
+Image processing has its own progress notice. Original images and native drafts
+are usable while WordPress creates the persisted requested image sizes. Each
+image resumes from saved core metadata, including after partial completion.
+Errors identify a file and missing size; unavailable originals/metadata cannot be
+skipped as a single resize. Explicitly skipped sizes remain recorded and can be
+retried from the workspace. Background work requires WordPress cron or reopening
+the import. It is still real work, not an instant full completion claim.
+
+Repeated imports verify existing attachment file hashes before uploading their
+bytes. Conversion shares temporary resource blobs and rewrite-map caches across
+pages. Capture prefetches at most four public resources where native cURL and the
+host configuration allow it; custom HTTP/TLS/proxy handlers keep the normal
+WordPress path. Public-URL validation and redirect checks remain enforced.

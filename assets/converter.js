@@ -339,7 +339,11 @@
       throw Error("Invalid homepage or navigation records.");
     return p;
   }
+  const rewriteCache = new WeakMap();
   function rewrite(text, map) {
+    const cached = map && rewriteCache.get(map);
+    if (cached)
+      return String(text || "").replace(cached.expression, cached.replace);
     let result = String(text || "");
     const pairs = [];
     for (const [a, b] of Object.entries(map || {})) {
@@ -353,19 +357,20 @@
     pairs.sort((a, b) => b[0].length - a[0].length);
     if (!pairs.length) return result;
     const lookup = new Map(pairs);
-    return result.replace(
-      new RegExp(
-        [...lookup.keys()]
-          .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-          .join("|"),
-        "g",
-      ),
-      (m, offset, source) =>
-        /^https?:/i.test(m.replaceAll("\\/", "/")) &&
-        /[\\\w./%~-]/.test(source.charAt(offset + m.length))
-          ? m
-          : lookup.get(m),
+    const expression = new RegExp(
+      [...lookup.keys()]
+        .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+        .join("|"),
+      "g",
     );
+    const replace = (m, offset, source) =>
+      /^https?:/i.test(m.replaceAll("\\/", "/")) &&
+      /[\\\w./%~-]/.test(source.charAt(offset + m.length))
+        ? m
+        : lookup.get(m);
+    if (map && typeof map === "object" && Object.isFrozen(map))
+      rewriteCache.set(map, { expression, replace });
+    return result.replace(expression, replace);
   }
   function inspect(page) {
     const d = new DOMParser().parseFromString(page.html, "text/html");
@@ -554,6 +559,7 @@
     !/[{}<>]|javascript\s*:|expression\s*\(|@import/i.test(v);
   const outerProps = [
     "display",
+    "box-sizing",
     "position",
     "top",
     "right",
@@ -591,6 +597,7 @@
     "background-size",
     "background-position",
     "background-repeat",
+    "min-width",
     "min-height",
     "max-height",
     "object-fit",
@@ -600,6 +607,7 @@
     "z-index",
   ];
   const imagePaint = [
+    "box-sizing",
     "background-color",
     "background-image",
     "background-size",
@@ -959,11 +967,21 @@
     return warnings;
   }
 
-  async function convert(project, page, options = {}) {
-    const warnings = [...inspect(page).warnings],
-      previewMap = {};
-    const originalAssets = new Map(),
+  function resourceSession(project, map = {}) {
+    const previewMap = {},
+      originalAssets = new Map(),
       blobs = [];
+    const styles = new Map();
+    const destMap = Object.freeze({ ...map });
+    let users = 0,
+      disposed = false;
+    const cleanup = () => {
+      if (disposed && !users) {
+        for (const url of blobs) URL.revokeObjectURL(url);
+        blobs.length = 0;
+        styles.clear();
+      }
+    };
     for (const asset of project.assets) {
       const blob = URL.createObjectURL(
         new Blob([asset.bytes], { type: asset.type }),
@@ -973,14 +991,55 @@
       try {
         previewMap[new URL(asset.url).pathname] = blob;
       } catch {}
-      if (options.map?.[asset.url]) previewMap[options.map[asset.url]] = blob;
-      originalAssets.set(blob, options.map?.[asset.url] || asset.url);
+      if (map[asset.url]) previewMap[map[asset.url]] = blob;
+      originalAssets.set(blob, map[asset.url] || asset.url);
     }
-    const restoreRefs = (value) =>
-      String(value).replace(
-        /blob:[^\s"')<>]+/g,
-        (url) => originalAssets.get(url) || url,
+    return {
+      previewMap: Object.freeze(previewMap),
+      originalAssets,
+      destMap,
+      styles,
+      retain() {
+        if (disposed) throw Error("The conversion resource session is closed.");
+        users++;
+      },
+      release() {
+        users--;
+        cleanup();
+      },
+      dispose() {
+        disposed = true;
+        cleanup();
+      },
+    };
+  }
+  async function convert(project, page, options = {}) {
+    const resources =
+      options.resources || resourceSession(project, options.map);
+    resources.retain();
+    try {
+      return await convertDocument(
+        project,
+        page,
+        { ...options, map: resources.destMap },
+        resources,
       );
+    } finally {
+      resources.release();
+      if (!options.resources) resources.dispose();
+    }
+  }
+  async function convertDocument(project, page, options, resources) {
+    const warnings = [...inspect(page).warnings];
+    const { previewMap, originalAssets } = resources;
+    const restoreRefs = (value) =>
+      String(value).replace(/blob:[^\s"')<>]+/g, (url) => {
+        const hash = url.indexOf("#");
+        const base = hash < 0 ? url : url.slice(0, hash);
+        return originalAssets.has(base)
+          ? originalAssets.get(base) + (hash < 0 ? "" : url.slice(hash))
+          : url;
+      });
     const restore = (value) =>
       typeof value === "string"
         ? restoreRefs(value)
@@ -1054,7 +1113,7 @@
       "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-src 'none'";
     doc.head.prepend(csp);
     const base = doc.createElement("style");
-    base.textContent = "html,body{margin:0}*{box-sizing:border-box}";
+    base.textContent = "";
     doc.head.insertBefore(base, style);
     const frame = document.createElement("iframe");
     frame.setAttribute("sandbox", "allow-same-origin");
@@ -1412,7 +1471,25 @@
       for (const width of widths) {
         frame.style.width = width + "px";
         await new Promise((r) => setTimeout(r, 25));
-        const parents = new WeakMap();
+        const parents = new WeakMap(),
+          inlineBoxes = new WeakMap();
+        const atomicInline = (node) => {
+          if (inlineBoxes.has(node)) return inlineBoxes.get(node);
+          const style = w.getComputedStyle(node);
+          let value = /^inline/.test(style.display);
+          if (style.display === "inline") {
+            value = [...node.children].every((child) => {
+              const c = w.getComputedStyle(child);
+              return (
+                c.display === "none" ||
+                ["absolute", "fixed"].includes(c.position) ||
+                atomicInline(child)
+              );
+            });
+          }
+          inlineBoxes.set(node, value);
+          return value;
+        };
         for (const entry of elements) {
           const s = w.getComputedStyle(entry.node),
             content = w.getComputedStyle(entry.styleNode),
@@ -1436,7 +1513,9 @@
                     1,
                     parent.getBoundingClientRect().width -
                       (parseFloat(ps.paddingLeft) || 0) -
-                      (parseFloat(ps.paddingRight) || 0),
+                      (parseFloat(ps.paddingRight) || 0) -
+                      (parseFloat(ps.borderLeftWidth) || 0) -
+                      (parseFloat(ps.borderRightWidth) || 0),
                   ),
                 ),
               });
@@ -1458,10 +1537,7 @@
             (node) => w.getComputedStyle(node).display !== "none",
           );
           props.inlineFlow =
-            flowChildren.length > 0 &&
-            flowChildren.every((node) =>
-              /^inline/.test(w.getComputedStyle(node).display),
-            );
+            flowChildren.length > 1 && flowChildren.every(atomicInline);
           props.inlineGap = 0;
           if (props.inlineFlow) {
             const gaps = [];
@@ -1540,7 +1616,9 @@
               entry.styleNode.computedStyleMap?.().get("height")?.toString() !==
               "auto";
             props.contentWidth = String(
-              entry.styleNode.getBoundingClientRect().width,
+              imageStyle.boxSizing === "content-box"
+                ? parseFloat(imageStyle.width)
+                : entry.styleNode.getBoundingClientRect().width,
             );
             props.imageBoxWidth =
               entry.node === entry.styleNode
@@ -1639,6 +1717,8 @@
                   : null;
           if (suffix !== null) {
             const target = element.settings;
+            target["lse_box_sizing" + suffix] =
+              widget === "image" ? "border-box" : s["box-sizing"];
             if (widget && widget !== "html")
               target["lse_widget_display" + suffix] =
                 s.display === "inline" ? "inline-block" : s.display;
@@ -1662,17 +1742,16 @@
               target["hide_" + device] = "hidden-" + device;
             if (widget && !s.parentDisplay?.includes("grid")) {
               target["_element_width" + suffix] = "initial";
-              target["_element_custom_width" + suffix] =
-                s.explicitWidth && s.specifiedWidth
-                  ? sourceSize(s.specifiedWidth)
-                  : {
-                      unit: "%",
-                      size: Math.max(
-                        0,
-                        (100 * parseFloat(s.actualWidth)) /
-                          parseFloat(s.parentWidth || 1440),
-                      ),
-                    };
+              target["_element_custom_width" + suffix] = s.specifiedWidth
+                ? sourceSize(s.specifiedWidth)
+                : {
+                    unit: "%",
+                    size: Math.max(
+                      0,
+                      (100 * parseFloat(s.actualWidth)) /
+                        parseFloat(s.parentWidth || 1440),
+                    ),
+                  };
             }
             if (["absolute", "fixed"].includes(s.position)) {
               target[widget ? "_position" : "position"] = s.position;
@@ -1712,6 +1791,23 @@
             target[(widget ? "_" : "") + "margin" + suffix] = dim(s, "margin");
             if (widget === "image") {
               const image = s.image;
+              target["lse_image_box_sizing" + suffix] = image["box-sizing"];
+              if (
+                entry.node === entry.styleNode &&
+                image["box-sizing"] === "content-box"
+              ) {
+                const extra = ["left", "right"].reduce(
+                  (n, side) =>
+                    n +
+                    (parseFloat(image["padding-" + side]) || 0) +
+                    (parseFloat(image["border-" + side + "-width"]) || 0),
+                  0,
+                );
+                if (extra && s.specifiedWidth && s.specifiedWidth !== "auto")
+                  target["_element_custom_width" + suffix] = sourceSize(
+                    "calc(" + s.specifiedWidth + " + " + extra + "px)",
+                  );
+              }
               target["align" + suffix] = s["text-align"];
               if (parseFloat(s.imageBoxWidth) > 0)
                 target["width" + suffix] = {
@@ -1818,6 +1914,11 @@
                 if (s["font-weight"] !== all[1440]["font-weight"])
                   target["lse_font_weight" + suffix] = s["font-weight"];
               }
+              if (
+                s["line-height"] === "normal" ||
+                all[1440]["line-height"] === "normal"
+              )
+                target["lse_line_height" + suffix] = s["line-height"];
               if (parseFloat(s["line-height"]) > 0)
                 target[prefix + "_line_height" + suffix] = px(s["line-height"]);
               target[prefix + "_letter_spacing" + suffix] = px(
@@ -1928,20 +2029,19 @@
                 !["absolute", "fixed"].includes(s.position) &&
                 parseFloat(s.parentWidth) > 0
               ) {
-                target["width" + suffix] =
-                  s.explicitWidth && s.specifiedWidth
-                    ? sourceSize(s.specifiedWidth)
-                    : {
-                        unit: "%",
-                        size: Math.min(
-                          100,
-                          Math.max(
-                            0,
-                            (100 * parseFloat(s.actualWidth)) /
-                              parseFloat(s.parentWidth),
-                          ),
+                target["width" + suffix] = s.specifiedWidth
+                  ? sourceSize(s.specifiedWidth)
+                  : {
+                      unit: "%",
+                      size: Math.min(
+                        100,
+                        Math.max(
+                          0,
+                          (100 * parseFloat(s.actualWidth)) /
+                            parseFloat(s.parentWidth),
                         ),
-                      };
+                      ),
+                    };
               }
               target["flex_direction" + suffix] = s.display.includes("flex")
                 ? s["flex-direction"]
@@ -2082,18 +2182,15 @@
                 : "") +
               ")";
           if (!widget) {
-            if (
-              !["flex", "inline-flex", "grid", "inline-grid"].includes(
-                s.display,
-              )
-            )
-              declarations.push("display:block");
-            declarations.push(
-              "--display:" +
-                (["flex", "grid"].includes(s.display) ? s.display : "block"),
-            );
+            const display =
+              s.inlineFlow &&
+              !s.display.includes("flex") &&
+              !s.display.includes("grid")
+                ? "flex"
+                : s.display;
+            declarations.push("display:" + display, "--display:" + display);
           }
-          declarations.push("box-sizing:border-box");
+
           if (s["max-width"] !== "none" && safeValue(s["max-width"]))
             declarations.push("max-width:" + s["max-width"]);
           if (widget === "html" && entry.tag === "svg") {
@@ -2210,6 +2307,12 @@
       function sourceStyles(rules) {
         let result = "";
         for (const rule of rules) {
+          const key = String(!!options.preserveCSS) + rule.cssText;
+          if (resources.styles.has(key)) {
+            result += resources.styles.get(key);
+            continue;
+          }
+          const before = result.length;
           if (rule.type === 1) {
             const declarations = namespaceCSS(rule.style.cssText),
               variables = [...rule.style]
@@ -2285,6 +2388,7 @@
               "{" +
               sourceStyles(rule.cssRules) +
               "}\n";
+          resources.styles.set(key, result.slice(before));
         }
         return result;
       }
@@ -2366,7 +2470,6 @@
     } finally {
       clearTimeout(timer);
       frame.remove();
-      for (const blob of blobs) URL.revokeObjectURL(blob);
     }
   }
   function fromHTML(text, name = "page.html") {
@@ -2419,6 +2522,7 @@
     rewrite,
     inspect,
     convert,
+    resourceSession,
     resolveLinks,
     prepareSource,
     cssReferences,

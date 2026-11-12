@@ -22,6 +22,11 @@ final class LSE_Appearance
                             'tab' => \Elementor\Controls_Manager::TAB_ADVANCED,
                         ],
                     );
+                    self::box_control(
+                        $element,
+                        'lse_box_sizing',
+                        '{{WRAPPER}}',
+                    );
                     $element->add_responsive_control('lse_widget_display', [
                         'label' => 'Display',
                         'type' => \Elementor\Controls_Manager::SELECT,
@@ -52,6 +57,11 @@ final class LSE_Appearance
                         'label' => 'Imported dimensions',
                         'tab' => \Elementor\Controls_Manager::TAB_LAYOUT,
                     ]);
+                    self::box_control(
+                        $element,
+                        'lse_box_sizing',
+                        '{{WRAPPER}}',
+                    );
                     $element->add_responsive_control('lse_height', [
                         'label' => 'Height',
                         'type' => \Elementor\Controls_Manager::SLIDER,
@@ -161,6 +171,11 @@ final class LSE_Appearance
                         'fields_options' => ['color' => ['responsive' => true]],
                     ],
                 );
+                self::box_control(
+                    $element,
+                    'lse_image_box_sizing',
+                    '{{WRAPPER}} img',
+                );
                 $element->add_responsive_control('lse_image_padding', [
                     'label' => 'Image padding',
                     'type' => \Elementor\Controls_Manager::DIMENSIONS,
@@ -183,5 +198,18 @@ final class LSE_Appearance
             30,
             2,
         );
+    }
+    private static function box_control($element, $name, $selector)
+    {
+        $element->add_responsive_control($name, [
+            'label' => 'Box sizing',
+            'type' => \Elementor\Controls_Manager::SELECT,
+            'options' => [
+                '' => 'Default',
+                'border-box' => 'Include padding and border',
+                'content-box' => 'Content size plus padding and border',
+            ],
+            'selectors' => [$selector => 'box-sizing:{{VALUE}};'],
+        ]);
     }
 }

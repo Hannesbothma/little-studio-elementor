@@ -15,6 +15,8 @@ const run = (command, args, options = {}) =>
   });
 await run(process.execPath, ["tests/rewrite-regression.mjs"]);
 await run(process.execPath, ["tests/styles-regression.mjs"]);
+await run(process.execPath, ["tests/css-validation.mjs"]);
+await run(process.execPath, ["tests/fetch-validation.mjs"]);
 await run(process.execPath, ["scripts/package.mjs", ".", "dist"]);
 const version = (await readFile("little-studio-elementor.php", "utf8")).match(
   /Version:\s*(\d+\.\d+\.\d+)/,
@@ -128,6 +130,8 @@ try {
   });
   const selected = process.env.LSE_TEST_ONLY?.split(",");
   for (const name of [
+    "media-regression",
+    "import-regression",
     "maps-regression",
     "fidelity-regression",
     "audit-regression",
