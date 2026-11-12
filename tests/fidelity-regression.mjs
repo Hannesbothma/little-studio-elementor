@@ -357,9 +357,10 @@ try {
       .evaluate((n) => getComputedStyle(n).position),
     "fixed",
   );
-  const widget = canvas.locator(".painted.elementor-widget-image");
-  await widget.hover();
-  await widget.locator('[aria-label="Edit Image"]').click();
+  // Clicking the image selects its native controls in both editor generations;
+  // older releases keep the floating edit toolbar hidden for this compact widget.
+  await canvas.getByAltText("Decorated photo", { exact: true }).click();
+  await page.locator(".elementor-control-image").waitFor();
   await page
     .locator('.elementor-panel-navigation-tab[data-tab="style"]')
     .click();
