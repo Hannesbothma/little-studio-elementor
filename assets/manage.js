@@ -303,6 +303,19 @@
             "</a></p>",
         )
         .join("") +
+      window.LSEReports.render([
+        ...(current.capture?.warnings || []),
+        ...(current.capture?.failed_resources || []).map(
+          (resource) =>
+            "Could not package " +
+            resource.url +
+            ": " +
+            (resource.error ||
+              (resource.status
+                ? "HTTP " + resource.status
+                : "Unavailable resource")),
+        ),
+      ]) +
       Object.entries(current.reports || {})
         .map(([key, report]) => {
           const title =
@@ -317,13 +330,7 @@
             " native elements · " +
             report.fallbacks +
             " HTML regions</p>" +
-            (warnings.length
-              ? "<ul>" +
-                warnings
-                  .map((warning) => "<li>" + escapeHtml(warning) + "</li>")
-                  .join("") +
-                "</ul>"
-              : "") +
+            window.LSEReports.render(warnings) +
             "</details>"
           );
         })

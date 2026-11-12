@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1.4
 Requires PHP: 8.0
-Stable tag: 0.8.0
+Stable tag: 0.9.0
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -28,6 +28,15 @@ new version is available. Updates come from the public GitHub releases and need
 no token, licence key or activation code. Automatic updates are initially enabled;
 your later choice in the WordPress Plugins screen is respected. WordPress hosting
 update/cron and file-permission settings continue to apply.
+
+== Imported scrolling and appearance ==
+
+Supported source Elementor sticky menus use native Imported scrolling controls.
+They work independently of captured scripts. Review desktop, tablet and mobile.
+Image appearance targets the actual image, preserving crop, background, padding,
+borders and responsive opacity. Lazy backgrounds and gallery hover overlays are
+retained. Reports separate missing files and required setup from capture notes.
+Plugin updates closes when clicking outside or pressing Escape.
 
 == What this first version does ==
 

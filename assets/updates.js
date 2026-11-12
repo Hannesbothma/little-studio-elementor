@@ -4,6 +4,16 @@
     install = document.querySelector("#lse-update-now"),
     message = document.querySelector("#lse-update-message");
   if (!check || !window.LSEAdmin) return;
+  const popover = check.closest("details");
+  document.addEventListener("pointerdown", (event) => {
+    if (popover?.open && !popover.contains(event.target)) popover.open = false;
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !popover?.open) return;
+    popover.open = false;
+    popover.querySelector("summary")?.focus();
+    event.preventDefault();
+  });
   let working = false;
   function show(state) {
     install.hidden = !state.available;

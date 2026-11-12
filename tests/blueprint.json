@@ -18,7 +18,7 @@
     },
     {
       "step": "runPHP",
-      "code": "<?php require '/wordpress/wp-load.php'; update_option('elementor_onboarded',true); update_option('elementor_tracker_notice', '1'); update_option('elementor_experiment-e_opt_in_v4_page', 'inactive'); if (!is_dir('/wordpress/wp-content/mu-plugins')) { mkdir('/wordpress/wp-content/mu-plugins',0777,true); } copy('/tests/fixture.php','/wordpress/wp-content/mu-plugins/lse-tests.php'); copy('/tests/audit-fixture.php','/wordpress/wp-content/mu-plugins/lse-audit-tests.php');"
+      "code": "<?php require '/wordpress/wp-load.php'; update_option('elementor_onboarded',true); update_option('elementor_tracker_notice', '1'); update_option('elementor_experiment-e_opt_in_v4_page', 'inactive'); if (!is_dir('/wordpress/wp-content/mu-plugins')) { mkdir('/wordpress/wp-content/mu-plugins',0777,true); } copy('/tests/fixture.php','/wordpress/wp-content/mu-plugins/lse-tests.php'); copy('/tests/audit-fixture.php','/wordpress/wp-content/mu-plugins/lse-audit-tests.php'); copy('/tests/fidelity-fixture.php','/wordpress/wp-content/mu-plugins/lse-fidelity-tests.php');"
     }
   ],
   "preferredVersions": {

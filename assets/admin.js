@@ -440,11 +440,7 @@
           "An administrator with script permission must import the interactive pages.",
         );
       $("#lse-setup").hidden = !findings.length;
-      $("#lse-findings").innerHTML = findings.length
-        ? "<ul>" +
-          findings.map((w) => "<li>" + esc(w) + "</li>").join("") +
-          "</ul>"
-        : "";
+      $("#lse-findings").innerHTML = window.LSEReports.render(findings);
       const hasScripts = project.pages.some(
         (p) => p.js.trim() || /<script/i.test(p.html),
       );
@@ -572,6 +568,7 @@
               source: source.capture.source,
               complete: source.capture.complete !== false,
               failed_resources: source.capture.failed_resources || [],
+              warnings: source.capture.warnings || [],
             }
           : null,
         layout: $("#lse-layout").value,

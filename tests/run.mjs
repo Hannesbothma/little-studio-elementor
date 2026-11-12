@@ -127,6 +127,7 @@ try {
   });
   const selected = process.env.LSE_TEST_ONLY?.split(",");
   for (const name of [
+    "fidelity-regression",
     "audit-regression",
     "shared-context",
     "css-regression",

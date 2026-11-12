@@ -272,3 +272,9 @@
 #lse-capture-url { width: 100%; min-width: 0; }
 .lse-import-methods { justify-content: center; flex-wrap: wrap; }
 @media (max-width: 600px) { .lse-dialog-head, .lse-dialog-body { padding: 16px; } }
+
+.lse-findings-group { margin: 12px 0; overflow-wrap: anywhere; }
+.lse-findings-group h4 { margin: 0 0 6px; font-size: 13px; }
+.lse-findings-group ul { margin: 4px 0 0 18px; list-style: disc; }
+.lse-findings-missing { border-left: 3px solid #b32d2e; padding-left: 10px; }
+.lse-findings-notes > summary { cursor: pointer; font-weight: 600; color: var(--muted); }

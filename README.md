@@ -34,6 +34,14 @@ A recoverable copy is kept before refreshing each page. **Restore before last up
 
 Older imports use an earlier change fingerprint. The first refresh may conservatively require replacement consent, even if you have not edited them. Subsequent refreshes use the current fingerprint.
 
+## Imported appearance and scrolling
+
+Source Elementor sticky settings are converted into **Imported scrolling** controls on the native element. Choose its edge, devices, responsive offsets, effects distance and optional parent bounds. This behavior uses the plugin’s own runtime and works independently of **Keep website interactions**. Source-specific scripts and unsupported scrolling effects still require review.
+
+Image cropping, positioning, background, padding and borders target the actual image. Native image controls and **Imported image appearance** keep those settings editable. Containers also expose imported height/display and responsive colour overrides. Source lazy backgrounds are revealed before measurement; supported slideshow backgrounds and overlays use destination Elementor controls. Gallery photos and hover overlays are preserved.
+
+Reports distinguish missing files, resources/styling needing review and features requiring setup. Informational capture notes are collapsed separately. A missing source stylesheet cannot be recovered merely by importing it again.
+
 ## Updates
 
 Updates come from this public repository’s releases. No GitHub token, licence key

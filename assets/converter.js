@@ -552,6 +552,10 @@
   const outerProps = [
     "display",
     "position",
+    "top",
+    "right",
+    "bottom",
+    "left",
     "flex-direction",
     "flex-wrap",
     "justify-content",
@@ -592,6 +596,46 @@
     "text-decoration",
     "z-index",
   ];
+  const imagePaint = [
+    "background-color",
+    "background-image",
+    "background-size",
+    "background-position",
+    "background-repeat",
+    "background-attachment",
+    "background-origin",
+    "background-clip",
+    "background-blend-mode",
+    "object-fit",
+    "object-position",
+    "aspect-ratio",
+    "opacity",
+    "filter",
+    "mix-blend-mode",
+    "border-radius",
+    "box-shadow",
+    "vertical-align",
+    "border-top",
+    "border-right",
+    "border-bottom",
+    "border-left",
+    "overflow",
+    "min-height",
+    "max-height",
+    "max-width",
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
+  ];
+  function sourceSize(value) {
+    const match = String(value)
+      .trim()
+      .match(/^(-?[\d.]+)(px|%|vh|vw|em|rem)$/);
+    return match
+      ? { unit: match[2], size: Number(match[1]) }
+      : { unit: "custom", size: value };
+  }
   const innerProps = [
     "font-family",
     "font-size",
@@ -639,10 +683,48 @@
       return {};
     }
   }
+  function stickySettings(node) {
+    const source = backgroundSettings(node);
+    let existing;
+    try {
+      existing = JSON.parse(node.getAttribute("data-lse-sticky") || "null");
+    } catch {}
+    const edge = source.sticky || existing?.edge;
+    if (!["top", "bottom"].includes(edge)) return null;
+    const devices = source.sticky_on ??
+      existing?.devices ?? ["desktop", "tablet", "mobile"];
+    const offsets = {};
+    for (const [device, suffix] of [
+      ["desktop", ""],
+      ["tablet", "_tablet"],
+      ["mobile", "_mobile"],
+    ]) {
+      const value =
+        source["sticky_offset" + suffix] ?? existing?.offsets?.[device];
+      if (value !== undefined && Number.isFinite(Number(value?.size ?? value)))
+        offsets[device] = Number(value?.size ?? value);
+    }
+    const effects = Number(
+      source.sticky_effects_offset ?? existing?.effects ?? 0,
+    );
+    return {
+      edge,
+      devices: Array.isArray(devices)
+        ? devices.filter((d) => ["desktop", "tablet", "mobile"].includes(d))
+        : [],
+      offsets,
+      effects: Number.isFinite(effects) ? effects : 0,
+      parent: source.sticky_parent === "yes" || existing?.parent === true,
+    };
+  }
   function sourceHTML(node, inner = false) {
     const clone = node.cloneNode(true);
     for (const el of [clone, ...clone.querySelectorAll("*")]) {
       if (el.nodeType !== 1) continue;
+      const sticky = stickySettings(el);
+      if (sticky && el !== clone)
+        el.setAttribute("data-lse-sticky", JSON.stringify(sticky));
+      else if (sticky) el.removeAttribute("data-lse-sticky");
       const builder = el.matches(
         "[data-element_type],[data-widget_type],[data-elementor-id],.elementor,.elementor-element",
       );
@@ -697,7 +779,9 @@
 
     for (const el of doc.querySelectorAll(".elementor-invisible"))
       el.classList.remove("elementor-invisible");
-    for (const el of doc.querySelectorAll("[data-e-bg-lazyload]"))
+    for (const el of doc.querySelectorAll(
+      "[data-e-bg-lazyload],.e-con.e-parent",
+    ))
       el.classList.add("e-lazyloaded");
     for (const img of doc.images) {
       const lazy =
@@ -723,9 +807,6 @@
     for (const gallery of doc.querySelectorAll(
       ".elementor-gallery__container",
     )) {
-      if (gallery.hasAttribute("data-lse-gallery")) continue;
-      const images = [...gallery.querySelectorAll("[data-thumbnail]")];
-      if (!images.length) continue;
       let settings = {};
       try {
         settings = JSON.parse(
@@ -734,6 +815,34 @@
             ?.getAttribute("data-settings") || "{}",
         );
       } catch {}
+      if (gallery.hasAttribute("data-lse-gallery")) {
+        // Upgrade JSON produced by older captures without duplicating its gallery.
+        for (const card of gallery.querySelectorAll(":scope > a")) {
+          const image = card.querySelector("img");
+          if (image) {
+            image.classList.add(
+              "e-gallery-image",
+              "elementor-gallery-item__image",
+            );
+            Object.assign(image.style, {
+              padding: "0",
+              border: "0",
+              backgroundImage: "none",
+            });
+          }
+          if (
+            settings.overlay_background === "yes" &&
+            !card.querySelector(".elementor-gallery-item__overlay")
+          ) {
+            const overlay = doc.createElement("div");
+            overlay.className = "elementor-gallery-item__overlay";
+            card.append(overlay);
+          }
+        }
+        continue;
+      }
+      const images = [...gallery.querySelectorAll("[data-thumbnail]")];
+      if (!images.length) continue;
       const number = (value, fallback, max = 12) =>
         Number.isFinite(Number(value)) && Number(value) > 0
           ? Math.min(max, Number(value))
@@ -760,6 +869,7 @@
       for (const source of images) {
         const img = doc.createElement("img");
         img.src = source.getAttribute("data-thumbnail");
+        img.className = source.getAttribute("class") || "";
         img.alt =
           source.getAttribute("aria-label") ||
           source
@@ -769,7 +879,7 @@
           "";
         img.loading = "eager";
         img.style.cssText =
-          "display:block;position:static;width:100%;height:auto;object-fit:cover;aspect-ratio:" +
+          "display:block;position:static;width:100%;height:auto;padding:0;border:0;background-image:none;object-fit:cover;aspect-ratio:" +
           ratio;
         const width = source.getAttribute("data-width"),
           height = source.getAttribute("data-height");
@@ -805,10 +915,7 @@
         mobileGap +
         "px}}";
       doc.head.append(style);
-      for (const overlay of gallery.querySelectorAll(
-        ".elementor-gallery-item__overlay,.elementor-gallery-item__content",
-      ))
-        if (!overlay.textContent.trim()) overlay.remove();
+      // Empty overlay/content elements still carry visible backgrounds, hover effects and pseudo-elements.
       if (settings.gallery_layout && settings.gallery_layout !== "grid")
         warnings.push(
           "An animated " +
@@ -1037,6 +1144,24 @@
             )
             .map((a) => [a.name, a.value]),
         );
+        const sticky = stickySettings(node);
+        if (sticky) {
+          delete settings.lse_attributes["data-lse-sticky"];
+          settings.lse_sticky = sticky.edge;
+          settings.lse_sticky_devices = sticky.devices;
+          settings.lse_sticky_effects_offset = sticky.effects;
+          settings.lse_sticky_parent = sticky.parent ? "yes" : "";
+          for (const [device, suffix] of [
+            ["desktop", ""],
+            ["tablet", "_tablet"],
+            ["mobile", "_mobile"],
+          ])
+            if (Object.hasOwn(sticky.offsets, device))
+              settings["lse_sticky_offset" + suffix] = {
+                unit: "px",
+                size: sticky.offsets[device],
+              };
+        }
         let widget = "",
           children = [];
         settings.lse_attributes["data-lse-source-tag"] = tag;
@@ -1287,6 +1412,22 @@
               /^inline/.test(w.getComputedStyle(node).display),
             );
           props.sourceMinHeight = s.getPropertyValue("--min-height").trim();
+          if (!entry.widget && entry.node.matches(".e-con")) {
+            const overlay = w.getComputedStyle(entry.node, "::before");
+            if (
+              !["none", "normal"].includes(overlay.content) &&
+              (overlay.backgroundColor !== "rgba(0, 0, 0, 0)" ||
+                overlay.backgroundImage !== "none")
+            )
+              props.overlay = {
+                color: overlay.backgroundColor,
+                image: overlay.backgroundImage,
+                opacity: Number(overlay.opacity),
+                size: overlay.backgroundSize,
+                position: overlay.backgroundPosition,
+                repeat: overlay.backgroundRepeat,
+              };
+          }
           // Preserve source anchoring: computed left/top can be resolved even when authored auto.
           const typed = entry.node.computedStyleMap?.();
           for (const side of ["left", "right"])
@@ -1298,12 +1439,47 @@
           props.explicitWidth = Boolean(
             typed && typed.get("width")?.toString() !== "auto",
           );
-          for (const side of ["top", "right", "bottom", "left"])
-            props[side + "Auto"] = typed?.get(side)?.toString() === "auto";
-          if (entry.widget === "image")
+          props.specifiedWidth = typed?.get("width")?.toString();
+          props.specifiedHeight = typed?.get("height")?.toString();
+          props.sourceOffsets = {};
+          for (const side of ["top", "right", "bottom", "left"]) {
+            props.sourceOffsets[side] =
+              typed?.get(side)?.toString() || props[side];
+            props[side + "Auto"] = props.sourceOffsets[side] === "auto";
+          }
+          props.fillHeight =
+            ["absolute", "fixed"].includes(props.position) &&
+            !props.explicitHeight &&
+            !props.topAuto &&
+            !props.bottomAuto;
+          if (entry.widget === "image") {
+            const imageStyle = w.getComputedStyle(entry.styleNode);
+            props.image = Object.fromEntries(
+              imagePaint.map((p) => [p, imageStyle.getPropertyValue(p)]),
+            );
+            props.image.height = imageStyle.height;
+            for (const side of ["top", "right", "bottom", "left"])
+              for (const part of ["width", "style", "color"])
+                props.image["border-" + side + "-" + part] =
+                  imageStyle.getPropertyValue("border-" + side + "-" + part);
+            props.image.explicitHeight =
+              entry.styleNode.computedStyleMap?.().get("height")?.toString() !==
+              "auto";
             props.contentWidth = String(
               entry.styleNode.getBoundingClientRect().width,
             );
+            props.imageBoxWidth =
+              entry.node === entry.styleNode
+                ? props.actualWidth
+                : String(
+                    Math.max(
+                      1,
+                      entry.node.clientWidth -
+                        (parseFloat(s.paddingLeft) || 0) -
+                        (parseFloat(s.paddingRight) || 0),
+                    ),
+                  );
+          }
           if (!snapshots.has(entry.element.id))
             snapshots.set(entry.element.id, {});
           snapshots.get(entry.element.id)[width] = props;
@@ -1384,23 +1560,34 @@
               target["hide_" + device] = "hidden-" + device;
             if (widget && !s.parentDisplay?.includes("grid")) {
               target["_element_width" + suffix] = "initial";
-              target["_element_custom_width" + suffix] = {
-                unit: "%",
-                size: Math.min(
-                  100,
-                  Math.max(
-                    0,
-                    (100 * parseFloat(s.actualWidth)) /
-                      parseFloat(s.parentWidth || 1440),
-                  ),
-                ),
-              };
+              target["_element_custom_width" + suffix] =
+                s.explicitWidth && s.specifiedWidth
+                  ? sourceSize(s.specifiedWidth)
+                  : {
+                      unit: "%",
+                      size: Math.max(
+                        0,
+                        (100 * parseFloat(s.actualWidth)) /
+                          parseFloat(s.parentWidth || 1440),
+                      ),
+                    };
             }
             if (["absolute", "fixed"].includes(s.position)) {
               target[widget ? "_position" : "position"] = s.position;
               // A positioned node's containing block may be the viewport, not its zero-width DOM parent.
+              const fillWidth =
+                s.specifiedWidth === "auto" && !s.leftAuto && !s.rightAuto;
+              const sourceWidth = fillWidth
+                ? "calc(100% - " +
+                  s.sourceOffsets.left +
+                  " - " +
+                  s.sourceOffsets.right +
+                  ")"
+                : s.specifiedWidth && s.specifiedWidth !== "auto"
+                  ? s.specifiedWidth
+                  : s.actualWidth + "px";
               target[(widget ? "_element_custom_width" : "width") + suffix] =
-                px(s.actualWidth);
+                sourceSize(sourceWidth);
               if (widget) target["_element_width" + suffix] = "initial";
               for (const [axis, first, last] of [
                 ["x", "left", "right"],
@@ -1409,9 +1596,11 @@
                 const end = s[first + "Auto"] && !s[last + "Auto"];
                 target["_offset_orientation_" + (axis === "x" ? "h" : "v")] =
                   end ? "end" : "start";
-                target["_offset_" + axis + (end ? "_end" : "") + suffix] = px(
-                  s[end ? last : first],
-                );
+                target["_offset_" + axis + (end ? "_end" : "") + suffix] =
+                  sourceSize(
+                    s.sourceOffsets[end ? last : first] ||
+                      s[end ? last : first],
+                  );
               }
             }
             target[(widget ? "_" : "") + "padding" + suffix] = dim(
@@ -1419,19 +1608,88 @@
               "padding",
             );
             target[(widget ? "_" : "") + "margin" + suffix] = dim(s, "margin");
-            if (widget === "image") target["align" + suffix] = s["text-align"];
-            if (widget === "image" && parseFloat(s.actualWidth) > 0)
-              target["width" + suffix] = {
-                unit: "%",
-                size: Math.min(
-                  100,
-                  Math.max(
-                    0,
+            if (widget === "image") {
+              const image = s.image;
+              target["align" + suffix] = s["text-align"];
+              if (parseFloat(s.imageBoxWidth) > 0)
+                target["width" + suffix] = {
+                  unit: "%",
+                  size:
                     (100 * parseFloat(s.contentWidth)) /
-                      parseFloat(s.actualWidth),
-                  ),
+                    parseFloat(s.imageBoxWidth),
+                };
+              target["height" + suffix] = image.explicitHeight
+                ? sourceSize(image.height)
+                : { unit: "custom", size: "auto" };
+              target["object-fit" + suffix] = image["object-fit"];
+              target["object-position" + suffix] = image["object-position"];
+              target["space" + suffix] = sourceSize(image["max-width"]);
+              target["image_border_radius" + suffix] = radius(
+                image["border-radius"],
+              );
+              const sides = ["top", "right", "bottom", "left"];
+              const borderStyles = sides.map(
+                (side) => image["border-" + side + "-style"],
+              );
+              const borderColors = sides.map(
+                (side) => image["border-" + side + "-color"],
+              );
+              if (
+                width === 1440 &&
+                borderStyles.every((value) => value === borderStyles[0])
+              )
+                target.image_border_border = borderStyles[0];
+              target["image_border_width" + suffix] = {
+                unit: "px",
+                ...Object.fromEntries(
+                  sides.map((side) => [
+                    side,
+                    String(parseFloat(image["border-" + side + "-width"]) || 0),
+                  ]),
                 ),
+                isLinked: false,
               };
+              if (
+                width === 1440 &&
+                borderColors.every((value) => value === borderColors[0])
+              )
+                target.image_border_color = borderColors[0];
+              target["lse_image_padding" + suffix] = dim(image, "padding");
+              target.lse_image_background_background = "classic";
+              target["lse_image_background_color" + suffix] =
+                image["background-color"];
+              const background = image["background-image"].match(
+                /^url\(["']?(.*?)["']?\)$/,
+              );
+              if (background) {
+                target["lse_image_background_image" + suffix] = {
+                  url: restoreRefs(background[1]),
+                  id: 0,
+                };
+                target["lse_image_background_size" + suffix] =
+                  image["background-size"];
+                target["lse_image_background_position" + suffix] =
+                  image["background-position"];
+                target["lse_image_background_repeat" + suffix] =
+                  image["background-repeat"];
+              }
+              if (width === 1440)
+                target.opacity = { unit: "px", size: Number(image.opacity) };
+              else if (image.opacity !== all[1440].image.opacity)
+                target["lse_image_opacity" + suffix] = {
+                  unit: "px",
+                  size: Number(image.opacity),
+                };
+              if (entry.node === entry.styleNode)
+                target["_padding" + suffix] = {
+                  unit: "px",
+                  top: "0",
+                  right: "0",
+                  bottom: "0",
+                  left: "0",
+                  isLinked: true,
+                };
+            }
             if (
               widget === "heading" ||
               widget === "text-editor" ||
@@ -1499,39 +1757,82 @@
               }
             }
             if (!widget) {
+              target["lse_display" + suffix] = s.display;
+              target["lse_text_align" + suffix] = s["text-align"];
+              if (s.explicitHeight || s.fillHeight)
+                target["lse_height" + suffix] = sourceSize(
+                  s.fillHeight
+                    ? "calc(100% - " +
+                        s.sourceOffsets.top +
+                        " - " +
+                        s.sourceOffsets.bottom +
+                        ")"
+                    : s.specifiedHeight || s.height,
+                );
+              else if (all[1440].explicitHeight)
+                target["lse_height" + suffix] = {
+                  unit: "custom",
+                  size: "auto",
+                };
               target["border_radius" + suffix] = radius(s["border-radius"]);
-              if (width === 1440) {
-                target.background_background = "classic";
+              if (width === 1440) target.background_background = "classic";
+              if (width === 1440)
                 target.background_color = s["background-color"];
+              else if (s["background-color"] !== all[1440]["background-color"])
+                target["lse_background_color" + suffix] = s["background-color"];
+              {
                 const image = s["background-image"].match(
                   /^url\(["']?(.*?)["']?\)$/,
                 );
                 if (image) {
-                  target.background_image = {
+                  target["background_image" + suffix] = {
                     url: restoreRefs(image[1]),
                     id: 0,
                   };
-                  target.background_size = s["background-size"];
-                  target.background_position = s["background-position"];
-                  target.background_repeat = s["background-repeat"];
+                  target["background_size" + suffix] = s["background-size"];
+                  target["background_position" + suffix] =
+                    s["background-position"];
+                  target["background_repeat" + suffix] = s["background-repeat"];
                 }
+              }
+              if (s.overlay) {
+                target.background_overlay_background = "classic";
+                if (width === 1440) {
+                  target.background_overlay_color = s.overlay.color;
+                  const image = s.overlay.image.match(
+                    /^url\(["']?(.*?)["']?\)$/,
+                  );
+                  if (image)
+                    target.background_overlay_image = {
+                      id: 0,
+                      url: restoreRefs(image[1]),
+                    };
+                } else if (s.overlay.color !== all[1440].overlay?.color)
+                  target["lse_overlay_color" + suffix] = s.overlay.color;
+                target["background_overlay_opacity" + suffix] = {
+                  size: s.overlay.opacity,
+                  unit: "px",
+                };
               }
               if (
                 !s.parentDisplay?.includes("grid") &&
                 !["absolute", "fixed"].includes(s.position) &&
                 parseFloat(s.parentWidth) > 0
               ) {
-                target["width" + suffix] = {
-                  unit: "%",
-                  size: Math.min(
-                    100,
-                    Math.max(
-                      0,
-                      (100 * parseFloat(s.actualWidth)) /
-                        parseFloat(s.parentWidth),
-                    ),
-                  ),
-                };
+                target["width" + suffix] =
+                  s.explicitWidth && s.specifiedWidth
+                    ? sourceSize(s.specifiedWidth)
+                    : {
+                        unit: "%",
+                        size: Math.min(
+                          100,
+                          Math.max(
+                            0,
+                            (100 * parseFloat(s.actualWidth)) /
+                              parseFloat(s.parentWidth),
+                          ),
+                        ),
+                      };
               }
               target["flex_direction" + suffix] = s.display.includes("flex")
                 ? s["flex-direction"]
@@ -1604,7 +1905,12 @@
                   size: parseFloat(minHeight),
                   sizes: [],
                 };
-              } else if (!element.elements.length && parseFloat(s.height) > 0)
+              } else if (
+                !element.elements.length &&
+                !s.fillHeight &&
+                !s.explicitHeight &&
+                parseFloat(s.height) > 0
+              )
                 target["min_height" + suffix] = px(s.height);
               if (width === 1440) {
                 const sourceBackground = backgroundSettings(entry.node);
@@ -1633,7 +1939,8 @@
           for (const p of outerProps) {
             if (
               widget === "image" &&
-              ["aspect-ratio", "object-fit"].includes(p)
+              (["aspect-ratio", "object-fit"].includes(p) ||
+                (entry.node === entry.styleNode && imagePaint.includes(p)))
             )
               continue;
             const v = s[p];
@@ -1691,11 +1998,12 @@
               if (v && safeValue(v)) inner.push(p + ":" + v);
             }
             if (widget === "image") {
-              inner.push(
-                "width:100%;height:auto;object-fit:" + s["object-fit"],
-              );
-              if (s["aspect-ratio"] && s["aspect-ratio"] !== "auto")
-                inner.push("aspect-ratio:" + s["aspect-ratio"]);
+              inner.push("width:100%;height:auto");
+              for (const property of imagePaint) {
+                const value = s.image[property];
+                if (value && safeValue(value))
+                  inner.push(property + ":" + value);
+              }
             }
           }
           const properties = (list) =>
@@ -1728,7 +2036,7 @@
             (changedInner.length
               ? selector +
                 (widget === "image"
-                  ? " :where(img){"
+                  ? " img{"
                   : " :where(.elementor-heading-title,.elementor-button,.elementor-widget-container){") +
                 changedInner.join(";") +
                 "}"
@@ -1817,7 +2125,7 @@
               );
               if (
                 options.preserveCSS &&
-                /:(?:hover|focus(?:-within|-visible)?|active|visited|checked|disabled)\b|::/.test(
+                /:(?:hover|focus(?:-within|-visible)?|active|visited|checked|disabled)\b|::|\.lse-source-elementor-sticky--(?:active|effects)\b/.test(
                   selector,
                 )
               ) {
@@ -1834,16 +2142,15 @@
                 stateSelectors.push(
                   "__LSE_SCOPE__ " +
                     native +
-                    ":where([data-lse-native]) :is(.elementor-heading-title,.elementor-button,.elementor-widget-container)" +
+                    ":where([data-lse-native].elementor-widget) :is(.elementor-heading-title,.elementor-button,.elementor-widget-container,img)" +
                     pseudo,
                 );
-                if (pseudo)
-                  stateSelectors.push(
-                    "__LSE_SCOPE__ " +
-                      native +
-                      ":where([data-lse-native])" +
-                      pseudo,
-                  );
+                stateSelectors.push(
+                  "__LSE_SCOPE__ " +
+                    native +
+                    ":is(.elementor-element[data-lse-native]):where(:not(.elementor-widget))" +
+                    pseudo,
+                );
               }
             }
             result +=

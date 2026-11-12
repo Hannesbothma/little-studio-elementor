@@ -361,6 +361,17 @@ final class LSE_Importer
             'source' => self::clean_url($capture['source'] ?? ''),
             'complete' => ($capture['complete'] ?? true) !== false && !$failed,
             'failed_resources' => $failed,
+            'warnings' => array_map(
+                static function ($message) {
+                    if (!is_string($message)) {
+                        throw new RuntimeException('Invalid capture warning.');
+                    }
+                    return sanitize_text_field($message);
+                },
+                is_array($capture['warnings'] ?? null)
+                    ? $capture['warnings']
+                    : [],
+            ),
         ];
     }
     public static function media_batch_size()
@@ -1181,11 +1192,14 @@ final class LSE_Importer
                     $settings['link']['url'] ?? '',
                 );
             }
-            foreach (
-                ['image', 'background_image', 'background_overlay_image']
-                as $field
-            ) {
-                if (isset($settings[$field]['url'])) {
+            foreach (array_keys($settings) as $field) {
+                if (
+                    preg_match(
+                        '/^(?:image|background_image|background_overlay_image|lse_image_background_image)(?:_(?:tablet|mobile))?$/D',
+                        $field,
+                    ) &&
+                    isset($settings[$field]['url'])
+                ) {
                     $settings[$field]['url'] = self::clean_url(
                         $settings[$field]['url'],
                     );

@@ -505,9 +505,16 @@ final class LSE_Plugin
             true,
         );
         wp_enqueue_script(
+            'lse-reports',
+            plugins_url('assets/reports.js', LSE_FILE),
+            [],
+            LSE_VERSION,
+            true,
+        );
+        wp_enqueue_script(
             'lse-admin',
             plugins_url('assets/admin.js', LSE_FILE),
-            ['lse-converter'],
+            ['lse-converter', 'lse-reports'],
             LSE_VERSION,
             true,
         );
@@ -776,6 +783,13 @@ final class LSE_Plugin
             return;
         }
         $js = get_post_meta($id, '_lse_js', true);
+        wp_enqueue_script(
+            'lse-scrolling',
+            plugins_url('assets/scrolling.js', LSE_FILE),
+            [],
+            LSE_VERSION,
+            true,
+        );
         wp_enqueue_script(
             'lse-interactions',
             plugins_url('assets/interactions.js', LSE_FILE),
