@@ -49,6 +49,7 @@ jobs:
         if: matrix.php == '8.3'
         run: node tests/seo-regression.mjs
   release:
+    if: ${{ false }} # Hold publication while the real multi-page renderer failure is investigated.
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 45
