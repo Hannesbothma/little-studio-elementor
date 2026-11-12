@@ -203,3 +203,46 @@ After updating an existing installation, select the affected website and use
 page IDs, with the normal review/backup and edited/published-page protections.
 Updating the plugin or retrying an already completed import alone does not
 reconvert it. If a stylesheet was absent from the captured JSON, capture again.
+
+## Import correctness and recovery (0.8.0)
+
+Source CSS variables now have their own namespace, and native controls retain
+separate desktop/mobile values. Conversion preserves source selector wrappers,
+automatic margins, supported positioning, image geometry and grid alignment.
+Known Elementor background/slideshow settings are captured and reconstructed.
+Captured navigation uses an independent toggle without loading the source builder
+runtime into the destination editor.
+
+Each reviewed refresh has a separate operation identity. Retrying that operation
+is idempotent; starting another refresh with the same file actually reconverts it.
+Converter output is versioned, stale browser tabs must reload, and an import
+started by an earlier converter can be rebuilt on its existing page IDs after
+review. Native-save recovery uses an immutable snapshot and small durable write
+receipts. Job mutations acquire an owned lock before loading current state.
+Shared components retain supporting CSS and responsive inherited variables, with
+stable identities independent of preview URLs and random native element IDs.
+
+Media batches adapt to measured processing time. Capture checkpoints append
+individual records rather than rewriting the growing response; queues avoid
+shifting every remaining item. Conversion previews use temporary blob URLs, and
+raw capture buffers are released on completion/cancellation. Normal WordPress
+image metadata and thumbnail generation remain enabled and can dominate fresh
+large-photo imports; no instant or universal speed guarantee is made.
+
+Missing capture resources remain visible in the JSON and import report, including
+failed stylesheets. Temporary HTTP failures get bounded retries. CSS imports keep
+layer/supports/media conditions and valid deep imports are not dropped simply for
+their depth. Unsupported source runtimes and application backends still need
+review; saving a draft does not certify exact visual fidelity.
+
+Update normally in WordPress, then rebuild affected existing pages with **Update
+from file**. Capture again first if the old JSON omitted background files. Existing
+edits, publication status and shared-template changes retain review/backup
+protections. Earlier SEO-provider metadata can require replacement review when
+rebuilding with the expanded change checks.
+
+Development dependencies are pinned in `package-lock.json`; use `npm ci`,
+`npm run check:format` and `npm test`. The test matrix pins WordPress/PHP/Elementor
+versions instead of treating a moving latest download as a compatibility result.
+`node tests/seo-regression.mjs` also checks frontend metadata using pinned Yoast,
+Rank Math and AIOSEO plugins in an isolated disposable WordPress installation.

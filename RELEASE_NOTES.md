@@ -1,14 +1,14 @@
-Restore missing source CSS in imported content.
+Repair website-link layouts and make imports safer to refresh and resume.
 
-The converter previously sampled basic native styles but only retained full source rules for explicitly detected interaction regions. Copied text/list markup, SVG icons and other HTML widgets lost descendant rules, CSS variables, pseudo-elements, hover/focus and responsive styling. Inline source stylesheets were also omitted from that retained CSS. These rules now stay scoped to the copied source content while native Elementor controls remain editable.
+* Isolate copied source CSS variables from Elementor's layout controls; preserve responsive colours, positioning, image sizing, automatic margins, grid alignment and supported source states.
+* Capture Elementor background/slideshow files and rebuild supported native backgrounds. Preserve source selector wrappers and add an independent toggle for captured navigation.
+* Distinguish explicit refreshes from retries, version converted output, reject stale browser tabs and allow reviewed rebuilding of imports started with an older converter.
+* Recover interrupted native saves without overwriting a newer edit. Read job state after acquiring owned locks, and preserve shared sections and their supporting responsive styles during refresh.
+* Accept valid signature-checked font MIME aliases, parse quoted/escaped CSS URLs correctly, preserve stylesheet import conditions and retry temporary resource failures. Report missing capture resources explicitly.
+* Use measured upload times for batching, append resource checkpoints, avoid repeated queue shifts and hashes, release raw capture buffers and use lightweight blob URLs during conversion.
+* Preserve SEO indexing intent through supported providers, paginate owned imports correctly and obtain updater compatibility requirements from the release manifest.
+* Add regressions for the audited failures, lock test dependencies and check both the minimum and current supported platform combinations.
 
-* Preserve styles from every inline/packaged source stylesheet in document order.
-* Retain source variables on converted ancestors and source rules inside copied content.
-* Preserve SVG IDs, sanitized inline styles and the marker used to apply scoped CSS.
-* Target HTML content in both Elementor widget-wrapper layouts.
-* Keep destination-theme stylesheets off imported standalone Canvas pages so their forced rules do not override source CSS; preserve them for WordPress header/footer layouts.
-* Keep the faster host-sized batches, resumable uploads, validation and edit protections.
+Update through the plugin's existing WordPress update button. Updating the plugin does not rebuild saved page content. For missing background files, capture the source again and download its JSON; then select the existing import and use **Update from file**. Review replacement of edited or published pages. Their IDs, addresses and publication status are retained.
 
-For an existing import, update the plugin, select that website and use **Update from file** with its same JSON to rebuild the saved CSS. Review edited/published page replacement before applying. Updating the plugin alone does not reconvert completed pages. Files whose capture omitted a stylesheet need a fresh capture.
-
-Regression coverage checks actual rendered desktop/mobile lists, inline styles, SVG sizing/colour, inherited variables, pseudo-elements, link hover and the Elementor editor, followed by a native heading edit. Universal exact conversion of arbitrary websites remains unproven.
+Supported content remains editable through native Elementor controls. Complex HTML regions, source-only runtimes, Lottie animations and form/application backends can require rebuilding. This release does not claim universal pixel-perfect or instant website migration.

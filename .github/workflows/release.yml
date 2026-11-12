@@ -16,8 +16,42 @@ concurrency:
   group: plugin-release
   cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 jobs:
-  release:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: '8.0'
+            wordpress: '6.8'
+            elementor: '3.28.4'
+          - php: '8.3'
+            wordpress: '7.1.4'
+            elementor: '4.4.0'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npx playwright install chromium
+      - name: Verify minimum and current WordPress / Elementor packages
+        env:
+          LSE_TEST_PHP: ${{ matrix.php }}
+          LSE_TEST_WORDPRESS: ${{ matrix.wordpress }}
+          LSE_TEST_ELEMENTOR: ${{ matrix.elementor }}
+        run: node tests/run.mjs
+      - name: Verify actual SEO provider output
+        if: matrix.php == '8.3'
+        run: node tests/seo-regression.mjs
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -38,12 +72,8 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "$TAG" ]; then exit 1; fi
           echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
           echo "PLUGIN_VERSION=$VERSION" >> "$GITHUB_ENV"
-      - name: Install test tools
-        run: |
-          npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0
-          npx playwright install chromium
-      - name: Check packaged imports, management, and native updates
-        run: node tests/run.mjs
+      - name: Build the verified plugin package
+        run: node scripts/package.mjs . dist
       - name: Attach and publish release
         shell: bash
         run: |

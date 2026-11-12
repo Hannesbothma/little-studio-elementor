@@ -68,8 +68,10 @@ add_action( 'wp_ajax_lse_test', static function() {
                 if ( ! is_file( $zip ) ) { throw new RuntimeException( 'The simulated updater package is missing.' ); }
                 $api = 'https://api.github.com/repos/Hannesbothma/little-studio-elementor';
                 $asset = [ 'id' => 999999, 'name' => basename( $zip ), 'state' => 'uploaded', 'url' => $api . '/releases/assets/999999', 'browser_download_url' => $manifest['package'], 'size' => filesize( $zip ), 'digest' => 'sha256:' . hash_file( 'sha256', $zip ) ];
-                add_filter( 'pre_http_request', static function( $reply, $args, $url ) use ( $manifest, $zip, $api, $asset ) {
-                    if ( $url === $api . '/releases/latest' ) { return [ 'headers' => [], 'body' => wp_json_encode( [ 'tag_name' => 'v' . $manifest['version'], 'draft' => false, 'prerelease' => false, 'assets' => [ $asset ], 'body' => 'Disposable native upgrade fixture.' ] ), 'response' => [ 'code' => 200, 'message' => 'OK' ], 'cookies' => [] ]; }
+                $json_asset = [ 'id' => 999998, 'name' => 'update.json', 'state' => 'uploaded', 'url' => $api . '/releases/assets/999998', 'browser_download_url' => dirname( $manifest['package'] ) . '/update.json' ];
+                add_filter( 'pre_http_request', static function( $reply, $args, $url ) use ( $manifest, $zip, $api, $asset, $json_asset ) {
+                    if ( $url === $api . '/releases/latest' ) { return [ 'headers' => [], 'body' => wp_json_encode( [ 'tag_name' => 'v' . $manifest['version'], 'draft' => false, 'prerelease' => false, 'assets' => [ $asset, $json_asset ], 'body' => 'Disposable native upgrade fixture.' ] ), 'response' => [ 'code' => 200, 'message' => 'OK' ], 'cookies' => [] ]; }
+                    if ( $url === $json_asset['url'] ) { return [ 'headers' => [], 'body' => wp_json_encode( $manifest ), 'response' => [ 'code' => 200, 'message' => 'OK' ], 'cookies' => [] ]; }
                     if ( $url === $asset['url'] ) { $bytes = file_get_contents( $zip ); if ( ! empty( $args['stream'] ) ) { file_put_contents( $args['filename'], $bytes ); $bytes = ''; } return [ 'headers' => [], 'body' => $bytes, 'response' => [ 'code' => 200, 'message' => 'OK' ], 'cookies' => [] ]; }
                     if ( str_starts_with( $url, 'https://github.com/Hannesbothma/little-studio-elementor/releases/' ) ) { return new WP_Error( 'fixture_504', 'Standard release route deliberately unavailable.' ); }
                     return $reply;

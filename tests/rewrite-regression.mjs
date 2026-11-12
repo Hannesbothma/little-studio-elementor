@@ -3,7 +3,7 @@ const php=new PHP(await loadNodeRuntime('8.3',{emscriptenOptions:{processId:1}})
 try{
  for(const file of await readdir('includes'))if(file.endsWith('.php'))php.writeFile('/'+file,await readFile('includes/'+file));
  const r=await php.run({code:`<?php
-define('ABSPATH','/');foreach(glob('/*.php')as$file)token_get_all(file_get_contents($file),TOKEN_PARSE);require '/management.php';require '/importer.php';
+define('ABSPATH','/');foreach(glob('/*.php')as$file)token_get_all(file_get_contents($file),TOKEN_PARSE);require '/page-save.php';require '/management.php';require '/importer.php';
 $m=new ReflectionMethod('LSE_Importer','rewrite');$m->setAccessible(true);$warnings=[];set_error_handler(function($n,$text)use(&$warnings){$warnings[]=$text;return true;});
 $check=function($input,$map,$expected)use($m){$actual=$m->invoke(null,$input,$map);if($actual!==$expected)throw new RuntimeException('Resource replacement changed content or returned a non-string');};
 $map=[];for($i=0;$i<148;$i++){$key='https://little-studio-assets.invalid/capture/'.hash('sha256','resource-'.$i).'.jpg';$map[$key]='https://destination.example/wp-content/uploads/resource-'.$i.'.jpg';}

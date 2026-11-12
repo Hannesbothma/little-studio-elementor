@@ -1,10 +1,28 @@
 name: Check plugin changes
-on: [pull_request]
+on:
+  pull_request:
+  push:
+    branches: [main]
 permissions:
   contents: read
 jobs:
   integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: '8.0'
+            wordpress: '6.8'
+            elementor: '3.28.4'
+          - php: '8.3'
+            wordpress: '7.1.4'
+            elementor: '4.4.0'
+    env:
+      LSE_TEST_PHP: ${{ matrix.php }}
+      LSE_TEST_WORDPRESS: ${{ matrix.wordpress }}
+      LSE_TEST_ELEMENTOR: ${{ matrix.elementor }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -12,6 +30,9 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
-      - run: npm install --no-save --no-package-lock @wp-playground/cli@3.1.63 playwright@1.65.0
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npx playwright install chromium
       - run: node tests/run.mjs
+      - name: Verify actual SEO provider output
+        if: matrix.php == '8.3'
+        run: node tests/seo-regression.mjs

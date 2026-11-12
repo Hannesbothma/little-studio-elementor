@@ -1,9 +1,9 @@
 === Little Studio to Elementor ===
 Contributors: littlestudio
 Requires at least: 6.8
-Tested up to: 7.1
+Tested up to: 7.1.4
 Requires PHP: 8.0
-Stable tag: 0.7.3
+Stable tag: 0.8.0
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
