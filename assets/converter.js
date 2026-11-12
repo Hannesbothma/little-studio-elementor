@@ -394,7 +394,10 @@
       warnings.push(
         "A source Lottie animation needs a destination animation widget. Its drawing runtime is not included in native conversion.",
       );
-    if (count("iframe,canvas,object,embed"))
+    if (
+      count("canvas,object,embed") ||
+      [...d.querySelectorAll("iframe")].some((node) => !mapSettings(node))
+    )
       warnings.push(
         "Embedded applications or canvas output require manual rebuilding.",
       );
@@ -683,6 +686,34 @@
       return {};
     }
   }
+  function mapSettings(node) {
+    try {
+      const url = new URL(node.getAttribute("src"));
+      if (
+        url.protocol !== "https:" ||
+        url.port ||
+        url.username ||
+        url.password ||
+        !["maps.google.com", "www.google.com", "google.com"].includes(
+          url.hostname,
+        ) ||
+        url.pathname !== "/maps" ||
+        url.searchParams.get("output") !== "embed"
+      )
+        return null;
+      const address = url.searchParams.get("q");
+      if (!address?.trim()) return null;
+      const zoom = Number(url.searchParams.get("z") || 10);
+      return {
+        address,
+        zoom: Number.isFinite(zoom)
+          ? Math.max(1, Math.min(20, Math.round(zoom)))
+          : 10,
+      };
+    } catch {
+      return null;
+    }
+  }
   function stickySettings(node) {
     const source = backgroundSettings(node);
     let existing;
@@ -755,6 +786,8 @@
         toggle.setAttribute("role", "button");
         toggle.setAttribute("tabindex", "0");
         panel.setAttribute("data-lse-menu-panel", "");
+        if (backgroundSettings(menu).full_width === "stretch")
+          panel.setAttribute("data-lse-menu-stretch", "");
         panel.hidden = true;
       }
     }
@@ -964,9 +997,21 @@
     const inlineScripts = [...doc.querySelectorAll("script:not([src])")]
       .map((x) => x.textContent)
       .join("\n");
-    for (const n of doc.querySelectorAll(
-      "script,iframe,object,embed,link,meta,base",
-    ))
+    for (const node of doc.querySelectorAll("iframe")) {
+      const map = mapSettings(node);
+      if (map) {
+        node.setAttribute("data-lse-map", JSON.stringify(map));
+        // Measure the original iframe's CSS without running the remote document.
+        node.removeAttribute("src");
+        node.removeAttribute("srcdoc");
+      } else {
+        warnings.push(
+          "An embedded application needs rebuilding; its remote frame was not imported.",
+        );
+        node.remove();
+      }
+    }
+    for (const n of doc.querySelectorAll("script,object,embed,link,meta,base"))
       n.remove();
     for (const n of doc.querySelectorAll("*")) {
       for (const a of [...n.attributes]) {
@@ -1202,6 +1247,12 @@
         ) {
           widget = "text-editor";
           settings.editor = sourceHTML(node);
+        } else if (tag === "iframe" && node.hasAttribute("data-lse-map")) {
+          const map = JSON.parse(node.getAttribute("data-lse-map"));
+          widget = "google_maps";
+          settings.address = map.address;
+          settings.zoom = { size: map.zoom, unit: "px" };
+          delete settings.lse_attributes["data-lse-map"];
         } else if (tag === "img") {
           widget = "image";
           settings.image = {
@@ -1411,6 +1462,29 @@
             flowChildren.every((node) =>
               /^inline/.test(w.getComputedStyle(node).display),
             );
+          props.inlineGap = 0;
+          if (props.inlineFlow) {
+            const gaps = [];
+            for (let i = 1; i < flowChildren.length; i++) {
+              const a = flowChildren[i - 1].getBoundingClientRect(),
+                b = flowChildren[i].getBoundingClientRect();
+              if (Math.abs(a.top - b.top) < 1)
+                gaps.push(
+                  Math.max(
+                    0,
+                    b.left -
+                      a.right -
+                      (parseFloat(
+                        w.getComputedStyle(flowChildren[i - 1]).marginRight,
+                      ) || 0) -
+                      (parseFloat(
+                        w.getComputedStyle(flowChildren[i]).marginLeft,
+                      ) || 0),
+                  ),
+                );
+            }
+            if (gaps.length) props.inlineGap = Math.min(...gaps);
+          }
           props.sourceMinHeight = s.getPropertyValue("--min-height").trim();
           if (!entry.widget && entry.node.matches(".e-con")) {
             const overlay = w.getComputedStyle(entry.node, "::before");
@@ -1512,6 +1586,23 @@
         if (entry.interactive) {
           element.settings._element_width = "initial";
           element.settings._element_custom_width = { unit: "%", size: 100 };
+          for (const [width, suffix] of [
+            [1440, ""],
+            [1024, "_tablet"],
+            [390, "_mobile"],
+          ]) {
+            const s = all[width];
+            if (
+              (s.parentDisplay?.includes("grid") ||
+                s.parentDisplay?.includes("flex")) &&
+              s.specifiedWidth === "auto" &&
+              !["absolute", "fixed"].includes(s.position) &&
+              Number(s.actualWidth) < Number(s.parentWidth) - 1
+            )
+              element.settings["_element_custom_width" + suffix] =
+                sourceSize("auto");
+            element.settings["_flex_align_self" + suffix] = s["align-self"];
+          }
           element.settings._padding = {
             unit: "px",
             top: "0",
@@ -1548,6 +1639,17 @@
                   : null;
           if (suffix !== null) {
             const target = element.settings;
+            if (widget && widget !== "html")
+              target["lse_widget_display" + suffix] =
+                s.display === "inline" ? "inline-block" : s.display;
+            target["_flex_align_self" + suffix] = s["align-self"];
+            if (!widget)
+              target["lse_justify_self" + suffix] = s["justify-self"];
+            if (s.parentDisplay?.includes("grid")) {
+              target[(widget ? "_element_custom_width" : "width") + suffix] =
+                sourceSize(s.specifiedWidth || "auto");
+              if (widget) target["_element_width" + suffix] = "initial";
+            }
             const device =
               width === 1440
                 ? "desktop"
@@ -1690,6 +1792,8 @@
                   isLinked: true,
                 };
             }
+            if (widget === "google_maps")
+              target["height" + suffix] = sourceSize(s.height);
             if (
               widget === "heading" ||
               widget === "text-editor" ||
@@ -1757,7 +1861,12 @@
               }
             }
             if (!widget) {
-              target["lse_display" + suffix] = s.display;
+              target["lse_display" + suffix] =
+                !s.display.includes("flex") &&
+                !s.display.includes("grid") &&
+                s.inlineFlow
+                  ? "flex"
+                  : s.display;
               target["lse_text_align" + suffix] = s["text-align"];
               if (s.explicitHeight || s.fillHeight)
                 target["lse_height" + suffix] = sourceSize(
@@ -1854,14 +1963,18 @@
                 !s.display.includes("grid") &&
                 !s.inlineFlow
                   ? textAlign
-                  : s["align-items"];
+                  : !s.display.includes("flex") &&
+                      !s.display.includes("grid") &&
+                      s.inlineFlow
+                    ? "baseline"
+                    : s["align-items"];
               target["flex_wrap" + suffix] =
                 !s.display.includes("flex") && s.inlineFlow
                   ? "wrap"
                   : s["flex-wrap"];
               target["flex_gap" + suffix] = {
                 unit: "px",
-                column: String(parseFloat(s["column-gap"]) || 0),
+                column: String(parseFloat(s["column-gap"]) || s.inlineGap || 0),
                 row: String(parseFloat(s["row-gap"]) || 0),
                 isLinked: false,
               };
@@ -1906,7 +2019,10 @@
                   sizes: [],
                 };
               } else if (
-                !element.elements.length &&
+                (!element.elements.length ||
+                  (s.inlineFlow &&
+                    !s.display.includes("flex") &&
+                    !s.display.includes("grid"))) &&
                 !s.fillHeight &&
                 !s.explicitHeight &&
                 parseFloat(s.height) > 0

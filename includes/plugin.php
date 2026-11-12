@@ -703,6 +703,13 @@ final class LSE_Plugin
                 <footer class="lse-dialog-actions"><button type="button" class="button" id="lse-capture-retry" hidden>Retry capture</button><button type="submit" class="button button-primary" id="lse-capture-start">Capture website</button></footer>
             </form>
         </dialog>
+        <dialog id="lse-remove-dialog" class="lse-dialog lse-page-dialog" aria-labelledby="lse-remove-title" aria-describedby="lse-remove-description">
+            <form method="dialog">
+                <header class="lse-dialog-head"><h2 id="lse-remove-title">Remove this import?</h2></header>
+                <div class="lse-dialog-body"><p><strong id="lse-remove-name"></strong><br><span id="lse-remove-count" class="lse-small"></span></p><p id="lse-remove-description">Pages move to Trash. Images and other media stay.</p></div>
+                <footer class="lse-dialog-actions"><button type="submit" class="button" value="cancel" autofocus>Keep import</button><button type="submit" class="button lse-danger" value="remove">Remove import</button></footer>
+            </form>
+        </dialog>
         <dialog id="lse-page-dialog" class="lse-dialog lse-page-dialog" aria-labelledby="lse-page-dialog-title">
             <form id="lse-page-form">
                 <header class="lse-dialog-head"><h2 id="lse-page-dialog-title">Edit page details</h2><button type="button" class="button lse-subtle lse-icon-button" id="lse-page-close" aria-label="Close page details">×</button></header>
@@ -770,9 +777,7 @@ final class LSE_Plugin
         }
         $css = get_post_meta($id, '_lse_css', true);
         if ($css) {
-            wp_register_style('lse-page', false, [], LSE_VERSION);
-            wp_enqueue_style('lse-page');
-            wp_add_inline_style('lse-page', $css);
+            LSE_Styles::enqueue($id, $css);
         }
         if (
             class_exists(\Elementor\Plugin::class) &&

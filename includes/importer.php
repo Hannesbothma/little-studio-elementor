@@ -1139,6 +1139,7 @@ final class LSE_Importer
                             'divider',
                             'html',
                             'video',
+                            'google_maps',
                         ],
                         true,
                     ))

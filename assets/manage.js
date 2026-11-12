@@ -16,6 +16,7 @@
   let metadataContext = null;
   const flowDialog = $("#lse-flow-dialog");
   const pageDialog = $("#lse-page-dialog");
+  const removeDialog = $("#lse-remove-dialog");
   const statusLabels = {
     draft: "Draft",
     publish: "Published",
@@ -395,18 +396,21 @@
       const published = latest.pages.filter(
         (page) => page.post_status === "publish",
       ).length;
-      if (
-        !confirm(
-          "Remove “" +
-            latest.title +
-            "” and all " +
-            latest.pages.length +
-            " pages" +
-            (published ? " (" + published + " published)" : "") +
-            " from this site? Pages go to WordPress Trash. Media files are kept.",
-        )
-      )
-        return;
+      $("#lse-remove-name").textContent = latest.title;
+      $("#lse-remove-count").textContent =
+        latest.pages.length +
+        (latest.pages.length === 1 ? " page" : " pages") +
+        (published ? " · " + published + " published" : "");
+      removeDialog.returnValue = "cancel";
+      const confirmed = new Promise((resolve) =>
+        removeDialog.addEventListener(
+          "close",
+          () => resolve(removeDialog.returnValue === "remove"),
+          { once: true },
+        ),
+      );
+      removeDialog.showModal();
+      if (!(await confirmed)) return;
       const result = await A.request("remove_import", {
         job: latest.id,
         expected_stamps: Object.fromEntries(

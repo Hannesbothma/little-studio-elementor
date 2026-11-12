@@ -34,6 +34,12 @@ A recoverable copy is kept before refreshing each page. **Restore before last up
 
 Older imports use an earlier change fingerprint. The first refresh may conservatively require replacement consent, even if you have not edited them. Subsequent refreshes use the current fingerprint.
 
+## Maps and editor loading
+
+Supported Google Maps address embeds become native Elementor Google Maps widgets with editable address, zoom and responsive height. Other remote frames remain excluded and are reported. Source frames never execute during conversion.
+
+Captured CSS uses a cached stylesheet when its URLs can safely keep the same meaning. Relative URLs, SVG fragment references, remote upload storage and filesystem errors retain inline delivery. Shared headers/footers reuse page styling already covering their native IDs; independent template editing still includes the template’s supporting styles. This reduces duplicated CSS in previews and the editor without discarding styling. Hosting and other WordPress plugins can still affect editor response time.
+
 ## Imported appearance and scrolling
 
 Source Elementor sticky settings are converted into **Imported scrolling** controls on the native element. Choose its edge, devices, responsive offsets, effects distance and optional parent bounds. This behavior uses the plugin’s own runtime and works independently of **Keep website interactions**. Source-specific scripts and unsupported scrolling effects still require review.

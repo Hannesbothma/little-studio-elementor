@@ -64,14 +64,13 @@ class LSE_Shared_Widget extends \Elementor\Widget_Base
             return;
         }
         static $styled = [];
-        if (!isset($styled[$id])) {
+        if (
+            !isset($styled[$id]) &&
+            !LSE_Styles::shared_is_covered(get_queried_object_id(), $id)
+        ) {
             $css = get_post_meta($id, '_lse_css', true);
             if (is_string($css) && $css !== '') {
-                echo '<style data-lse-shared-style="' .
-                    esc_attr($id) .
-                    '">' .
-                    $css .
-                    '</style>';
+                LSE_Styles::shared($id, $css);
             }
             $styled[$id] = true;
         }

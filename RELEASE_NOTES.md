@@ -1,13 +1,11 @@
-Improve imported scrolling and image fidelity, and make capture reports easier to review.
+Restore imported maps and layout alignment, reduce editor styling overhead, and simplify removing an import.
 
-* Close the Plugin updates popover when clicking outside it or pressing Escape.
-* Convert supported source Elementor sticky menus into independent scrolling behavior, including device selection, responsive offsets, effects and the WordPress toolbar. Imported scrolling stays editable in Elementor and works without the captured source runtime.
-* Preserve image paint on the actual image: crop, position, background, padding, borders, radius and responsive opacity. Keep fixed dimensions and positioned overlays consistent between screen sizes.
-* Reveal source lazy backgrounds before measuring them, retain responsive backgrounds and native slideshow overlays, and preserve block layout instead of imposing flex layout on every wrapper.
-* Retain gallery photos, empty hover overlays and source hover effects. Apply image filters once in both Elementor wrapper layouts. Upgrade previously prepared gallery markup when rebuilding an import.
-* Group missing resources, styling reviews and features requiring setup separately from informational capture notes. Deduplicate repeated missing-file warnings without hiding failures.
-* Add headless screenshot comparisons and real Elementor editing checks for image appearance, galleries, backgrounds, popup dismissal and scrolling.
+* Replace the browser removal prompt with one compact confirmation inside the plugin. Keep Trash recovery, media preservation, ownership and concurrent-edit protections.
+* Convert supported Google Maps address embeds into native, editable Elementor maps, including zoom and responsive height. Unknown or unsafe remote frames remain excluded with a clear report.
+* Preserve automatic sizing and alignment in grids, inline content and navigation. Restore full-width mobile dropdown placement and original panel styles when closing.
+* Reuse captured page CSS for linked shared sections instead of injecting another full page-sized stylesheet. Deliver eligible CSS as a versioned, cacheable file; preserve inline delivery when URL semantics or hosting require it. Standalone template editing retains its own styling.
+* Add checks for native map editing, unsafe frames, desktop/mobile map and navigation geometry, shared styles and in-plugin deletion.
 
-Update through the existing WordPress plugin update button. Updating the plugin does not rebuild saved pages. Capture the website again if the earlier capture omitted background files, download its JSON, then select the existing import and use **Update from file**. Review replacement of edited or published pages; page IDs, addresses and publication status are retained.
+Update using the existing WordPress plugin button. Use **Update from file** on the existing import to rebuild its maps and layouts with the same page IDs, addresses and publication status. Review replacement of edited or published pages. Styling-delivery improvements also apply when viewing existing imports.
 
-A source file returning HTTP 404 remains unavailable. Lottie animations, source-only applications and form backends can still require rebuilding. This update improves supported conversion; it does not promise universal pixel-perfect or instant migration.
+The source post-682.css still returns HTTP 404. Lottie animations and application/form backends can require rebuilding. This release does not establish a universal exact replica or instant editor loading. Live destination timing remains unverified where the WordPress connector cannot authenticate.

@@ -12,6 +12,34 @@ final class LSE_Appearance
             'elementor/element/after_section_end',
             static function ($element, $section) {
                 if (
+                    $element->get_type() === 'widget' &&
+                    !$element->get_controls('lse_widget_display')
+                ) {
+                    $element->start_controls_section(
+                        'section_lse_widget_layout',
+                        [
+                            'label' => 'Imported layout',
+                            'tab' => \Elementor\Controls_Manager::TAB_ADVANCED,
+                        ],
+                    );
+                    $element->add_responsive_control('lse_widget_display', [
+                        'label' => 'Display',
+                        'type' => \Elementor\Controls_Manager::SELECT,
+                        'options' => [
+                            '' => 'Default',
+                            'block' => 'Block',
+                            'inline-block' => 'Inline block',
+                            'flex' => 'Flex',
+                            'inline-flex' => 'Inline flex',
+                            'grid' => 'Grid',
+                            'inline-grid' => 'Inline grid',
+                            'none' => 'Hidden',
+                        ],
+                        'selectors' => ['{{WRAPPER}}' => 'display:{{VALUE}};'],
+                    ]);
+                    $element->end_controls_section();
+                }
+                if (
                     in_array(
                         $element->get_type(),
                         ['container', 'section', 'column'],
@@ -71,6 +99,23 @@ final class LSE_Appearance
                         ],
                         'selectors' => [
                             '{{WRAPPER}}' => 'text-align:{{VALUE}};',
+                        ],
+                    ]);
+                    $element->add_responsive_control('lse_justify_self', [
+                        'label' => 'Grid horizontal alignment',
+                        'type' => \Elementor\Controls_Manager::SELECT,
+                        'options' => [
+                            'auto' => 'Auto',
+                            'normal' => 'Normal',
+                            'start' => 'Start',
+                            'end' => 'End',
+                            'center' => 'Center',
+                            'stretch' => 'Stretch',
+                            'self-start' => 'Self start',
+                            'self-end' => 'Self end',
+                        ],
+                        'selectors' => [
+                            '{{WRAPPER}}' => 'justify-self:{{VALUE}};',
                         ],
                     ]);
                     $element->end_controls_section();

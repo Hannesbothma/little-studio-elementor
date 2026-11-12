@@ -121,6 +121,11 @@ try {
     await page.setViewportSize({ width, height: 1000 });
     await page.goto(ready.pages[0].preview_url);
     assert.equal(
+      await page.locator("[data-lse-shared-style]").count(),
+      0,
+      "Shared section loaded a second full copy of page styling",
+    );
+    assert.equal(
       await page
         .locator(".context-label")
         .evaluate((n) => getComputedStyle(n).color),

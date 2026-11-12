@@ -3,6 +3,28 @@
   if (window.LSEInteractions) return;
   const registrations = new Map();
   let scheduled = false;
+  const menuStyles = new WeakMap();
+  const menuProperties = [
+    "display",
+    "max-height",
+    "visibility",
+    "opacity",
+    "transform",
+    "position",
+    "width",
+    "left",
+    "right",
+  ];
+  function stretchMenu(panel) {
+    panel.style.position = "absolute";
+    const parent = panel.offsetParent || panel.parentElement;
+    Object.assign(panel.style, {
+      position: "absolute",
+      width: document.documentElement.clientWidth + "px",
+      left: -parent.getBoundingClientRect().left + "px",
+      right: "auto",
+    });
+  }
 
   // Imported local forms keep validation and input events, never an accidental POST.
   document.addEventListener(
@@ -23,7 +45,16 @@
     toggle.setAttribute("aria-expanded", String(open));
     toggle.classList.toggle("lse-source-elementor-active", open);
     panel.hidden = !open;
-    if (open)
+    if (open) {
+      if (!menuStyles.has(panel))
+        menuStyles.set(
+          panel,
+          menuProperties.map((name) => [
+            name,
+            panel.style.getPropertyValue(name),
+            panel.style.getPropertyPriority(name),
+          ]),
+        );
       Object.assign(panel.style, {
         display: "block",
         maxHeight: "none",
@@ -31,16 +62,25 @@
         opacity: "1",
         transform: "none",
       });
-    else
-      for (const property of [
-        "display",
-        "max-height",
-        "visibility",
-        "opacity",
-        "transform",
-      ])
-        panel.style.removeProperty(property);
+      if (panel.hasAttribute("data-lse-menu-stretch")) stretchMenu(panel);
+    } else {
+      for (const [name, value, priority] of menuStyles.get(panel) || []) {
+        if (value) panel.style.setProperty(name, value, priority);
+        else panel.style.removeProperty(name);
+      }
+      menuStyles.delete(panel);
+    }
   }
+  window.addEventListener(
+    "resize",
+    () => {
+      for (const panel of document.querySelectorAll(
+        "[data-lse-menu-stretch]:not([hidden])",
+      ))
+        stretchMenu(panel);
+    },
+    { passive: true },
+  );
   document.addEventListener("click", (event) => {
     const toggle = event.target.closest?.("[data-lse-menu-toggle]");
     if (toggle) {

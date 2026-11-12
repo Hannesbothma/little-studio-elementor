@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1.4
 Requires PHP: 8.0
-Stable tag: 0.9.0
+Stable tag: 0.10.0
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -170,6 +170,13 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.10.0 =
+* Use a compact in-plugin import removal confirmation with existing protections.
+* Convert supported Google Maps embeds into editable native maps.
+* Keep intrinsic grid sizing, navigation alignment and mobile dropdown placement.
+* Cache supporting CSS when safe and avoid duplicate shared-section page CSS.
+* Keep inline fallback and independent shared-template editing.
 
 = 0.9.0 =
 * Close Plugin updates on outside clicks and Escape.
