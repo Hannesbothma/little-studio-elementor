@@ -107,7 +107,9 @@ try {
     await page.goto(job.pages[0].preview_url, {
       waitUntil: "domcontentloaded",
     });
-    await page.locator("#lse-page-css").waitFor({ state: "attached" });
+    await page
+      .locator("#lse-page-css,#lse-page-inline-css")
+      .waitFor({ state: "attached" });
     await page.waitForTimeout(100);
     const iframe = page.locator(".elementor-widget-google_maps iframe");
     await iframe.waitFor();
@@ -165,6 +167,9 @@ try {
       width,
       mapHeight: actual.height,
       mapWidth: actual.width,
+      styleDelivery: await page
+        .locator("#lse-page-css,#lse-page-inline-css")
+        .evaluate((n) => n.tagName),
       iconWidth: actualIcons.width,
     });
   }
