@@ -171,6 +171,13 @@ PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
 
+= 0.9.0 =
+* Close Plugin updates on outside clicks and Escape.
+* Convert supported sticky menus with editable device, offset and effect settings.
+* Preserve image appearance, lazy backgrounds, responsive paint and gallery overlays.
+* Apply image hover filters once in both Elementor widget wrapper layouts.
+* Separate missing resources and required setup from informational capture notes.
+
 = 0.7.3 =
 * Preserve scoped source CSS for copied text, lists, SVG and HTML content, including variables, pseudo-elements, states and responsive rules.
 * Retain inline source stylesheets and safely preserved SVG styles/IDs; support both Elementor widget wrapper layouts.

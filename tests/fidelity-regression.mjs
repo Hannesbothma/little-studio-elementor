@@ -298,7 +298,8 @@ try {
     result.galleryOverlays = true;
     for (const scroll of [0, 400, 1100, 0]) {
       await page.evaluate((y) => scrollTo(0, y), scroll);
-      await page.waitForTimeout(100);
+      // Older Elementor animates native background colours for 300ms.
+      await page.waitForTimeout(450);
       const value = await page
         .locator(".replica-sticky[data-lse-native]")
         .evaluate((n) => {
@@ -357,8 +358,7 @@ try {
       .evaluate((n) => getComputedStyle(n).position),
     "fixed",
   );
-  // Clicking the image selects its native controls in both editor generations;
-  // older releases keep the floating edit toolbar hidden for this compact widget.
+  // Select the image through the normal canvas interaction in both editor generations.
   await canvas.getByAltText("Decorated photo", { exact: true }).click();
   await page.locator(".elementor-control-image").waitFor();
   await page
@@ -407,7 +407,7 @@ try {
     "rgb(221, 68, 204)",
   );
   await page.evaluate(() => scrollTo(0, 400));
-  await page.waitForTimeout(100);
+  await page.waitForTimeout(450);
   const stickyEdit = await page
     .locator(".replica-sticky[data-lse-native]")
     .evaluate((n) => ({

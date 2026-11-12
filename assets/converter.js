@@ -2142,7 +2142,13 @@
                 stateSelectors.push(
                   "__LSE_SCOPE__ " +
                     native +
-                    ":where([data-lse-native].elementor-widget) :is(.elementor-heading-title,.elementor-button,.elementor-widget-container,img)" +
+                    ":where([data-lse-native].elementor-widget:not(.elementor-widget-image)) :is(.elementor-heading-title,.elementor-button,.elementor-widget-container,img)" +
+                    pseudo,
+                );
+                stateSelectors.push(
+                  "__LSE_SCOPE__ " +
+                    native +
+                    ":where([data-lse-native].elementor-widget-image) img" +
                     pseudo,
                 );
                 stateSelectors.push(
