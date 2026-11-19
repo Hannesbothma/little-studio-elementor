@@ -178,6 +178,8 @@ try {
       /lse-shared/,
       "The site header reference was saved inside the editable page tree",
     );
+  }
+  for (const imported of ready.pages) {
     await page.goto(imported.preview_url);
     assert.equal(
       await page

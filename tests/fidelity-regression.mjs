@@ -337,29 +337,19 @@ try {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(job.pages[0].edit_url, { waitUntil: "domcontentloaded" });
   const canvas = page.frameLocator("#elementor-preview-iframe");
-  await handleEditorPrompts(
-    page,
-    canvas.locator(".painted.elementor-widget-image"),
-  );
-  await canvas
-    .getByAltText("Decorated photo", { exact: true })
-    .waitFor({ timeout: 90000 });
+  const image = canvas.locator(".painted.elementor-widget-image img");
+  await handleEditorPrompts(page, image);
+  await image.waitFor({ timeout: 90000 });
   await page
     .locator("#elementor-loading")
     .waitFor({ state: "hidden", timeout: 90000 });
   assert.equal(
-    await canvas.locator("[data-lse-sticky-placeholder]").count(),
+    await canvas.locator(".replica-sticky").count(),
     0,
-    "Sticky runtime ran inside editor",
-  );
-  assert.notEqual(
-    await canvas
-      .locator(".replica-sticky")
-      .evaluate((n) => getComputedStyle(n).position),
-    "fixed",
+    "The shared header appeared inside the page editor",
   );
   // Select the image through the normal canvas interaction in both editor generations.
-  await canvas.getByAltText("Decorated photo", { exact: true }).click();
+  await image.click();
   await page.locator(".elementor-control-image").waitFor();
   await page
     .locator('.elementor-panel-navigation-tab[data-tab="style"]')
@@ -367,9 +357,9 @@ try {
   const height = page.locator(
     '.elementor-control-height input[data-setting="size"]',
   );
-  await height.fill("150");
+  await height.fill("150px");
   await height.press("Enter");
-  await canvas.getByAltText("Decorated photo", { exact: true }).evaluate(
+  await image.evaluate(
     (n) =>
       new Promise((resolve, reject) => {
         const until = performance.now() + 10000;
@@ -383,14 +373,35 @@ try {
       }),
   );
   result.actualImageEditor = true;
+  const header = job.templates["site-header"];
+  await page.goto(header.edit_url, { waitUntil: "domcontentloaded" });
+  const sticky = canvas.locator(".replica-sticky");
+  await sticky.waitFor({ timeout: 90000 });
+  await page
+    .locator("#elementor-loading")
+    .waitFor({ state: "hidden", timeout: 90000 });
+  assert.equal(
+    await canvas.locator("[data-lse-sticky-placeholder]").count(),
+    0,
+    "Sticky runtime ran inside the template editor",
+  );
+  assert.notEqual(
+    await sticky.evaluate((n) => getComputedStyle(n).position),
+    "fixed",
+  );
   await page.goto(origin + "/wp-admin/admin.php?page=little-studio-elementor");
   await page.waitForFunction(() => LSEAdmin);
-  const edited = await page.evaluate(
-    (id) => LSEAdmin.request("fidelity_test", { id }),
-    job.pages[0].id,
-  );
-  assert.deepEqual(edited.edited.sort(), ["image", "sticky"]);
-  assert.equal(edited.status, "draft");
+  for (const [id, control] of [
+    [job.pages[0].id, "image"],
+    [header.id, "sticky"],
+  ]) {
+    const edited = await page.evaluate(
+      (id) => LSEAdmin.request("fidelity_test", { id }),
+      id,
+    );
+    assert.deepEqual(edited.edited, [control]);
+    assert.equal(edited.status, "draft");
+  }
   await page.goto(job.pages[0].preview_url, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(
     () =>
