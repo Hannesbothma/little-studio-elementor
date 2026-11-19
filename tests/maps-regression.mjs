@@ -64,6 +64,8 @@ try {
   await page.evaluate(() => LSEAdmin.run());
   const job = await page.evaluate(() => LSEAdmin.job);
   assert.equal(job.state, "ready");
+  const header = job.templates["site-header"];
+  assert(header?.id, "The imported website has no shared header template");
   const tree = (await rpc("test", { id: job.pages[0].id })).elements;
   const flatten = (ns) => ns.flatMap((n) => [n, ...flatten(n.elements || [])]);
   const nativeMap = flatten(tree).filter((n) => n.widgetType === "google_maps");
@@ -133,10 +135,21 @@ try {
       Math.abs(actualIcons.x - expectedIcons.x) < 1,
       "Grid item horizontal alignment changed",
     );
+    const sharedHeader = page.locator('[data-lse-site-part="header"]');
+    assert.equal(await sharedHeader.count(), 1);
     assert.equal(
-      await page.locator("[data-lse-shared-style]").count(),
-      0,
-      "Shared styles duplicated page CSS",
+      await sharedHeader.locator(`[data-elementor-id="${header.id}"]`).count(),
+      1,
+      "The page did not render the imported website's header template",
+    );
+    assert.deepEqual(
+      await page
+        .locator("[data-lse-shared-style]")
+        .evaluateAll((sheets) =>
+          sheets.map((sheet) => sheet.getAttribute("data-lse-shared-style")),
+        ),
+      [String(header.id)],
+      "The template stylesheet should be delivered once",
     );
     const expectedMenu = await ref
       .locator(".elementor-widget-nav-menu")

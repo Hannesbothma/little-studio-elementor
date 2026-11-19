@@ -120,10 +120,14 @@ try {
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.goto(ready.pages[0].preview_url);
-    assert.equal(
-      await page.locator("[data-lse-shared-style]").count(),
-      0,
-      "Shared section loaded a second full copy of page styling",
+    assert.deepEqual(
+      await page
+        .locator("[data-lse-shared-style]")
+        .evaluateAll((sheets) =>
+          sheets.map((sheet) => sheet.getAttribute("data-lse-shared-style")),
+        ),
+      [String(template.id)],
+      "The template stylesheet should be delivered once",
     );
     assert.equal(
       await page
@@ -168,11 +172,23 @@ try {
     template.id,
     "Unchanged shared component was duplicated",
   );
-  for (const imported of ready.pages)
-    assert.match(
+  for (const imported of ready.pages) {
+    assert.doesNotMatch(
       JSON.stringify((await rpc("test", { id: imported.id })).elements),
       /lse-shared/,
+      "The site header reference was saved inside the editable page tree",
     );
+    await page.goto(imported.preview_url);
+    assert.equal(
+      await page
+        .locator(
+          `[data-lse-site-part="header"] [data-elementor-id="${template.id}"]`,
+        )
+        .count(),
+      1,
+      "The refreshed page does not render the same shared header",
+    );
+  }
   await page.goto(ready.pages[0].preview_url);
   assert.equal(
     await page
