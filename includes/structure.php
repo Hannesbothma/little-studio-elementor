@@ -6,6 +6,11 @@ if (!defined('ABSPATH')) {
 /** Keep source layout ancestors out of Elementor's editable element tree. */
 final class LSE_Structure
 {
+    private const EDITOR_BLOCK_SETTINGS = [
+        'content_width' => 'full',
+        'lse_display' => 'contents',
+    ];
+
     public static function init()
     {
         add_filter(
@@ -96,6 +101,46 @@ final class LSE_Structure
     public static function site_parts($post_id)
     {
         return get_post_meta($post_id, '_lse_source', true)['site_parts'] ?? [];
+    }
+
+    public static function prepare_editor_blocks(&$elements, &$layout, $ids)
+    {
+        if (version_compare(ELEMENTOR_VERSION, '4.0.0', '>=')) {
+            return;
+        }
+        // The legacy editor only accepts containers or sections at the root.
+        $used = array_fill_keys(
+            array_merge($ids, array_keys($layout['shells'])),
+            true,
+        );
+        foreach ($elements as &$element) {
+            if ($element['elType'] !== 'widget') {
+                continue;
+            }
+            $source_id = $element['id'];
+            $attempt = 0;
+            do {
+                $id = substr(
+                    hash(
+                        'sha256',
+                        'lse-editor-block:' . $source_id . ':' . $attempt++,
+                    ),
+                    0,
+                    8,
+                );
+            } while (isset($used[$id]));
+            $used[$id] = true;
+            $layout['editor_blocks'][$id] = $source_id;
+            $element = [
+                'id' => $id,
+                'elType' => 'container',
+                'isInner' => false,
+                'settings' => self::EDITOR_BLOCK_SETTINGS + [
+                    '_title' => $element['settings']['_title'] ?? '',
+                ],
+                'elements' => [$element],
+            ];
+        }
     }
 
     public static function detach(&$elements, $id, &$slot, $parent = null)
@@ -194,7 +239,31 @@ final class LSE_Structure
         }
         $layout = self::layout($post_id);
         $paths = $layout['paths'] ?? [];
+        $replacements = [];
+        foreach ($elements as &$element) {
+            $id = $element['id'];
+            $source_id = $layout['editor_blocks'][$id] ?? null;
+            if (!$source_id) {
+                continue;
+            }
+            $settings = $element['settings'];
+            unset($settings['_title']);
+            if (
+                $settings == self::EDITOR_BLOCK_SETTINGS &&
+                count($element['elements']) === 1 &&
+                $element['elements'][0]['id'] === $source_id
+            ) {
+                $element = $element['elements'][0];
+            } else {
+                // A container with its own edits must render as part of the page.
+                $paths[$id] = $paths[$source_id] ?? [];
+                $replacements[$source_id] = $id;
+            }
+        }
+        unset($element);
         foreach (self::site_parts($post_id) as $kind => $slot) {
+            $slot['after'] = $replacements[$slot['after']] ?? $slot['after'];
+            $slot['before'] = $replacements[$slot['before']] ?? $slot['before'];
             $id = substr(
                 hash('sha256', 'lse-site-part:' . $slot['id'] . ':' . $post_id),
                 0,

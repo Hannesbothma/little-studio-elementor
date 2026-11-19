@@ -35,7 +35,7 @@ const project = {
       html:
         '<body><header class="elementor-element"><div class="logo"><a href="#home"><img src="' +
         assetURL +
-        '" alt="Logo"></a></div><h1>Responsive heading</h1></header><main><div class="inherited-color"><svg aria-label="Inherited icon" width="20" height="20" viewBox="0 0 20 20"><path fill="currentColor" d="M0 0h20v20H0z"></path></svg></div><div class="boxed"><p>Auto-centered box</p></div><a class="fixed-circle" href="#book" style="position:fixed;left:20px;bottom:20px;width:80px;height:80px;border-radius:50%;display:flex;align-items:center;justify-content:center">Book circle</a><div class="hero" data-settings=\'{"background_background":"slideshow","background_slideshow_gallery":[{"url":"' +
+        '" alt="Logo"></a></div></header><main><h1>Responsive heading</h1><div class="inherited-color"><svg aria-label="Inherited icon" width="20" height="20" viewBox="0 0 20 20"><path fill="currentColor" d="M0 0h20v20H0z"></path></svg></div><div class="boxed"><p>Auto-centered box</p></div><a class="fixed-circle" href="#book" style="position:fixed;left:20px;bottom:20px;width:80px;height:80px;border-radius:50%;display:flex;align-items:center;justify-content:center">Book circle</a><div class="hero" data-settings=\'{"background_background":"slideshow","background_slideshow_gallery":[{"url":"' +
         assetURL +
         '"}]}\'><div class="child"><p>Hero text</p></div></div><div class="positioned"><p>Offset text</p></div><a class="native-link" href="#details">Native hover</a></main></body>',
       css: ".inherited-color{color:rgb(12,34,56)}.boxed{width:600px;max-width:100%;margin:0 auto}header{display:flex;flex-direction:column}.logo{width:120px}.logo a{display:inline-block;width:100%}.logo img{width:35%;height:auto}h1{color:rgb(255,0,0);margin:0}.hero{--min-height:100vh;min-height:var(--min-height);display:flex;flex-direction:column}.child{min-height:0}.positioned{position:absolute;left:120px;top:80px;width:50px;height:30px}.native-link{color:rgb(255,0,0)}.native-link:hover{color:rgb(0,0,255)}@media(max-width:767px){h1{color:rgb(0,0,255)}}",
@@ -252,15 +252,12 @@ try {
   const hero = nodes.find((n) =>
     n.settings.css_classes?.split(" ").includes("hero"),
   );
-  const child = nodes.find((n) =>
-    n.settings.css_classes?.split(" ").includes("child"),
-  );
   assert.equal(hero.settings.background_background, "slideshow");
-  assert.equal(hero.settings.min_height.unit, "vh");
-  assert(
-    !child.settings.min_height,
-    "Inherited source variable became child minimum height",
-  );
+  assert.deepEqual(hero.settings.min_height, {
+    unit: "custom",
+    size: "var(--lse-source-min-height)",
+  });
+  assert.match(converted.css, /--lse-source-min-height:100vh\b/);
   const payload = { job: job.id, key: "home", ...converted };
   await rpc("page", payload);
   let ready = await rpc("finish", { job: job.id });
@@ -325,6 +322,11 @@ try {
       .locator(".hero")
       .evaluate((n) => n.getBoundingClientRect().height),
     1000,
+  );
+  assert.match(
+    await page.locator(".child").evaluate((n) => getComputedStyle(n).minHeight),
+    /^(?:auto|0px)$/,
+    "The hero's source variable became the child's minimum height",
   );
   await page.getByRole("link", { name: "Native hover", exact: true }).hover();
   await page.waitForFunction(

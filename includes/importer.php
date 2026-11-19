@@ -1816,6 +1816,13 @@ final class LSE_Importer
                 $input['regions'] ?? [],
                 $css,
             );
+            if (!empty($source['layout_structure'])) {
+                LSE_Structure::prepare_editor_blocks(
+                    $tree,
+                    $source['layout_structure'],
+                    $ids,
+                );
+            }
             self::begin_page_save($id, $job['id']);
             if (!empty($page['refreshing'])) {
                 self::backup_refresh($id);

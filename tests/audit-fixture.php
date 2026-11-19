@@ -197,8 +197,14 @@ add_action('wp_ajax_lse_audit_test', static function () {
                     ],
                     'overwrite' => true,
                 ]);
-                $input['page']['elements'][0]['settings']['_title'] =
-                    'Interrupted refresh';
+                $regions = array_column($input['page']['regions'] ?? [], 'id');
+                foreach ($input['page']['elements'] as &$element) {
+                    if (!in_array($element['id'], $regions, true)) {
+                        $element['settings']['_title'] = 'Interrupted refresh';
+                        break;
+                    }
+                }
+                unset($element);
             }
             $payload = $input['page'];
             $payload['job'] = $id;
