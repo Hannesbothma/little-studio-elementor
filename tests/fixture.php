@@ -46,6 +46,71 @@ add_action( 'wp_ajax_lse_test', static function() {
     $input = json_decode( wp_unslash( $_POST['payload'] ?? '{}' ), true ); $id = (int) ( $input['id'] ?? 0 );
     try {
         switch ( $input['operation'] ?? 'inspect' ) {
+            case 'navigation':
+                LSE_Importer::status(['job'=>$input['job']]);
+                $job = get_option('_lse_job_' . $input['job']);
+                $menu = (int) $job['menu'];
+                $items = wp_get_nav_menu_items($menu, ['post_status'=>'any']);
+                $bound = LSE_Native::settings(['lse_imported_menu'=>'yes', 'menu'=>'foreign-source-id'], $job, 'settings');
+                wp_send_json_success([
+                    'menu'=>$menu, 'binding'=>$bound['menu'],
+                    'items'=>array_map(static fn($item)=>['id'=>$item->ID, 'title'=>$item->title, 'parent'=>(int)$item->menu_item_parent, 'object'=>(int)$item->object_id, 'type'=>$item->type, 'url'=>$item->url, 'target'=>$item->target], $items ?: []),
+                    'html'=>wp_nav_menu(['menu'=>$menu,'echo'=>false,'fallback_cb'=>false]),
+                ]);
+            case 'navigation-recovery':
+                LSE_Importer::status(['job'=>$input['job']]);
+                $job = get_option('_lse_job_' . $input['job']);
+                $job['id'] = bin2hex(random_bytes(16));
+                unset($job['menu'], $job['menu_signature'], $job['menu_items'], $job['menu_complete']);
+                $checkpoint = $job; $calls = 0;
+                try {
+                    LSE_Navigation::ensure($job, static function($state) use (&$checkpoint, &$calls) {
+                        if (++$calls === 3) throw new RuntimeException('Simulated interruption after WordPress saved an item.');
+                        $checkpoint = $state;
+                    });
+                    throw new RuntimeException('Interruption did not run.');
+                } catch (RuntimeException $error) {
+                    if (!str_starts_with($error->getMessage(), 'Simulated interruption')) throw $error;
+                }
+                $job = $checkpoint;
+                LSE_Navigation::ensure($job, static function($state) {});
+                $old_menu = $job['menu'];
+                $resumed = wp_get_nav_menu_items($old_menu, ['post_status'=>'any']);
+                if (count($resumed) !== count($input['expected_items'])) throw new RuntimeException('Retry duplicated or omitted menu items.');
+                wp_update_nav_menu_item($old_menu, $resumed[0]->ID, ['menu-item-title'=>'User edited menu title', 'menu-item-type'=>$resumed[0]->type, 'menu-item-object'=>'page', 'menu-item-object-id'=>$resumed[0]->object_id, 'menu-item-status'=>'publish']);
+                LSE_Navigation::ensure($job, static function($state) {});
+                if (get_post($resumed[0]->ID)->post_title !== 'User edited menu title') throw new RuntimeException('Completed-menu retry overwrote an edit.');
+                $job['site']['navigation'][0]['label'] = 'Changed definition';
+                LSE_Navigation::ensure($job, static function($state) {});
+                if ($old_menu === $job['menu'] || !wp_get_nav_menu_object($old_menu)) throw new RuntimeException('Changed definition did not preserve the prior menu.');
+                wp_send_json_success(['resumeWithoutDuplicates'=>true, 'completedMenuEditsPreserved'=>true, 'changedDefinitionKeepsPriorMenu'=>true]);
+            case 'navigation-journals':
+                LSE_Importer::status(['job'=>$input['job']]);
+                $base = get_option('_lse_job_' . $input['job']);
+                foreach (['wp_create_nav_menu', 'wp_update_nav_menu_item'] as $hook) {
+                    $job = $base; $job['id'] = bin2hex(random_bytes(16));
+                    unset($job['menu'], $job['menu_signature'], $job['menu_items'], $job['menu_complete']);
+                    $checkpoint = $job;
+                    $stop = static function() { throw new RuntimeException('Journal interruption.'); };
+                    add_action($hook, $stop, 999);
+                    try {
+                        LSE_Navigation::ensure($job, static function($state) use (&$checkpoint) {$checkpoint = $state;});
+                        throw new RuntimeException('Journal interruption did not run.');
+                    } catch (RuntimeException $error) {
+                        if ($error->getMessage() !== 'Journal interruption.') throw $error;
+                    } finally { remove_action($hook, $stop, 999); }
+                    $job = $checkpoint;
+                    LSE_Navigation::ensure($job, static function($state) {});
+                    if (count(wp_get_nav_menu_items($job['menu'], ['post_status'=>'any'])) !== count($input['expected_items'])) throw new RuntimeException('Journal recovery duplicated or omitted menu items.');
+                    $owned = get_terms(['taxonomy'=>'nav_menu','hide_empty'=>false,'meta_key'=>'_lse_job','meta_value'=>$job['id']]);
+                    if (count($owned) !== 1) throw new RuntimeException('Journal recovery duplicated the menu.');
+                }
+                $job['site']['navigation'][0]['label'] = 'Other definition';
+                LSE_Navigation::ensure($job, static function($state) {});
+                $job['site'] = $base['site'];
+                LSE_Navigation::ensure($job, static function($state) {});
+                wp_send_json_success(['menuCreationGapRecovered'=>true, 'itemCreationGapRecovered'=>true, 'definitionCanRevert'=>true]);
+            case 'native-validation': wp_send_json_success(LSE_Native::settings($input['settings'] ?? [], ['assets'=>[]], 'settings'));
             case 'purge-resource-fixture':
                 $job = get_option( '_lse_job_' . $input['job'] );
                 if ( ! is_array( $job ) || (int) $job['owner'] !== get_current_user_id() || $job['state'] !== 'removed' || ! str_starts_with( $job['title'], '148 resource regression ' ) ) { throw new RuntimeException( 'Only this disposable resource fixture can be cleaned.' ); }

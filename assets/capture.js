@@ -256,34 +256,28 @@
         node.remove();
       }
       for (const script of [...doc.querySelectorAll("script")]) {
-        const type = script.getAttribute("type") || "";
-        if (
-          !type ||
-          /^(?:text|application)\/(?:java|ecma)script$/i.test(type)
-        ) {
+        const kind = M.sourceScriptKind({
+          id: script.id,
+          src: absolute(script.getAttribute("src"), base),
+          type: script.getAttribute("type") || "",
+          code: script.textContent,
+        });
+        if (kind === "analytics") {
+          notes.add(
+            "Source analytics scripts were omitted. Configure analytics on the destination separately.",
+          );
+        } else if (kind === "framework") {
+          notes.add(
+            "The source WordPress/Elementor runtime was omitted; the destination supplies its own runtime.",
+          );
+        } else if (kind === "script") {
           if (script.src) {
             const url = absolute(script.getAttribute("src"), base),
               code = resources.get(url);
-            if (
-              /\/(?:wp-includes\/js\/(?:jquery|dist)|wp-content\/plugins\/elementor(?:-pro)?)\//i.test(
-                url,
-              )
-            ) {
-              notes.add(
-                "The source WordPress/Elementor runtime was omitted; the destination supplies its own runtime.",
-              );
-            } else if (code) scripts.push(text(code));
+            if (code) scripts.push(text(code));
             else notes.add("A script could not be packaged: " + url);
-          } else if (
-            /(?:elementor(?:Pro)?FrontendConfig|webpackChunk(?:elementor|elementor_pro))/.test(
-              script.textContent,
-            )
-          )
-            notes.add(
-              "Source Elementor initialization was omitted to keep the destination editor independent.",
-            );
-          else scripts.push(script.textContent);
-        } else if (type === "module")
+          } else scripts.push(script.textContent);
+        } else if (kind === "module")
           notes.add(
             "This site uses JavaScript modules. App behavior needs manual rebuilding.",
           );
@@ -322,6 +316,16 @@
 
         if (el.hasAttribute("style"))
           el.setAttribute("style", await css(el.getAttribute("style"), base));
+        // Galleries often keep their next image on a button, rather than an
+        // <img>. Package known media records without treating arbitrary data
+        // values (API routes, product IDs, etc.) as downloadable files.
+        for (const attr of [...el.attributes]) {
+          if (!attr.name.startsWith("data-")) continue;
+          const url = absolute(attr.value, base);
+          const record = url && resources.get(url);
+          if (record && mediaType(record, url))
+            el.setAttribute(attr.name, await asset(attr.value, base));
+        }
         for (const attr of [
           "src",
           "poster",
@@ -481,6 +485,13 @@
     notes.add(
       "Review the imported layout and behavior. Forms, logins, stores, and JavaScript apps may need rebuilding in WordPress.",
     );
+    // Rewrite references discovered on later pages too, including URLs inside
+    // source JavaScript and gallery data attributes. Keep these on the same
+    // packaged media as the editable native Image widgets.
+    const packagedMedia = Object.fromEntries(assetMap);
+    for (const page of output)
+      for (const field of ["html", "css", "js"])
+        page[field] = M.rewrite(page[field], packagedMedia);
     return M.validate({
       format: "little-studio-website",
       version: 1,
@@ -503,24 +514,108 @@
       },
     });
   }
-  const serializable = (project) =>
+  const serializable = (project, indent) =>
     JSON.stringify(
       project,
       (key, value) =>
         key === "bytes" && value instanceof Uint8Array ? undefined : value,
-      2,
+      indent,
     );
+  async function convertWebsite(project, onPage, isCancelled) {
+    const resources = M.resourceSession(project);
+    const pages = [];
+    try {
+      for (const page of project.pages) {
+        if (isCancelled()) return null;
+        onPage(page, pages.length + 1, project.pages.length);
+        try {
+          const result = await M.convert(project, page, {
+            layout: "elementor_canvas",
+            preserveCSS: true,
+            resources,
+          });
+          const { elements, css, warnings, regions, structure, source } =
+            result;
+          const elementor = window.LSENative.validateTemplate({
+            version: "0.4",
+            type: "page",
+            title: page.title,
+            page_settings: { template: "elementor_canvas" },
+            content: elements,
+          });
+          window.LSENative.requireWidgets(elementor);
+          pages.push({
+            ...page,
+            js: source.js.trim(),
+            elementor,
+            conversion: { version: 1, css, warnings, regions, structure },
+          });
+        } catch (error) {
+          throw Error("Could not convert " + page.url + ". " + error.message);
+        }
+      }
+      return isCancelled() ? null : { ...project, pages };
+    } finally {
+      resources.dispose();
+    }
+  }
   let busy = false,
     cancelled = false,
     session = null,
     sequence = 0,
     records = [],
-    pending = false;
+    pending = false,
+    downloadUrl = "";
   const dialog = $("#lse-capture-dialog"),
     form = $("#lse-capture-form"),
     status = $("#lse-capture-status"),
     start = $("#lse-capture-start"),
-    retry = $("#lse-capture-retry");
+    retry = $("#lse-capture-retry"),
+    download = $("#lse-capture-download"),
+    feedback = $("#lse-capture-feedback");
+  function clearDownload() {
+    if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+    downloadUrl = "";
+    download.hidden = true;
+    download.removeAttribute("href");
+    feedback.hidden = true;
+    feedback.replaceChildren();
+  }
+  function showExport(project) {
+    const count = project.pages.length;
+    const htmlPages = project.pages.filter(
+      (page) => M.inspect(page).fallbacks,
+    ).length;
+    const notes = [
+      ...(project.capture.complete
+        ? []
+        : [
+            "Some source files or pages could not be captured. See the capture report in the JSON.",
+          ]),
+      ...(htmlPages
+        ? [
+            htmlPages +
+              " of " +
+              count +
+              " pages contain HTML widgets for content that needs code editing.",
+          ]
+        : []),
+    ];
+    feedback.textContent = notes.join(" ");
+    feedback.hidden = !notes.length;
+    status.textContent =
+      count +
+      (count === 1 ? " Elementor page is" : " Elementor pages are") +
+      " ready to download.";
+    downloadUrl = URL.createObjectURL(
+      new Blob([serializable(project)], { type: "application/json" }),
+    );
+    download.download =
+      new URL(project.capture.source).hostname + ".elementor.json";
+    download.href = downloadUrl;
+    download.hidden = false;
+    download.click();
+  }
   const buttons = () => {
     start.disabled = busy;
     form.querySelectorAll("input,select").forEach((el) => (el.disabled = busy));
@@ -536,12 +631,18 @@
   };
   async function run(resume = false) {
     if (busy || A.busy || window.LSEManage?.busy) return;
+    if (!window.LSE_CONFIG?.elementor) {
+      status.textContent = "Activate Elementor before converting a website.";
+      return;
+    }
     busy = true;
     cancelled = false;
     retry.hidden = true;
     buttons();
     try {
       if (!resume) {
+        await cleanup();
+        clearDownload();
         records = [];
         sequence = 0;
         status.textContent = "Starting website capture…";
@@ -561,6 +662,8 @@
         records.push(...step.records);
         sequence = step.seq;
         if (step.done) {
+          await cleanup();
+          if (cancelled) break;
           status.textContent = "Packaging your website JSON…";
           const notes = Object.values(step.warnings || {});
           if (step.truncated)
@@ -579,16 +682,21 @@
             !project.capture.failed_resources.length;
           records = [];
           if (cancelled) break;
-          await cleanup();
-          busy = false;
-          buttons();
-          dialog.close();
-          // Explicitly open a new import so capture cannot silently replace a selected website.
-          $("#lse-new-import").click();
-          await A.chooseProject(
+          const converted = await convertWebsite(
             project,
-            new URL($("#lse-capture-url").value).hostname + ".website.json",
+            (page, index, total) => {
+              status.textContent =
+                "Converting page " +
+                index +
+                " of " +
+                total +
+                " · " +
+                page.title;
+            },
+            () => cancelled,
           );
+          if (!converted) break;
+          if (!cancelled) showExport(converted);
           return;
         }
         status.textContent = step.message;
@@ -604,6 +712,7 @@
         status.textContent = "Capture cancelled.";
       } else {
         status.textContent = error.message;
+        if (!session) records = [];
         retry.hidden = !session;
       }
     } finally {
@@ -621,11 +730,15 @@
     } else {
       cleanup();
       records = [];
+      clearDownload();
       dialog.close();
     }
   }
   function open() {
     if (A.busy || window.LSEManage?.busy) return;
+    clearDownload();
+    status.textContent = "";
+    retry.hidden = true;
     dialog.showModal();
     $("#lse-capture-url").focus();
   }
@@ -640,8 +753,9 @@
     close();
   });
   document
-    .querySelectorAll("[data-capture-open]")
+    .querySelectorAll("[data-export-open]")
     .forEach((el) => el.addEventListener("click", open));
+  if (new URLSearchParams(location.search).get("export") === "1") open();
   $("#lse-source-download").addEventListener("click", () => {
     if (!A.project) return;
     const url = URL.createObjectURL(

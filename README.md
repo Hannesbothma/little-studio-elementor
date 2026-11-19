@@ -8,17 +8,33 @@ Headings, text, images, buttons and supported layouts become native Elementor
 elements. Complex regions are reported and may use small editable HTML widgets.
 Imports do not replace existing page content or publish the new drafts.
 
-## Website link capture
+## Website to Elementor JSON
 
-Use **Import from website link** in the plugin sidebar. Paste a public URL. Linked pages are followed automatically without a plugin page-count or depth quota. Keep the tab open, review capture warnings, download the
-native JSON if needed, and import to editable Elementor drafts. Capture itself
-creates no posts or media. The host needs PHP DOM and public outbound HTTP/HTTPS;
-HTTrack is not required on WordPress. Captures have no fixed resource-count or byte quota; public ports 80/443, redirect
-validation and small checkpointed requests remain in place.
+Open **Studio to Elementor → Website to Elementor JSON**, paste a public URL
+and click **Convert to JSON**. Keep the tab open until the `.elementor.json`
+file downloads. The tool follows public links on the source site and prepares
+the Elementor page trees before downloading the file.
 
-Alternatively use **Little Studio Desktop > File > Website link to JSON…** for
-the local HTTrack route. Both routes require review; server behavior and JavaScript
-module apps may need rebuilding.
+Use **New import → Choose file** in LS Elementor to install the bundle on a
+destination with Elementor and LS Elementor active. Each page has an Elementor
+0.4 template plus the supporting styles. The bundle also carries shared media
+and internal link information. Elementor's own JSON uploader accepts individual
+templates. LS Elementor reads the site-wide bundle and installs its assets.
+
+Main sections appear as separate top-level blocks in Elementor's Structure
+panel. The converter keeps layout groups that use grid, flex, or other
+nonstandard flow. It restores source wrappers for the rendered page so
+styles and landmarks such as the skip-to-content target still work.
+The homepage supplies one shared header and one shared footer for the import.
+Edit them with **Edit site header** and **Edit site footer** next to the imported
+website name. Matching pages display the shared pair while their Elementor
+Structure panels contain the individual page blocks.
+
+Exporting creates no WordPress posts or media. The host needs PHP DOM and
+outbound HTTP/HTTPS. The results show if the crawl missed resources or the
+converter retained HTML widgets. Review captured custom JavaScript before
+enabling **Keep website interactions** during import. Checkout, login, and form
+delivery require their destination services.
 
 ## Manage imported websites
 
@@ -46,6 +62,42 @@ Source Elementor sticky settings are converted into **Imported scrolling** contr
 
 Image cropping, positioning, background, padding and borders target the actual image. Native image controls and **Imported image appearance** keep those settings editable. Containers also expose imported height/display and responsive colour overrides. Source lazy backgrounds are revealed before measurement; supported slideshow backgrounds and overlays use destination Elementor controls. Gallery photos and hover overlays are preserved.
 
+Fluid source typography retains viewport sizes, unitless line heights, relative
+letter spacing and font fallback stacks. Edit the primary font with Elementor's
+Typography controls and the remaining stack under **Imported responsive styles**.
+Imported layout controls retain responsive positioning, flex basis and percentage
+image heights. Grid/flex alignment stays consistent when the source changes layout
+mode at a breakpoint. Imported Flex direction and wrapping also work when the
+source starts as a desktop Grid and becomes Flex on a narrower screen.
+
+Source media-query thresholds are captured separately from Elementor's device
+labels. Native sizes, spacing and layout start with scoped responsive variables;
+editing the native control replaces its imported value. This preserves wider
+phone and tablet layouts instead of applying the narrowest phone layout to both.
+
+Imported horizontal/vertical overflow controls retain gallery clipping; native
+stacking order keeps campaign text above image gradients. Text maximum width
+targets the actual heading/text instead of its widget wrapper.
+
+Shared-section finishing checkpoints one page per request, keeping large imports
+within PHP memory limits while preserving resumability and edit protection.
+Refreshing an unchanged shared section also updates its native settings while
+preserving its template and element IDs. Script-created gallery controls retain
+their source styling. Copied HTML roots keep their own box styles so the extra
+widget wrapper does not double their padding or borders.
+
+Replacing edited/published pages uses an accessible confirmation inside the
+plugin after the replacement checkbox. Cancelling keeps the current content.
+
+On Elementor versions supporting button containers, source actions and their child
+labels become native editable containers/widgets instead of flattening the entire
+header or footer into HTML. Gallery scripts can change the native image widget's
+actual image. Known captured media references in scripts and data attributes are
+rewritten to packaged files. Source analytics and WordPress/Elementor runtime
+scripts are excluded; configure destination analytics separately. Complex forms,
+dialogs, SVG markup and other unsupported regions still use editable HTML widgets
+and are reported; this does not recreate ecommerce, login or form services.
+
 Reports distinguish missing files, resources/styling needing review and features requiring setup. Informational capture notes are collapsed separately. A missing source stylesheet cannot be recovered merely by importing it again.
 
 ## Updates
@@ -72,7 +124,32 @@ are intended for developers.
 
 ## Supported inputs and hosting resources
 
-Accepts `little-studio-website` version 1 and `code-canvas` version 1 JSON.
+Accepts `little-studio-website` version 1, `code-canvas` version 1, and native
+Elementor `0.4` page/section/header/footer template JSON. Native templates retain
+their container/widget trees and responsive/page settings without HTML reconstruction.
+Select `header.json`, `content.json` and `footer.json` together to assemble one
+standalone draft page; this does not assign site-wide Theme Builder locations.
+Use extracted JSON files, not a template-parts ZIP.
+
+Native imports require unfiltered-HTML permission and the actual installed widgets.
+Missing Pro/add-on widgets are named before import. Foreign attachment IDs are
+cleared; external media stays on its original server unless packaged separately.
+Source dynamic/global references need destination mapping. Template placeholders,
+HTML regions and empty map addresses are reported rather than presented as functioning
+features. Additional responsive breakpoints and Pro interactions need destination
+verification. Native pages can also be stored in a Little Studio wrapper under
+`pages[].elementor`, alongside packaged assets and ordinary pages.
+
+Native `nav-menu` widgets can use `settings.lse_imported_menu: "yes"` to bind to
+the import's WordPress menu. Define nested items in `site.navigation` with
+`label`, a destination page `key`, optional source `url`, and `children`.
+External items use `url` and optional `external: true`. Source URLs keep links
+usable when importing a subset of pages. Header and footer widgets share the
+same destination menu; source menu IDs must not be copied. Menu creation resumes
+after interruption. A changed definition creates another owned menu, preserving
+the prior menu and edits. This does not assign a theme menu location.
+
+
 Packaged images, sanitised SVG, supported media/documents and font files are
 registered in the Media Library. Identical imported files are reused.
 Custom source JavaScript is retained; URL capture omits the source WordPress/Elementor framework runtime. Imported scripts pause inside the Elementor editor to keep its controls independent. Interactions default on when the importing

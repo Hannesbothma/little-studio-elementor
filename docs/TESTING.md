@@ -248,3 +248,60 @@ on the third editor visit. Its own promotion code confirms that visit threshold.
 promotion’s normal Close button, then restores canvas hover for the edit toolbar.
 It never installs the promoted plugin or hides/removes DOM. Native editor loading,
 visibility and actual control editing assertions remain strict.
+
+
+## Local Studio converter acceptance — 18 November 2026
+
+The Hannes Bothma public website was captured read-only and tested in the existing
+WordPress Studio **Plugin Testing** site at localhost:8881 (WordPress 7.1.4, PHP
+8.3, SQLite, Elementor Core/Pro 4.4.1). The source is currently the OPU Jewelry
+site. The capture contains 56 URLs and 143 packaged assets; 36 substantive pages
+were selected as local drafts. Twenty unavailable WooCommerce product URLs were
+excluded; their actual designed product pages use different addresses. A separate
+self-contained home HTML import tests the HTML path. No live site was modified.
+
+Read-only DOM comparisons at 390, 768 and 1280 CSS px check the actual source
+input against the imported preview, including fallback fonts, fluid sizes, source
+breakpoints, header layout, clipping and image sizing. Home galleries and product
+image tabs are exercised through visible controls. An actual native heading edit
+was saved as a draft and verified after reopening Elementor, then restored through
+the same controls. Screenshots are in the adjacent WordPress Lab project. UI
+verification uses a background browser against the same local Studio server; the
+screenshots do not depict the desktop application shell.
+
+`tests/imported-controls.php` runs through official `studio wp eval-file` and
+checks 17 native save/CSS/render/reload cases, including font editing and fallbacks,
+custom responsive variables, image percentage heights, flex basis, clipping,
+positioning, stacking, text widths, desktop Grid-to-mobile Flex switches and
+non-submit native button containers.
+It cleans up its own disposable fixture. `tests/bounded-sharing.php` uses a fresh
+PHP process for each finish step and verifies one-page checkpoints, stable stamps,
+resume completion, shared native-setting refresh and stable template/element IDs.
+Run its stages setup, step until ready, refresh, step until ready, cleanup.
+
+Focused Node/PHP-WASM regressions cover typography/script classification, embedded
+SVG packaging, URL rewriting, CSS validation, exact stylesheet caching and safe
+public fetching. These and the native Studio tests are distinct from the existing
+full browser regression suite, which was not rerun in this session.
+
+Complex forms, dialogs, details and SVG remain editable HTML where native widgets
+cannot preserve their semantics. Copied roots own their box styles so their extra
+widget wrapper must not duplicate padding/borders. Script-created gallery controls
+receive source-content styling without overriding existing native widgets. Main
+headings, text, images, action buttons and layout containers use native controls.
+Source analytics and WordPress/Elementor runtime scripts are omitted. Store, login,
+checkout and form services require separate destination configuration; visible
+conversion is not a clone of those backend services. No checkout/form was submitted.
+Pro is installed but its licence remains unconnected.
+
+Final representative comparisons pass for home draft 187 at 390/768/1280 px and
+collection 189, product 195 and contact 193 at 390 px: same font stack/size,
+heading width and height within one pixel, and document scroll width equal to
+the viewport. This is a focused geometry/visual check, not a whole-site pixel
+diff. Product details match their source 81 px closed height and expand normally;
+the Detail image control loads a packaged localhost asset. Home contains native
+containers, 16 Headings, 71 Text Editors, 27 Images and 31 Buttons, with 18 HTML
+widgets for special content. The separate HTML draft 1108 has the same counts.
+Final-build native title edit/save/reopen was verified and its original title
+restored. Existing demo draft 22 was preserved. No source or plugin release was
+pushed to GitHub.

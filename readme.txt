@@ -3,11 +3,12 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1.4
 Requires PHP: 8.0
-Stable tag: 0.11.0
+Stable tag: 0.12.0
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
-Import one native Little Studio website JSON into editable Elementor draft pages.
+Convert a public website link to a JSON bundle of Elementor templates and media.
+Import the bundle into editable Elementor draft pages with this plugin.
 
 == Installation ==
 
@@ -17,7 +18,9 @@ Import one native Little Studio website JSON into editable Elementor draft pages
 3. In Plugins > Add New > Upload Plugin, choose this plugin ZIP and activate it.
 4. Open Studio to Elementor in the main WordPress sidebar, directly below Plugins.
    You can also use Open converter in the installed Plugins list.
-5. Choose your complete Little Studio website JSON. All pages are selected.
+5. Choose Little Studio JSON, native Elementor template JSON, or HTML. For a split
+   page, select header.json, content.json and footer.json together. Use extracted
+   JSON files rather than a template-parts ZIP. All pages are selected.
 6. Review the page list and setup items; enable interactions for a trusted file.
 7. Import as drafts, then open each page in Elementor and review all screen sizes.
 
@@ -40,7 +43,10 @@ Plugin updates closes when clicking outside or pressing Escape.
 
 == What this first version does ==
 
-* Accepts little-studio-website version 1 and code-canvas version 1 JSON.
+* Accepts Little Studio version 1 and native Elementor 0.4 page/section/header/footer
+  templates. Native imports retain installed widget trees and responsive/page
+  settings. Source global/dynamic references need destination mapping. Native
+  imports require unfiltered HTML permission. Remote media is not auto-packaged.
 * Creates new WordPress drafts, including parent/child relationships.
 * Imports packaged raster images, sanitised SVG, fonts and supported media/documents
   into the Media Library. Reuses identical files already imported by this plugin.
@@ -50,8 +56,8 @@ Plugin updates closes when clicking outside or pressing Escape.
 * Reconstructs responsive settings at 1440, 1024, 768 and 390 pixel references.
 * Preserves additional computed styling as page-scoped CSS. Native controls can
   change content and common style settings. Some advanced CSS requires review.
-* Links identical header/footer regions through native saved section templates
-  and the included Studio shared section widget. Variants remain separate.
+* Shares a single editable header and footer across applicable pages of an
+  imported website. The templates have their own Elementor editors.
 * Prepares an unassigned classic WordPress menu when navigation can be identified.
 * Stores source and SEO metadata; supplies basic SEO output without an SEO plugin.
 * Preserves interactive navigation, local calculators and enquiry controls.
@@ -170,6 +176,17 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.12.0 =
+* Convert a public website URL into a downloadable Elementor JSON bundle with
+  packaged media.
+* Import recognized page sections as separate editable blocks with one shared
+  header and footer per imported website.
+* Import native Elementor 0.4 template JSON with its widget tree and page settings.
+* Select header.json, content.json and footer.json together to assemble one draft page.
+* Accept native seven/eight-character IDs and installed Elementor widgets; report missing dependencies and template gaps.
+* Bind marked native menu widgets to a resumable nested WordPress menu, preserving external links and unselected-page source links.
+
 
 = 0.11.0 =
 Identify CSS errors by field, selector, line and snippet; accept harmless selector

@@ -600,6 +600,9 @@ trait LSE_Management
                 $job['pages'][$index]['source_slug'] = $source['slug'] ?? '';
                 $job['pages'][$index]['regions'] = [];
             }
+            if (isset($input['site']['navigation'])) {
+                $job['site'] = $input['site'];
+            }
             $job['capture'] = self::capture_report($input['capture'] ?? null);
             $job['operation_id'] = $operation;
             $job['shared_done'] = [];

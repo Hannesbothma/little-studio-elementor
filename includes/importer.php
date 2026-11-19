@@ -167,17 +167,10 @@ final class LSE_Importer
         ) {
             throw new RuntimeException('Invalid site navigation.');
         }
-        foreach ($input['site']['navigation'] ?? [] as $item) {
-            if (
-                !is_array($item) ||
-                !isset($seen[$item['key'] ?? '']) ||
-                !trim(self::text($item['label'] ?? '', 150))
-            ) {
-                throw new RuntimeException(
-                    'A menu item has an invalid destination or label.',
-                );
-            }
-        }
+        LSE_Navigation::validate(
+            $input['site']['navigation'] ?? [],
+            array_keys($seen),
+        );
         if (
             !empty($input['site']['home_key']) &&
             !isset($seen[$input['site']['home_key']])
@@ -1469,8 +1462,15 @@ final class LSE_Importer
         }
         return $processor->get_updated_html();
     }
-    private static function tree($items, $job, &$count, $depth = 0)
-    {
+    private static function tree(
+        $items,
+        $job,
+        &$count,
+        $depth = 0,
+        $native = false,
+        $skip_css = [],
+        &$skipped = [],
+    ) {
         if (!is_array($items)) {
             throw new RuntimeException('Element children must be a list.');
         }
@@ -1485,13 +1485,20 @@ final class LSE_Importer
             ++$count;
             if (
                 !is_array($item) ||
-                !preg_match('/^[a-f0-9]{8}$/', $item['id'] ?? '')
+                !preg_match(
+                    $native ? '/^[a-f0-9]{7,8}$/' : '/^[a-f0-9]{8}$/',
+                    $item['id'] ?? '',
+                )
             ) {
                 throw new RuntimeException('Invalid Elementor elements.');
             }
             $type = $item['elType'] ?? '';
             $widget = $item['widgetType'] ?? '';
+            if ($native) {
+                LSE_Native::element($item);
+            }
             if (
+                !$native &&
                 $type !== 'container' &&
                 ($type !== 'widget' ||
                     !in_array(
@@ -1529,6 +1536,15 @@ final class LSE_Importer
                     ARRAY_FILTER_USE_KEY,
                 );
             }
+            if ($native) {
+                $settings = LSE_Native::settings(
+                    $settings,
+                    $job,
+                    'elements.' . $item['id'] . '.settings',
+                    $skip_css,
+                    $skipped,
+                );
+            }
             foreach (['title', 'editor', 'html'] as $field) {
                 if (isset($settings[$field])) {
                     $settings[$field] = self::html(
@@ -1540,9 +1556,10 @@ final class LSE_Importer
             }
             foreach ($settings as $field => $value) {
                 if (
-                    str_contains($field, 'custom_css') ||
-                    str_starts_with($field, '__') ||
-                    str_contains($field, 'shortcode')
+                    !$native &&
+                    (str_contains($field, 'custom_css') ||
+                        str_starts_with($field, '__') ||
+                        str_contains($field, 'shortcode'))
                 ) {
                     unset($settings[$field]);
                 } elseif (
@@ -1586,13 +1603,16 @@ final class LSE_Importer
                 [
                     'id' => $item['id'],
                     'elType' => $type,
-                    'isInner' => false,
+                    'isInner' => $native ? !empty($item['isInner']) : false,
                     'settings' => $settings,
                     'elements' => self::tree(
                         $item['elements'] ?? [],
                         $job,
                         $count,
                         $depth + 1,
+                        $native,
+                        $skip_css,
+                        $skipped,
                     ),
                 ],
                 $type === 'widget' ? ['widgetType' => $widget] : [],
@@ -1653,7 +1673,41 @@ final class LSE_Importer
                 );
             }
             $count = 0;
-            $tree = self::tree($input['elements'] ?? [], $job, $count);
+            $skipped = [];
+            $native = ($input['native_elementor'] ?? false) === true;
+            if (
+                $native &&
+                LSE_Native::uses_imported_menu($input['elements'] ?? [])
+            ) {
+                $menu_id = LSE_Navigation::ensure($job, static function (
+                    $state,
+                ) {
+                    self::store($state);
+                });
+                if (!$menu_id) {
+                    throw new RuntimeException(
+                        'The native navigation needs site navigation items in its website JSON.',
+                    );
+                }
+            }
+            $tree = self::tree(
+                $input['elements'] ?? [],
+                $job,
+                $count,
+                0,
+                $native,
+                $input['skip_css'] ?? [],
+                $skipped,
+            );
+            $page_settings = $native
+                ? LSE_Native::settings(
+                    $input['page_settings'] ?? [],
+                    $job,
+                    'page_settings',
+                    $input['skip_css'] ?? [],
+                    $skipped,
+                )
+                : [];
             if (!$count) {
                 throw new RuntimeException('No content was converted.');
             }
@@ -1663,7 +1717,6 @@ final class LSE_Importer
                     'Element IDs must be unique within a page.',
                 );
             }
-            $skipped = [];
             $candidate_css = self::rewrite($input['css'] ?? '', $job['map']);
             if (is_string($candidate_css)) {
                 $candidate_css = preg_replace_callback(
@@ -1739,6 +1792,30 @@ final class LSE_Importer
             foreach ($input['warnings'] ?? [] as $warning) {
                 self::text($warning, 1500);
             }
+            $source = $candidate_source;
+            unset($source['layout_structure'], $source['site_parts']);
+            if (!empty($source['structure'])) {
+                $source['layout_structure'] = LSE_Structure::clean(
+                    self::rewrite($source['structure'], $job['map']),
+                    $tree,
+                );
+                unset($source['structure']);
+            }
+            foreach ($job['fonts'] as $font) {
+                $css .=
+                    '@font-face{font-family:"' .
+                    $font['family'] .
+                    '";src:url("' .
+                    esc_url_raw($font['url']) .
+                    '");font-display:swap}';
+            }
+            $source['site_parts'] = self::save_site_parts(
+                $job,
+                $page,
+                $tree,
+                $input['regions'] ?? [],
+                $css,
+            );
             self::begin_page_save($id, $job['id']);
             if (!empty($page['refreshing'])) {
                 self::backup_refresh($id);
@@ -1752,30 +1829,16 @@ final class LSE_Importer
             $document->set_is_built_with_elementor(true);
             $ok = $document->save([
                 'elements' => $tree,
-                'settings' => [
+                'settings' => array_merge($page_settings, [
                     'post_status' => $page['target_status'] ?? 'draft',
                     'template' => $job['layout'],
                     'hide_title' => 'yes',
-                ],
+                ]),
             ]);
             if (!$ok) {
                 throw new RuntimeException('Elementor did not save the page.');
             }
-            foreach ($job['fonts'] as $font) {
-                $css .=
-                    '@font-face{font-family:"' .
-                    $font['family'] .
-                    '";src:url("' .
-                    esc_url_raw($font['url']) .
-                    '");font-display:swap}';
-            }
             update_post_meta($id, '_lse_css', wp_slash($css));
-            $source = $input['source'] ?? [];
-            if (!is_array($source)) {
-                throw new RuntimeException(
-                    'Original page source must be an object.',
-                );
-            }
             update_post_meta($id, '_lse_source', wp_slash($source));
             $js = self::rewrite(
                 is_string($source['js'] ?? null) ? $source['js'] : '',
@@ -1871,6 +1934,7 @@ final class LSE_Importer
             $regions = [];
             foreach ($input['regions'] ?? [] as $region) {
                 if (
+                    empty($source['site_parts'][$region['kind'] ?? '']) &&
                     preg_match('/^[a-f0-9]{64}$/', $region['hash'] ?? '') &&
                     preg_match('/^[a-f0-9]{8}$/', $region['id'] ?? '') &&
                     in_array($region['kind'] ?? '', ['header', 'footer'], true)
@@ -1935,6 +1999,118 @@ final class LSE_Importer
             \Elementor\Core\Files\CSS\Post::create($id)->delete();
         }
     }
+    private static function save_site_parts(
+        &$job,
+        $page,
+        &$tree,
+        $regions,
+        $css,
+    ) {
+        if ($job['layout'] !== 'elementor_canvas') {
+            return [];
+        }
+        $parts = [];
+        foreach ($regions as $region) {
+            $kind = $region['kind'] ?? '';
+            $id = $region['id'] ?? '';
+            if (
+                empty($region['separate']) ||
+                !in_array($kind, ['header', 'footer'], true) ||
+                !is_string($id) ||
+                !preg_match('/^[a-f0-9]{8}$/D', $id) ||
+                isset($parts[$kind]) ||
+                (self::find_node($tree, $id)['elType'] ?? '') !== 'container'
+            ) {
+                continue;
+            }
+            $node = LSE_Structure::detach($tree, $id, $slot);
+            $key = 'site-' . $kind;
+            $existing = $job['templates'][$key] ?? null;
+            if ($existing) {
+                $template_id = $existing['id'];
+                if (
+                    get_post_meta($template_id, '_lse_job', true) !==
+                        $job['id'] ||
+                    !in_array(
+                        get_post_status($template_id),
+                        ['draft', 'publish', 'private'],
+                        true,
+                    )
+                ) {
+                    throw new RuntimeException(
+                        'Restore this import’s site ' .
+                            $kind .
+                            ' template before refreshing.',
+                    );
+                }
+            } else {
+                $template = \Elementor\Plugin::$instance->documents->create(
+                    'section',
+                    [
+                        'post_title' => $job['title'] . ' — Site ' . $kind,
+                        'post_status' => 'draft',
+                    ],
+                );
+                if (is_wp_error($template) || !$template) {
+                    throw new RuntimeException(
+                        'The site ' . $kind . ' template could not be created.',
+                    );
+                }
+                $template_id = $template->get_main_id();
+            }
+            // The homepage supplies the canonical design. Subsequent pages
+            // only attach it. A manually edited template stays authoritative.
+            if (
+                !$existing ||
+                ($page['key'] === ($job['site']['home_key'] ?? '') &&
+                    current_user_can('edit_post', $template_id) &&
+                    hash_equals($existing['stamp'], self::stamp($template_id)))
+            ) {
+                $template = \Elementor\Plugin::$instance->documents->get(
+                    $template_id,
+                );
+                $template->set_is_built_with_elementor(true);
+                if (!$template->save(['elements' => [$node]])) {
+                    throw new RuntimeException(
+                        'The site ' . $kind . ' template could not be saved.',
+                    );
+                }
+                update_post_meta($template_id, '_lse_job', $job['id']);
+                update_post_meta($template_id, '_lse_shared', '1');
+                update_post_meta($template_id, '_lse_site_part', $kind);
+                $scope = 'body.page-id-' . $page['id'];
+                $template_scope = 'body .elementor-' . $template_id;
+                $template_css =
+                    str_replace(
+                        [$scope . ' .lse-imported-site', $scope],
+                        $template_scope,
+                        $css,
+                    ) .
+                    str_replace(
+                        '__LSE_SCOPE__',
+                        $template_scope,
+                        $region['context_css'] ?? '',
+                    );
+                update_post_meta(
+                    $template_id,
+                    '_lse_css',
+                    wp_slash($template_css),
+                );
+                self::invalidate_css($template_id);
+                $job['templates'][$key] = [
+                    'id' => $template_id,
+                    'kind' => $kind,
+                    'stamp' => self::stamp($template_id),
+                    'edit_url' => admin_url(
+                        'post.php?post=' . $template_id . '&action=elementor',
+                    ),
+                ];
+                self::store($job);
+            }
+            $parts[$kind] = $slot + ['template_id' => $template_id];
+        }
+        return $parts;
+    }
     private static function stamp($id)
     {
         $native = wp_json_encode([
@@ -1951,9 +2127,12 @@ final class LSE_Importer
             get_post_meta($id, '_lse_scripts_enabled', true),
         ]);
         $provider = LSE_SEO::snapshot($id);
+        $parts = LSE_Structure::site_parts($id);
         return hash(
             'sha256',
-            $native . ($provider ? '|seo-v1|' . wp_json_encode($provider) : ''),
+            $native .
+                ($provider ? '|seo-v1|' . wp_json_encode($provider) : '') .
+                ($parts ? '|site-parts-v1|' . wp_json_encode($parts) : ''),
         );
     }
     private static function find_node($tree, $id)
@@ -1978,7 +2157,7 @@ final class LSE_Importer
         }
         return $ids;
     }
-    private static function replace_node(&$tree, $id, $template)
+    private static function replace_node(&$tree, $id, $template, $kind)
     {
         foreach ($tree as &$node) {
             if ($node['id'] === $id) {
@@ -1989,13 +2168,13 @@ final class LSE_Importer
                     'isInner' => false,
                     'settings' => [
                         'template_id' => $template,
-                        '_title' => 'Shared header / footer',
+                        '_title' => ucfirst($kind),
                     ],
                     'elements' => [],
                 ];
                 return true;
             }
-            if (self::replace_node($node['elements'], $id, $template)) {
+            if (self::replace_node($node['elements'], $id, $template, $kind)) {
                 return true;
             }
         }
@@ -2013,7 +2192,10 @@ final class LSE_Importer
             }
         }
         foreach ($groups as $hash => $group) {
-            if (count($group) < 2 || !empty($job['shared_done'][$hash])) {
+            if (
+                (count($group) < 2 && empty($group[0]['region']['separate'])) ||
+                !empty($job['shared_done'][$hash])
+            ) {
                 continue;
             }
             $changed = false;
@@ -2077,7 +2259,9 @@ final class LSE_Importer
                     [
                         'post_title' =>
                             $job['title'] .
-                            ' — shared ' .
+                            (count($group) > 1
+                                ? ' — shared '
+                                : ' — ' . get_the_title($post_id) . ' ') .
                             $first['region']['kind'],
                         'post_status' => 'draft',
                     ],
@@ -2130,11 +2314,38 @@ final class LSE_Importer
                 ];
                 $job['templates'][$hash] = $existing;
                 self::store($job);
-            }
-            if ($existing && $canonical) {
+            } elseif (
+                $canonical &&
+                ($canonical['elType'] ?? '') === 'container'
+            ) {
                 $canonical_ids = self::ids([$canonical]);
                 $pairs = [];
                 if (count($canonical_ids) === count($existing['ids'])) {
+                    $replacement = $canonical;
+                    $id_map = array_combine($canonical_ids, $existing['ids']);
+                    $rekey = static function (&$node) use (&$rekey, $id_map) {
+                        $node['id'] = $id_map[$node['id']] ?? $node['id'];
+                        foreach ($node['elements'] as &$child) {
+                            $rekey($child);
+                        }
+                    };
+                    $rekey($replacement);
+                    // Reuse the template's stable IDs, but refresh its native
+                    // settings too. Updating only its supporting CSS leaves
+                    // old layout/typography controls in otherwise fresh pages.
+                    $template_document = \Elementor\Plugin::$instance->documents->get(
+                        $existing['id'],
+                    );
+                    if (
+                        !$template_document->save([
+                            'elements' => [$replacement],
+                        ])
+                    ) {
+                        throw new RuntimeException(
+                            'The refreshed shared section could not be saved.',
+                        );
+                    }
+                    self::invalidate_css($existing['id']);
                     foreach ($canonical_ids as $n => $source_id) {
                         $pairs['elementor-element-' . $source_id] =
                             'elementor-element-' . $existing['ids'][$n];
@@ -2168,12 +2379,20 @@ final class LSE_Importer
             foreach ($group as $member) {
                 $index = $member['index'];
                 $id = $job['pages'][$index]['id'];
-                $doc = \Elementor\Plugin::$instance->documents->get($id);
-                $tree = $doc->get_elements_data();
+                // Inspect saved data before creating an Elementor document;
+                // completed members must not fill its per-request cache again.
+                $tree =
+                    json_decode(
+                        get_post_meta($id, '_elementor_data', true),
+                        true,
+                    ) ?:
+                    [];
                 $node = self::find_node($tree, $member['region']['id']);
                 if (!$node || ($node['widgetType'] ?? '') === 'lse-shared') {
                     continue;
                 }
+                $doc = \Elementor\Plugin::$instance->documents->get($id);
+                $tree = $doc->get_elements_data();
                 $original_ids = self::ids([$node]);
                 if (count($original_ids) !== count($existing['ids'])) {
                     continue;
@@ -2188,6 +2407,7 @@ final class LSE_Importer
                     $tree,
                     $member['region']['id'],
                     $existing['id'],
+                    $member['region']['kind'],
                 );
                 if (!$doc->save(['elements' => $tree])) {
                     throw new RuntimeException(
@@ -2201,7 +2421,16 @@ final class LSE_Importer
                 );
                 self::invalidate_css($id);
                 $job['pages'][$index]['stamp'] = self::stamp($id);
+                if (count($group) === 1) {
+                    $job['shared_done'][$hash] = true;
+                }
                 self::store($job);
+                // Elementor keeps loaded documents and their controls in its
+                // request cache. Sharing an entire large group in one request
+                // can exhaust PHP memory, especially with SQLite. The saved
+                // replacement and stamp are our checkpoint; the next request
+                // skips it and continues with the next unshared member.
+                return true;
             }
             $job['shared_done'][$hash] = true;
             self::store($job);
@@ -2232,39 +2461,17 @@ final class LSE_Importer
             }
             $job['state'] = 'finishing';
             self::store($job);
-            $started = microtime(true);
-            for ($i = 0; $i < 4; ++$i) {
-                if (!self::share_one($job)) {
-                    break;
-                }
-                if ($i === 3 || microtime(true) - $started >= 1) {
-                    return self::status($input);
-                }
+            if (self::share_one($job)) {
+                // Intermediate browser polls only need the job ID and state.
+                // Rebuilding all page fingerprints and media status here made
+                // every shared-section checkpoint expensive on large imports.
+                return !empty($input['compact'])
+                    ? ['id' => $job['id'], 'state' => $job['state']]
+                    : self::status($input);
             }
-            if (!$job['menu'] && !empty($job['site']['navigation'])) {
-                $menu = wp_create_nav_menu(
-                    $job['title'] . ' — imported ' . substr($job['id'], 0, 6),
-                );
-                if (is_wp_error($menu)) {
-                    throw new RuntimeException($menu->get_error_message());
-                }
-                $job['menu'] = $menu;
-                self::store($job);
-                $ids = array_column($job['pages'], 'id', 'key');
-                foreach ($job['site']['navigation'] as $item) {
-                    if (isset($ids[$item['key'] ?? ''])) {
-                        wp_update_nav_menu_item($menu, 0, [
-                            'menu-item-title' => self::text(
-                                $item['label'] ?? '',
-                            ),
-                            'menu-item-object' => 'page',
-                            'menu-item-object-id' => $ids[$item['key']],
-                            'menu-item-type' => 'post_type',
-                            'menu-item-status' => 'publish',
-                        ]);
-                    }
-                }
-            }
+            LSE_Navigation::ensure($job, static function ($state) {
+                self::store($state);
+            });
             $job['state'] = 'ready';
             self::store($job);
             LSE_Media::release(array_column($job['assets'], 'id'));
@@ -2278,6 +2485,17 @@ final class LSE_Importer
         $job = self::load($input['job'] ?? '');
         unset($job['owner'], $job['fingerprint']);
         $shared_cache = [];
+        $templates = array_column($job['templates'] ?? [], null, 'id');
+        $job['site_template_links'] = [];
+        foreach (['header', 'footer'] as $kind) {
+            $part = $job['templates']['site-' . $kind] ?? null;
+            if ($part && current_user_can('edit_post', $part['id'])) {
+                $job['site_template_links'][] = [
+                    'kind' => $kind,
+                    'edit_url' => $part['edit_url'],
+                ];
+            }
+        }
         foreach ($job['pages'] as &$page) {
             $post = get_post($page['id']);
             $page['post_status'] = $post ? $post->post_status : 'missing';
@@ -2285,6 +2503,18 @@ final class LSE_Importer
             $shared_stamps = $post
                 ? self::shared_stamps($post->ID, $shared_cache)
                 : [];
+            $page['template_links'] = [];
+            foreach (array_keys($shared_stamps) as $id) {
+                if (
+                    isset($templates[$id]) &&
+                    current_user_can('edit_post', $id)
+                ) {
+                    $page['template_links'][] = [
+                        'kind' => $templates[$id]['kind'],
+                        'edit_url' => $templates[$id]['edit_url'],
+                    ];
+                }
+            }
             $page['current_stamp'] = $post
                 ? hash('sha256', $native_stamp . wp_json_encode($shared_stamps))
                 : '';

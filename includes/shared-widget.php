@@ -66,7 +66,8 @@ class LSE_Shared_Widget extends \Elementor\Widget_Base
         static $styled = [];
         if (
             !isset($styled[$id]) &&
-            !LSE_Styles::shared_is_covered(get_queried_object_id(), $id)
+            (get_post_meta($id, '_lse_site_part', true) ||
+                !LSE_Styles::shared_is_covered(get_queried_object_id(), $id))
         ) {
             $css = get_post_meta($id, '_lse_css', true);
             if (is_string($css) && $css !== '') {

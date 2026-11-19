@@ -27,11 +27,32 @@ final class LSE_Appearance
                         'lse_box_sizing',
                         '{{WRAPPER}}',
                     );
+                    self::position_controls($element);
+                    self::flex_basis_control($element);
+                    $element->add_responsive_control('lse_height', [
+                        'label' => 'Height',
+                        'type' => \Elementor\Controls_Manager::SLIDER,
+                        'size_units' => [
+                            'px',
+                            '%',
+                            'vh',
+                            'vw',
+                            'em',
+                            'rem',
+                            'custom',
+                        ],
+                        'selectors' => [
+                            '{{WRAPPER}}.elementor-element' =>
+                                'height:{{SIZE}}{{UNIT}};',
+                        ],
+                    ]);
                     $element->add_responsive_control('lse_widget_display', [
                         'label' => 'Display',
                         'type' => \Elementor\Controls_Manager::SELECT,
                         'options' => [
                             '' => 'Default',
+                            'var(--lse-source-display)' =>
+                                'Captured responsive display',
                             'block' => 'Block',
                             'inline-block' => 'Inline block',
                             'flex' => 'Flex',
@@ -62,6 +83,34 @@ final class LSE_Appearance
                         'lse_box_sizing',
                         '{{WRAPPER}}',
                     );
+                    self::position_controls($element);
+                    self::flex_basis_control($element);
+                    foreach (
+                        ['x' => 'Horizontal', 'y' => 'Vertical']
+                        as $axis => $label
+                    ) {
+                        $element->add_responsive_control(
+                            'lse_overflow_' . $axis,
+                            [
+                                'label' => $label . ' overflow',
+                                'description' =>
+                                    'Source clipping. Clear to use the standard Overflow setting.',
+                                'type' => \Elementor\Controls_Manager::SELECT,
+                                'options' => [
+                                    '' => 'Default',
+                                    'visible' => 'Visible',
+                                    'hidden' => 'Hidden',
+                                    'clip' => 'Clip',
+                                    'auto' => 'Auto',
+                                    'scroll' => 'Scroll',
+                                ],
+                                'selectors' => [
+                                    '{{WRAPPER}}.elementor-element' =>
+                                        'overflow-' . $axis . ':{{VALUE}};',
+                                ],
+                            ],
+                        );
+                    }
                     $element->add_responsive_control('lse_height', [
                         'label' => 'Height',
                         'type' => \Elementor\Controls_Manager::SLIDER,
@@ -83,6 +132,8 @@ final class LSE_Appearance
                         'type' => \Elementor\Controls_Manager::SELECT,
                         'options' => [
                             '' => 'Default',
+                            'var(--lse-source-display)' =>
+                                'Captured responsive display',
                             'block' => 'Block',
                             'inline' => 'Inline',
                             'inline-block' => 'Inline block',
@@ -95,6 +146,43 @@ final class LSE_Appearance
                         ],
                         'selectors' => ['{{WRAPPER}}' => 'display:{{VALUE}};'],
                     ]);
+                    foreach (
+                        [
+                            'direction' => [
+                                'row' => 'Row',
+                                'row-reverse' => 'Reversed row',
+                                'column' => 'Column',
+                                'column-reverse' => 'Reversed column',
+                            ],
+                            'wrap' => [
+                                'nowrap' => 'No wrap',
+                                'wrap' => 'Wrap',
+                                'wrap-reverse' => 'Reversed wrap',
+                            ],
+                        ]
+                        as $property => $choices
+                    ) {
+                        $element->add_responsive_control(
+                            'lse_flex_' . $property,
+                            [
+                                'label' => 'Flex ' . $property,
+                                'description' =>
+                                    'For imported layouts that switch between Grid and Flex.',
+                                'type' => \Elementor\Controls_Manager::SELECT,
+                                'options' =>
+                                    [
+                                        '' => 'Default',
+                                        'var(--lse-source-flex-' .
+                                        $property .
+                                        ')' => 'Captured responsive value',
+                                    ] + $choices,
+                                'selectors' => [
+                                    '{{WRAPPER}}.elementor-element' =>
+                                        'flex-' . $property . ':{{VALUE}};',
+                                ],
+                            ],
+                        );
+                    }
                     $element->add_responsive_control('lse_text_align', [
                         'label' => 'Text alignment',
                         'type' => \Elementor\Controls_Manager::SELECT,
@@ -198,6 +286,54 @@ final class LSE_Appearance
             30,
             2,
         );
+    }
+    private static function flex_basis_control($element)
+    {
+        $element->add_responsive_control('lse_flex_basis', [
+            'label' => 'Flex basis',
+            'type' => \Elementor\Controls_Manager::SLIDER,
+            'size_units' => ['px', '%', 'vw', 'vh', 'em', 'rem', 'custom'],
+            'selectors' => [
+                '{{WRAPPER}}.elementor-element' =>
+                    'flex-basis:{{SIZE}}{{UNIT}};',
+            ],
+        ]);
+    }
+
+    private static function position_controls($element)
+    {
+        $selector = '{{WRAPPER}}.elementor-element';
+        $element->add_responsive_control('lse_position', [
+            'label' => 'Imported position',
+            'description' =>
+                'Preserves positioning per device. Clear this override to use Elementor Position controls.',
+            'type' => \Elementor\Controls_Manager::SELECT,
+            'options' => [
+                '' => 'Default',
+                'static' => 'Normal flow',
+                'relative' => 'Relative',
+                'absolute' => 'Absolute',
+                'fixed' => 'Fixed',
+                'sticky' => 'Sticky',
+            ],
+            'selectors' => [$selector => 'position:{{VALUE}};'],
+        ]);
+        foreach (['top', 'right', 'bottom', 'left'] as $side) {
+            $element->add_responsive_control('lse_offset_' . $side, [
+                'label' => 'Imported ' . $side,
+                'type' => \Elementor\Controls_Manager::SLIDER,
+                'size_units' => ['px', '%', 'vh', 'vw', 'em', 'rem', 'custom'],
+                'condition' => [
+                    'lse_position' => [
+                        'relative',
+                        'absolute',
+                        'fixed',
+                        'sticky',
+                    ],
+                ],
+                'selectors' => [$selector => $side . ':{{SIZE}}{{UNIT}};'],
+            ]);
+        }
     }
     private static function box_control($element, $name, $selector)
     {

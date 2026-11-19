@@ -4,6 +4,49 @@
   const registrations = new Map();
   let scheduled = false;
   const menuStyles = new WeakMap();
+  const bridgedImages = new WeakMap();
+  function bridgeNativeImages() {
+    for (const wrapper of document.querySelectorAll(
+      '.elementor-widget-image[data-lse-source-tag="img"]',
+    )) {
+      const image = wrapper.querySelector("img");
+      if (!image || bridgedImages.get(wrapper) === image) continue;
+      bridgedImages.set(wrapper, image);
+      // Source scripts address the original image by its class/ID. Elementor
+      // owns that outer widget now; relay image properties to its real <img>.
+      for (const property of [
+        "src",
+        "srcset",
+        "sizes",
+        "alt",
+        "title",
+        "width",
+        "height",
+      ])
+        Object.defineProperty(wrapper, property, {
+          configurable: true,
+          get: () => image[property],
+          set(value) {
+            if (property === "src") {
+              image.removeAttribute("srcset");
+              image.removeAttribute("sizes");
+            }
+            image[property] = value;
+          },
+        });
+      for (const property of [
+        "currentSrc",
+        "naturalWidth",
+        "naturalHeight",
+        "complete",
+      ])
+        Object.defineProperty(wrapper, property, {
+          configurable: true,
+          get: () => image[property],
+        });
+      if (image.decode) wrapper.decode = image.decode.bind(image);
+    }
+  }
   const menuProperties = [
     "display",
     "max-height",
@@ -106,6 +149,7 @@
   });
 
   function start(registration) {
+    bridgeNativeImages();
     const nodes = [...document.querySelectorAll("[data-lse-interactive]")];
     if (
       registration.started &&
@@ -138,6 +182,18 @@
       console.error("Website interaction could not start:", error);
     } finally {
       EventTarget.prototype.addEventListener = originalAdd;
+    }
+    // Source scripts can create controls (for example gallery playback buttons)
+    // after conversion. Keep their original CSS scoped to that new content,
+    // just as it is for copied HTML, without styling native Elementor controls.
+    for (const node of document.querySelectorAll(".lse-imported-site *")) {
+      if (
+        !before.has(node) &&
+        !node.parentElement?.closest("[data-lse-source-content]") &&
+        !node.hasAttribute("data-lse-native") &&
+        !node.classList.contains("elementor-element")
+      )
+        node.setAttribute("data-lse-source-content", "");
     }
     const markers = [];
     for (const [node, attributes] of before) {

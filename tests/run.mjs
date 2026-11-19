@@ -14,6 +14,7 @@ const run = (command, args, options = {}) =>
     );
   });
 await run(process.execPath, ["tests/rewrite-regression.mjs"]);
+await run(process.execPath, ["tests/typography.mjs"]);
 await run(process.execPath, ["tests/styles-regression.mjs"]);
 await run(process.execPath, ["tests/css-validation.mjs"]);
 await run(process.execPath, ["tests/fetch-validation.mjs"]);
@@ -130,6 +131,8 @@ try {
   });
   const selected = process.env.LSE_TEST_ONLY?.split(",");
   for (const name of [
+    "native-elementor",
+    "navigation",
     "conversion-memory",
     "media-regression",
     "import-regression",

@@ -349,6 +349,18 @@ final class LSE_Capture
             if ($el->hasAttribute('style')) {
                 self::css($job, $el->getAttribute('style'), $base);
             }
+            foreach ($el->attributes as $attribute) {
+                if (
+                    str_starts_with($attribute->name, 'data-') &&
+                    preg_match(
+                        '~\.(?:avif|webp|png|jpe?g|gif|svg|ico|mp4|webm|mp3|ogg|woff2?|ttf|otf)(?:[?#]|$)~i',
+                        $attribute->value,
+                    ) &&
+                    !preg_match('/[\s<>"\x27]/', $attribute->value)
+                ) {
+                    self::enqueue($job, $attribute->value, $base, 'asset', 0);
+                }
+            }
             if (
                 in_array(
                     $tag,

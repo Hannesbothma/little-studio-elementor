@@ -1,11 +1,61 @@
-Improve import accuracy, identify individual failures, and make usable drafts available sooner.
+## Website to Elementor JSON
 
-* Report CSS failures with the page, CSS field, selector, line, column, reason and a bounded source snippet. Accept harmless selector/string text such as the Green Valley print selector containing `javascript:`; keep checks for executable CSS and unbundled imports.
-* Add Retry, Skip this item and continue, and Pause. Skip only an identified CSS declaration/rule or individual failed file. Keep completed work and a durable skipped-items report. Unknown, permission and save-conflict failures remain non-skippable.
-* Preserve inline layout, authored automatic widths, source box sizing and normal line height. Full-width galleries stay full width while intentionally boxed content retains its width.
-* Check verified Media Library hashes before uploading unchanged files. Share conversion resource blobs and compiled URL maps across pages. Cache each CSS rule independently to keep whole-site conversion memory bounded. Fetch up to four independent public capture resources together where the host supports it, with safe redirect checks and a normal WordPress fallback.
-* Make original images and pages available before derived image sizes finish. Persist the requested sizes, resume core metadata checkpoints, and show remaining work separately. Image-size failures identify the file/size and support explicit Retry or Skip; skipped sizes can be retried later. Custom remote/offloaded storage keeps synchronous processing.
+Paste a public website URL to download an Elementor JSON bundle with its
+captured pages and packaged media. Import the bundle through Studio to
+Elementor to create editable drafts. Recognized page sections appear as
+separate top-level blocks in the editor.
 
-Update through the existing WordPress plugin button. Rebuild affected existing pages with **Update from file**, using the same JSON and reviewing replacement of edited or published pages. Capture again if the old JSON omitted source resources. CSS/file omissions remain listed for review.
+The imported website shares one editable header and one editable footer.
+When the homepage is included, it supplies the shared designs. Open either
+template from the imported website’s **Edit site header** and **Edit site
+footer** links. The templates render on the relevant pages and have their own
+Elementor editors.
 
-Draft readiness and completed image processing are separate states. Network transfers, source failures, image processing and host capacity still take time. Review responsive layouts and interactions before publishing; universal exact replication is not established.
+## Conversion and editing improvements
+
+HTML/website JSON conversion now retains font fallbacks, fluid type sizes,
+unitless line heights, relative letter spacing, responsive positioning, flex
+sizing and percentage image heights. Header/footer actions use editable native
+button containers on supported Elementor versions. Source gallery image changes
+reach the actual native Image widget, and known script/data media references use
+packaged files. Captured analytics and WordPress/Elementor runtime scripts are
+excluded. Embedded SVG/font assets are supported. Complex forms/dialogs still
+require HTML editing and destination service setup.
+
+Native stacking order preserves text above campaign gradients. Text maximum
+width stays editable on the actual text element, including relative units and
+the common 1280px desktop layout. Shared-section finishing now checkpoints one
+page per request instead of loading a whole group into Elementor's document
+cache; this fixes a PHP memory exhaustion found with the local 36-page import.
+Responsive overflow controls retain carousel clipping and prevent sideways mobile
+scrolling. Edited-page replacement uses an in-plugin confirmation dialog with
+the existing explicit consent and server-side change checks.
+Source media-query thresholds now drive scoped native size/spacing/layout
+defaults. This fixes tablet headers and typography that differed from the source
+between Elementor's standard breakpoints; the native controls remain editable.
+Shared refreshes update native settings with stable template/element IDs. Gallery
+controls created by source scripts keep their styles, and copied HTML roots no
+longer receive duplicate padding/borders from their widget wrappers. Desktop Grid
+containers that switch to Flex retain responsive direction and wrapping.
+
+Import native Elementor 0.4 page, section, header and footer JSON directly. Select
+header.json, content.json and footer.json together to assemble one draft page.
+Native containers, installed widget types, seven/eight-character IDs, nested
+structure, responsive controls and page settings are retained. Existing Little
+Studio JSON/HTML capture and import remain available.
+
+Missing widgets are named before importing. Foreign media IDs are cleared, custom
+CSS stays validated, and source global/dynamic references require explicit
+mapping. External images are still external unless packaged. HTML placeholders,
+empty map addresses and Pro/breakpoint requirements are reported. These imports
+are draft pages; no site-wide Theme Builder locations are assigned.
+
+Imported native menu widgets can bind automatically to one destination WordPress
+menu, including nested submenus, external booking links and source-link fallbacks
+when only some pages are selected. Menu creation resumes after interruption;
+changed definitions preserve the prior menu. Actual Pro interactions still need
+verification with Elementor Pro.
+
+Update from the WordPress Plugins screen or install the release ZIP. Existing
+imported pages can pick up conversion improvements through **Update from file**
+in Studio to Elementor.

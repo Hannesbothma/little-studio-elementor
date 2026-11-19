@@ -235,7 +235,7 @@ try {
     "Lost batch response could not be replayed",
   );
   await rpc("capture_cancel", { capture: batched.capture });
-  await page.locator("[data-capture-open]").first().click();
+  await page.locator("[data-export-open]").first().click();
   await page
     .locator("#lse-capture-url")
     .fill("https://93.184.216.34/lse-capture/");
@@ -263,13 +263,24 @@ try {
     fullPage: true,
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
+  const downloadEvent = page.waitForEvent("download", { timeout: 120000 });
   await page.locator("#lse-capture-start").click();
-  await page.waitForFunction(
-    () => window.LSEAdmin.project?.capture && !window.LSECapture.busy,
-    {},
-    { timeout: 120000 },
+  const file = await downloadEvent;
+  assert.equal(file.suggestedFilename(), "93.184.216.34.elementor.json");
+  const captured = JSON.parse(await readFile(await file.path(), "utf8"));
+  for (const p of captured.pages) {
+    assert.equal(p.elementor.version, "0.4");
+    assert(p.elementor.content.length);
+    assert.equal(p.conversion.version, 1);
+    assert(p.conversion.css.length);
+  }
+  assert(captured.pages[0].elementor.content.length > 1);
+  assert(
+    captured.pages[0].conversion.structure.some(
+      (shell) => shell.tag === "main",
+    ),
+    "The exported editable blocks lost the source main landmark",
   );
-  const captured = await page.evaluate(() => window.LSEAdmin.project);
   await writeFile(
     new URL("captured-website.json", dir),
     JSON.stringify(
@@ -322,21 +333,22 @@ try {
   assert(
     captured.capture.warnings.some((w) => w.includes("JavaScript modules")),
   );
+  assert.equal(captured.assets[0].bytes, undefined);
+  assert(
+    captured.assets
+      .find((a) => a.type === "image/png")
+      .data.startsWith("data:image/png;base64,"),
+  );
+  await page.locator("#lse-capture-close").click();
+  await page.locator("#lse-new-import").click();
+  await choose(captured, file.suggestedFilename());
   assert.match(
     await page.locator("#lse-findings").innerText(),
     /JavaScript modules/,
   );
-  const downloadEvent = page.waitForEvent("download");
-  await page.locator("#lse-source-download").click();
-  const downloaded = JSON.parse(
-    await readFile(await (await downloadEvent).path(), "utf8"),
-  );
-  assert.equal(downloaded.assets[0].bytes, undefined);
-  assert(
-    downloaded.assets
-      .find((a) => a.type === "image/png")
-      .data.startsWith("data:image/png;base64,"),
-  );
+  assert.equal(await page.locator("#lse-scripts").isChecked(), false);
+  await page.getByText("Import options", { exact: true }).click();
+  await page.locator("#lse-scripts").check();
   const capturedImport = await run();
   const capturedNative = await rpc("test", { id: capturedImport.pages[0].id });
   assert.match(
@@ -370,6 +382,10 @@ try {
     await frontend.goto(capturedImport.pages[0].preview_url, {
       waitUntil: "domcontentloaded",
     });
+    assert.equal(
+      await frontend.locator("main[data-lse-layout-shell]").count(),
+      1,
+    );
     await frontend.waitForFunction(() =>
       [...document.images].some(
         (img) => img.complete && img.naturalWidth === 320,

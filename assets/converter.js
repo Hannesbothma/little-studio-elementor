@@ -166,14 +166,38 @@
     return css;
   }
 
+  function validNavigation(items, keys) {
+    return (
+      Array.isArray(items) &&
+      items.every((item) => {
+        if (!item || !string(item.label, 150) || !item.label.trim())
+          return false;
+        const url = item.url;
+        const safeURL =
+          string(url, 2048) &&
+          /^(?:https?:\/\/|mailto:|tel:|#)/i.test(url) &&
+          !/[\u0000-\u001f]/.test(url);
+        return (
+          ((item.key && keys.has(item.key)) || safeURL) &&
+          (!url || safeURL) &&
+          validNavigation(item.children || [], keys)
+        );
+      })
+    );
+  }
+
   function validate(input) {
+    if (root.LSENative?.isTemplate(input))
+      return root.LSENative.fromTemplates([
+        { name: "template.json", data: input },
+      ]);
     if (
       !input ||
       input.version !== 1 ||
       !["code-canvas", "little-studio-website"].includes(input.format)
     )
       throw Error(
-        "Choose a native Little Studio page or website JSON, version 1.",
+        "Choose Little Studio version 1 or native Elementor 0.4 template JSON.",
       );
     // Copy mutable records only; large embedded media strings can be shared safely.
     const p = {
@@ -215,6 +239,31 @@
       )
         throw Error(
           "Every page needs a unique key, title and HTML/CSS/JavaScript.",
+        );
+      if (page.elementor !== undefined)
+        root.LSENative.validateTemplate(page.elementor);
+      if (
+        page.conversion !== undefined &&
+        (!page.elementor ||
+          !page.conversion ||
+          page.conversion.version !== 1 ||
+          !string(page.conversion.css) ||
+          !Array.isArray(page.conversion.warnings) ||
+          !page.conversion.warnings.every((warning) => string(warning, 1500)) ||
+          (page.conversion.structure !== undefined &&
+            !Array.isArray(page.conversion.structure)) ||
+          !Array.isArray(page.conversion.regions) ||
+          !page.conversion.regions.every(
+            (region) =>
+              region &&
+              /^[a-f0-9]{8}$/.test(region.id) &&
+              /^[a-f0-9]{64}$/.test(region.hash) &&
+              ["header", "footer"].includes(region.kind) &&
+              string(region.context_css),
+          ))
+      )
+        throw Error(
+          "The preconverted Elementor page has invalid styles or metadata.",
         );
       keys.add(page.key);
       page.slug = typeof page.slug === "string" ? page.slug : "";
@@ -267,6 +316,11 @@
         "image/webp": "webp",
         "image/gif": "gif",
         "image/avif": "avif",
+        "image/svg+xml": "svg",
+        "font/woff": "woff",
+        "font/woff2": "woff2",
+        "font/ttf": "ttf",
+        "font/otf": "otf",
         "video/mp4": "mp4",
         "video/webm": "webm",
         "audio/mpeg": "mp3",
@@ -332,9 +386,7 @@
       !p.site ||
       !Array.isArray(p.site.navigation) ||
       (p.site.home_key && !keys.has(p.site.home_key)) ||
-      !p.site.navigation.every(
-        (n) => n && keys.has(n.key) && string(n.label, 150) && n.label.trim(),
-      )
+      !validNavigation(p.site.navigation, keys)
     )
       throw Error("Invalid homepage or navigation records.");
     return p;
@@ -373,6 +425,14 @@
     return result.replace(expression, replace);
   }
   function inspect(page) {
+    if (page.elementor) {
+      const summary = root.LSENative.inspect(page.elementor);
+      if (page.conversion)
+        summary.warnings = [
+          ...new Set([...page.conversion.warnings, ...summary.warnings]),
+        ];
+      return summary;
+    }
     const d = new DOMParser().parseFromString(page.html, "text/html");
     const warnings = [];
     const count = (s) => d.querySelectorAll(s).length;
@@ -646,6 +706,150 @@
     return match
       ? { unit: match[2], size: Number(match[1]) }
       : { unit: "custom", size: value };
+  }
+  function fontStack(value) {
+    const match = String(value)
+      .trim()
+      .match(
+        /^(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^,]+))(?:,\s*([\s\S]*))?$/,
+      );
+    return match
+      ? {
+          family: decodeCSS(match[1] ?? match[2] ?? match[3]).trim(),
+          fallbacks: (match[4] || "").trim(),
+        }
+      : { family: String(value).trim(), fallbacks: "" };
+  }
+  function sourceScriptKind({ id = "", src = "", type = "", code = "" }) {
+    type = type.trim().toLowerCase();
+    if (
+      /^wp-emoji(?:-|$)/i.test(id) ||
+      code.includes("script#wp-emoji-settings") ||
+      /\/(?:wp-includes\/js\/(?:jquery|dist)|wp-content\/plugins\/elementor(?:-pro)?)\//i.test(
+        src,
+      ) ||
+      /(?:elementor(?:Pro)?FrontendConfig|webpackChunk(?:elementor|elementor_pro))/.test(
+        code,
+      )
+    )
+      return "framework";
+    if (
+      /^(?:lsa-(?:tracker|elite-tracking)|google-analytics|gtag|google-tag-manager|gtm|facebook-pixel)(?:-|$)/i.test(
+        id,
+      ) ||
+      /(?:google-analytics\.com|googletagmanager\.com|connect\.facebook\.net)\//i.test(
+        src,
+      )
+    )
+      return "analytics";
+    if (type === "module") return "module";
+    return !type || /^(?:text|application)\/(?:java|ecma)script$/i.test(type)
+      ? "script"
+      : "data";
+  }
+  // Project authored typography into temporary custom properties. The browser
+  // still resolves specificity, !important, media queries, layers and variables.
+  // Unlike getComputedStyle(fontSize), these retain viewport expressions.
+  function measureTypography(doc) {
+    const prefix = "--lse-measure-";
+    const owners = new Map(),
+      changes = [];
+    let sequence = 0;
+    const project = (style, owner) => {
+      for (const property of ["font-size", "line-height", "letter-spacing"]) {
+        // A font shorthand containing var() has pending-substitution longhands
+        // in CSSOM. It still resets earlier font-size/line-height declarations.
+        // Clear their projections instead of reviving an overridden fluid h2.
+        const longhand = style.getPropertyValue(property);
+        const resetsFont =
+          property !== "letter-spacing" && style.getPropertyValue("font");
+        const value = longhand || (resetsFont ? "initial" : "");
+        if (!value) continue;
+        const id = String(++sequence);
+        owners.set(id, owner);
+        for (const [name, content] of [
+          [prefix + property, value],
+          [prefix + property + "-owner", id],
+        ]) {
+          changes.push([
+            style,
+            name,
+            style.getPropertyValue(name),
+            style.getPropertyPriority(name),
+          ]);
+          style.setProperty(
+            name,
+            content,
+            style.getPropertyPriority(longhand ? property : "font"),
+          );
+        }
+      }
+    };
+    const walk = (rules) => {
+      for (const rule of rules) {
+        if (rule.type === 1) project(rule.style, rule.selectorText);
+        else if (rule.cssRules) walk(rule.cssRules);
+      }
+    };
+    for (const node of doc.querySelectorAll("style")) {
+      if (node.sheet) walk(node.sheet.cssRules);
+    }
+    for (const node of doc.querySelectorAll("[style]"))
+      project(node.style, node);
+    return {
+      read(node, computed) {
+        const value = computed.getPropertyValue(prefix + "font-size").trim();
+        const owner = owners.get(
+          computed.getPropertyValue(prefix + "font-size-owner").trim(),
+        );
+        let own = owner === node;
+        if (typeof owner === "string") {
+          try {
+            own = node.matches(owner);
+          } catch {}
+        }
+        // Inherited viewport sizes remain valid when the child inherits the same
+        // font size. Do not mistake a parent's size for a UA-scaled heading.
+        const inherited =
+          node.parentElement &&
+          doc.defaultView.getComputedStyle(node.parentElement).fontSize ===
+            computed.fontSize;
+        return {
+          fontSize:
+            (own || inherited) &&
+            /\b[\d.]+(?:[dsl]?v[whib]|vmin|vmax)\b/i.test(value) &&
+            doc.defaultView.CSS.supports("font-size", value)
+              ? value
+              : "",
+          lineHeight: computed.getPropertyValue(prefix + "line-height").trim(),
+          letterSpacing: (() => {
+            const value = computed
+              .getPropertyValue(prefix + "letter-spacing")
+              .trim();
+            const owner = owners.get(
+              computed.getPropertyValue(prefix + "letter-spacing-owner").trim(),
+            );
+            let own = owner === node;
+            if (typeof owner === "string") {
+              try {
+                own = node.matches(owner);
+              } catch {}
+            }
+            return (own || inherited) &&
+              /(?:em|rem|v[whib]|vmin|vmax)\b/i.test(value) &&
+              doc.defaultView.CSS.supports("letter-spacing", value)
+              ? value
+              : "";
+          })(),
+        };
+      },
+      restore() {
+        for (const [style, name, value, priority] of changes.reverse()) {
+          if (value) style.setProperty(name, value, priority);
+          else style.removeProperty(name);
+        }
+      },
+    };
   }
   const innerProps = [
     "font-family",
@@ -1014,6 +1218,29 @@
     };
   }
   async function convert(project, page, options = {}) {
+    if (page.conversion) {
+      const template = root.LSENative.validateTemplate(page.elementor);
+      root.LSENative.requireWidgets(template);
+      const { warnings, nodes, fallbacks } = inspect(page);
+      // The normal converted-page writer remaps bundled media and validates
+      // settings, styles and script permissions on the destination.
+      return {
+        elements: template.content,
+        css: page.conversion.css,
+        regions: page.conversion.regions,
+        warnings,
+        fallbacks,
+        source: {
+          html: page.html,
+          css: page.css,
+          js: page.js,
+          structure: page.conversion.structure || [],
+        },
+        seo: page.seo || {},
+        counts: { native: nodes - fallbacks, fallbacks },
+      };
+    }
+    if (page.elementor) return root.LSENative.convert(page, options.map || {});
     const resources =
       options.resources || resourceSession(project, options.map);
     resources.retain();
@@ -1054,6 +1281,14 @@
       doc = new DOMParser().parseFromString(source, "text/html");
     warnings.push(...prepareSource(doc));
     const inlineScripts = [...doc.querySelectorAll("script:not([src])")]
+      .filter(
+        (node) =>
+          sourceScriptKind({
+            id: node.id,
+            type: node.type,
+            code: node.textContent,
+          }) === "script",
+      )
       .map((x) => x.textContent)
       .join("\n");
     for (const node of doc.querySelectorAll("iframe")) {
@@ -1159,15 +1394,43 @@
         ),
       );
       const snapshots = new Map(),
-        widths = [1440, 1024, 768, 390];
+        widths = [1440, 1280, 1024, 768, 767, 390];
+      // Source breakpoints need not coincide with Elementor's three devices.
+      // Capture each CSS transition instead of stretching a phone measurement
+      // across the entire tablet/mobile range.
+      const boundaries = new Set(widths);
+      const collectBoundaries = (rules) => {
+        for (const rule of rules) {
+          if (rule.type === 4)
+            for (const match of rule.conditionText.matchAll(
+              /\b(min|max)-width\s*:\s*([\d.]+)px/gi,
+            )) {
+              const edge = Number(match[2]);
+              for (const value of match[1].toLowerCase() === "min"
+                ? [edge, edge - 0.02]
+                : [edge])
+                if (value >= 390 && value <= 1440) boundaries.add(value);
+            }
+          if (rule.cssRules) collectBoundaries(rule.cssRules);
+        }
+      };
+      for (const style of d.querySelectorAll("style"))
+        if (style.sheet) collectBoundaries(style.sheet.cssRules);
+      widths.splice(0, widths.length, ...[...boundaries].sort((a, b) => b - a));
+      const typography = measureTypography(d);
       const elements = [],
         generatedIds = new Set();
       let fallbacks = 0;
       const structural = new Set();
       const islands = new Set();
+      const nativeInteractions = new Set();
+      const nativeButtons = root.LSE_CONFIG?.nativeButtonContainers === true;
       for (const n of d.querySelectorAll("header,footer,nav"))
-        if (n.querySelector("button,[aria-controls],[aria-expanded]"))
-          islands.add(n.closest("header,footer") || n);
+        if (n.querySelector("button,[aria-controls],[aria-expanded]")) {
+          const region = n.closest("header,footer") || n;
+          if (nativeButtons) nativeInteractions.add(region);
+          else islands.add(region);
+        }
       for (const n of d.querySelectorAll("form"))
         islands.add(n.closest(".fr-calculator,[data-lse-interaction]") || n);
       for (const n of d.querySelectorAll("[data-fr-brief]"))
@@ -1198,7 +1461,9 @@
         if (node.nodeType === 3) {
           const text = node.textContent.trim();
           if (!text) return null;
-          const wrap = d.createElement("p");
+          const wrap = d.createElement(
+            node.parentElement?.tagName === "BUTTON" ? "span" : "p",
+          );
           wrap.textContent = text;
           node.replaceWith(wrap);
           node = wrap;
@@ -1270,6 +1535,8 @@
           children = [];
         settings.lse_attributes["data-lse-source-tag"] = tag;
         settings.lse_attributes["data-lse-native"] = "";
+        if (nativeInteractions.has(node))
+          settings.lse_attributes["data-lse-interactive"] = "";
         const interactive = islands.has(node);
         if (interactive) {
           fallbacks++;
@@ -1378,7 +1645,8 @@
             "video",
             "audio",
             "picture",
-          ].includes(tag)
+          ].includes(tag) &&
+          !(tag === "button" && nativeButtons)
         ) {
           widget = "html";
           fallbacks++;
@@ -1401,6 +1669,7 @@
             "article",
             "aside",
             "a",
+            ...(nativeButtons ? ["button"] : []),
           ].includes(tag)
             ? tag
             : "div";
@@ -1462,6 +1731,8 @@
         "margin-left",
         "width",
         "max-width",
+        "overflow-x",
+        "overflow-y",
         "height",
         "top",
         "right",
@@ -1525,9 +1796,17 @@
             props.parentWidth = cached.width;
           }
           props.actualWidth = String(entry.node.getBoundingClientRect().width);
+          props.typography = typography.read(entry.styleNode, content);
+          props.textMaxWidth =
+            entry.styleNode.computedStyleMap?.().get("max-width")?.toString() ||
+            content.maxWidth;
           if (["header", "footer"].includes(entry.tag))
             props.contextVariables = [...s]
-              .filter((property) => property.startsWith("--"))
+              .filter(
+                (property) =>
+                  property.startsWith("--") &&
+                  !property.startsWith("--lse-measure-"),
+              )
               .map((property) =>
                 namespaceCSS(property + ":" + s.getPropertyValue(property)),
               )
@@ -1591,6 +1870,12 @@
           );
           props.specifiedWidth = typed?.get("width")?.toString();
           props.specifiedHeight = typed?.get("height")?.toString();
+          props.specifiedGridColumns = typed
+            ?.get("grid-template-columns")
+            ?.toString();
+          props.specifiedGridRows = typed
+            ?.get("grid-template-rows")
+            ?.toString();
           props.sourceOffsets = {};
           for (const side of ["top", "right", "bottom", "left"]) {
             props.sourceOffsets[side] =
@@ -1608,6 +1893,10 @@
               imagePaint.map((p) => [p, imageStyle.getPropertyValue(p)]),
             );
             props.image.height = imageStyle.height;
+            props.image.specifiedHeight = entry.styleNode
+              .computedStyleMap?.()
+              .get("height")
+              ?.toString();
             for (const side of ["top", "right", "bottom", "left"])
               for (const part of ["width", "style", "color"])
                 props.image["border-" + side + "-" + part] =
@@ -1637,6 +1926,7 @@
           snapshots.get(entry.element.id)[width] = props;
         }
       }
+      typography.restore();
       function fontFaces(rules) {
         let result = "";
         for (const rule of rules) {
@@ -1651,8 +1941,135 @@
       let css = options.preserveCSS
         ? sourceSheets.map((sheet) => fontFaces(sheet.cssRules)).join("")
         : "";
+      const structure = [];
+      const byId = new Map(elements.map((entry) => [entry.element.id, entry]));
+      const layoutNodes = new Set();
+      const siteRegion = (entry) =>
+        ["header", "footer"].includes(entry.tag) &&
+        !entry.node.parentElement.closest(
+          "main,[role=main],article,aside,nav,section",
+        );
+      const normalFlow = (entry) =>
+        !entry.widget &&
+        !entry.interactive &&
+        widths.every((width) => {
+          const style = snapshots.get(entry.element.id)[width];
+          return (
+            style.display === "block" &&
+            style.position === "static" &&
+            style.transform === "none" &&
+            !style.inlineFlow
+          );
+        });
+      function pageBlocks(node, level = 0) {
+        const entry = byId.get(node.id);
+        const tag = entry.tag;
+        const children = node.elements;
+        const siteShell =
+          level === 1 &&
+          tag === "div" &&
+          children.some((child) =>
+            byId.get(child.id).node.matches("main,[role=main]"),
+          );
+        const sectionGroup =
+          tag === "div" &&
+          children.length > 1 &&
+          children.every((child) =>
+            ["section", "article"].includes(byId.get(child.id).tag),
+          );
+        if (
+          !options.preserveCSS ||
+          options.layout === "elementor_header_footer" ||
+          !children.length ||
+          !normalFlow(entry) ||
+          !(
+            tag === "body" ||
+            entry.node.matches("main,[role=main]") ||
+            siteShell ||
+            sectionGroup
+          )
+        )
+          return [node];
+        // Store the layout ancestors separately from editable Elementor nodes.
+        // Restore them for visitor rendering, including the real main landmark.
+        const shell = {
+          id: node.id,
+          tag: tag === "main" ? "main" : "div",
+          classes: node.settings.css_classes || "",
+          anchor: node.settings._element_id || "",
+          attributes: node.settings.lse_attributes || {},
+          members: [],
+        };
+        structure.push(shell);
+        layoutNodes.add(node.id);
+        const blocks = children.flatMap((child) =>
+          pageBlocks(child, level + 1),
+        );
+        shell.members = blocks.map((block) => block.id);
+        return blocks;
+      }
+      const blocks = tree.flatMap((node) => pageBlocks(node));
+      if (structure.length) {
+        for (const block of blocks) {
+          const entry = byId.get(block.id);
+          const { node, tag } = entry;
+          const heading = node.querySelector(
+            ":scope > h1,:scope > h2,:scope > h3",
+          );
+          const sectionName = node.classList[0]?.replace(/[-_]+/g, " ");
+          const title =
+            (siteRegion(entry) ? tag : "") ||
+            node.getAttribute("aria-label") ||
+            heading?.textContent.trim() ||
+            sectionName;
+          if (title && !block.settings._title)
+            block.settings._title = (
+              title[0].toUpperCase() + title.slice(1)
+            ).slice(0, 100);
+        }
+        const shellProps = [
+          ...new Set([...outerProps, ...innerProps, ...snapshotProps]),
+        ];
+        for (const shell of structure) {
+          const all = snapshots.get(shell.id);
+          let previous = {};
+          for (const width of widths) {
+            const current = {
+              ...all[width],
+              width: all[width].specifiedWidth,
+              height: all[width].specifiedHeight,
+            };
+            const declarations = shellProps
+              .filter(
+                (name) =>
+                  current[name] &&
+                  current[name] !== previous[name] &&
+                  safeValue(current[name]),
+              )
+              .map((name) => name + ":" + current[name]);
+            previous = current;
+            if (!declarations.length) continue;
+            const selector =
+              '__LSE_SCOPE__ [data-lse-layout-shell="' +
+              shell.id +
+              '"]' +
+              (shell === structure[0] ||
+              (!shell.anchor &&
+                shell.tag === "div" &&
+                shell.members.length === blocks.length)
+                ? ",__LSE_SCOPE__ [data-lse-editor-context]"
+                : "");
+            const rule = selector + "{" + declarations.join(";") + "}";
+            css +=
+              width === 1440
+                ? rule
+                : "@media(max-width:" + width + "px){" + rule + "}";
+          }
+        }
+      }
       for (const entry of elements) {
         const { element, widget } = entry;
+        if (layoutNodes.has(element.id)) continue;
         const all = snapshots.get(element.id);
         if (widget === "image")
           css +=
@@ -1661,7 +2078,13 @@
             ") > a,:where(__LSE_SCOPE__ .elementor-element-" +
             element.id +
             ") > .elementor-widget-container > a{width:100%}\n";
-        if (entry.interactive) {
+        if (
+          entry.interactive ||
+          (widget === "html" && entry.tag !== "svg" && options.preserveCSS)
+        ) {
+          // Copied roots keep their own box styles. Sampling those styles onto
+          // the extra widget wrapper doubles padding/borders on details, forms
+          // and tables; native sizing only belongs on the neutral wrapper.
           element.settings._element_width = "initial";
           element.settings._element_custom_width = { unit: "%", size: 100 };
           for (const [width, suffix] of [
@@ -1692,7 +2115,10 @@
           css +=
             "__LSE_SCOPE__ .elementor-element-" +
             element.id +
-            " [data-lse-interactive]{font-family:" +
+            (entry.interactive
+              ? " [data-lse-interactive]"
+              : " [data-lse-source-content]") +
+            "{font-family:" +
             all[1440]["font-family"] +
             ";font-size:" +
             all[1440]["font-size"] +
@@ -1705,8 +2131,70 @@
         }
         let previousOuter = new Map(),
           previousInner = new Map();
+        const clipped =
+          !widget &&
+          widths.some((width) =>
+            ["overflow-x", "overflow-y"].some(
+              (name) => all[width][name] !== "visible",
+            ),
+          );
         for (const width of widths) {
           const s = all[width];
+          const textWidget = ["heading", "text-editor", "button"].includes(
+            widget,
+          );
+          const sourceValues = {};
+          const sourceVariable = (name) => "var(--lse-source-" + name + ")";
+          if (textWidget)
+            sourceValues["font-size"] = s.typography.fontSize || s["font-size"];
+          if (!widget || widget !== "html") {
+            sourceValues.display = widget
+              ? s.display === "inline"
+                ? "inline-block"
+                : s.display
+              : !s.display.includes("flex") &&
+                  !s.display.includes("grid") &&
+                  s.inlineFlow
+                ? "flex"
+                : s.display;
+            sourceValues.width = s.specifiedWidth || "auto";
+            sourceValues.height = s.specifiedHeight || "auto";
+            for (const part of ["padding", "margin"])
+              for (const side of ["top", "right", "bottom", "left"])
+                sourceValues[part + "-" + side] = s[part + "-" + side];
+          }
+          if (widget === "image")
+            sourceValues["image-height"] =
+              s.image.specifiedHeight || s.image.height;
+          if (!widget) {
+            sourceValues["flex-direction"] = s["flex-direction"];
+            sourceValues["flex-wrap"] = s["flex-wrap"];
+            sourceValues["row-gap"] = (parseFloat(s["row-gap"]) || 0) + "px";
+            sourceValues["column-gap"] =
+              (parseFloat(s["column-gap"]) || s.inlineGap || 0) + "px";
+            sourceValues["grid-columns"] =
+              s.specifiedGridColumns || s["grid-template-columns"];
+            sourceValues["grid-rows"] =
+              s.specifiedGridRows || s["grid-template-rows"];
+            for (const name of [
+              "justify-content",
+              "align-items",
+              "justify-items",
+              "align-content",
+            ])
+              sourceValues[name] = s[name];
+            sourceValues["min-height"] =
+              parseFloat(s["min-height"]) > 0
+                ? s.sourceMinHeight || s["min-height"]
+                : (!element.elements.length ||
+                      (s.inlineFlow &&
+                        !s.display.includes("flex") &&
+                        !s.display.includes("grid"))) &&
+                    !s.fillHeight &&
+                    !s.explicitHeight
+                  ? s.height
+                  : "0px";
+          }
           const suffix =
             +width === 1440
               ? ""
@@ -1717,12 +2205,35 @@
                   : null;
           if (suffix !== null) {
             const target = element.settings;
+            if (/^-?\d+$/.test(s["z-index"]))
+              target[(widget ? "_z_index" : "z_index") + suffix] = Number(
+                s["z-index"],
+              );
+            target["lse_position" + suffix] = s.position;
+            if (clipped) {
+              target["lse_overflow_x" + suffix] = s["overflow-x"];
+              target["lse_overflow_y" + suffix] = s["overflow-y"];
+            }
+            for (const side of ["top", "right", "bottom", "left"])
+              target["lse_offset_" + side + suffix] = sourceSize(
+                s.sourceOffsets[side] || s[side],
+              );
             target["lse_box_sizing" + suffix] =
               widget === "image" ? "border-box" : s["box-sizing"];
             if (widget && widget !== "html")
               target["lse_widget_display" + suffix] =
                 s.display === "inline" ? "inline-block" : s.display;
             target["_flex_align_self" + suffix] = s["align-self"];
+            if (s.parentDisplay?.includes("flex")) {
+              target["_flex_size" + suffix] = "custom";
+              target["_flex_grow" + suffix] = Number(s["flex-grow"]);
+              target["_flex_shrink" + suffix] = Number(s["flex-shrink"]);
+              target["lse_flex_basis" + suffix] = sourceSize(s["flex-basis"]);
+            }
+            if (widget && s.explicitHeight)
+              target["lse_height" + suffix] = sourceSize(
+                s.specifiedHeight || s.height,
+              );
             if (!widget)
               target["lse_justify_self" + suffix] = s["justify-self"];
             if (s.parentDisplay?.includes("grid")) {
@@ -1738,7 +2249,7 @@
                   : width === 390
                     ? "mobile"
                     : null;
-            if (device && s.display === "none")
+            if (!options.preserveCSS && device && s.display === "none")
               target["hide_" + device] = "hidden-" + device;
             if (widget && !s.parentDisplay?.includes("grid")) {
               target["_element_width" + suffix] = "initial";
@@ -1817,7 +2328,7 @@
                     parseFloat(s.imageBoxWidth),
                 };
               target["height" + suffix] = image.explicitHeight
-                ? sourceSize(image.height)
+                ? sourceSize(image.specifiedHeight || image.height)
                 : { unit: "custom", size: "auto" };
               target["object-fit" + suffix] = image["object-fit"];
               target["object-position" + suffix] = image["object-position"];
@@ -1902,11 +2413,18 @@
                     ? "typography"
                     : "typography";
               target[prefix + "_typography"] = "custom";
-              target[prefix + "_font_size" + suffix] = px(s["font-size"]);
+              target["lse_text_max_width" + suffix] = sourceSize(
+                options.preserveCSS
+                  ? "var(--lse-text-max-width)"
+                  : s.textMaxWidth,
+              );
+              target[prefix + "_font_size" + suffix] = s.typography.fontSize
+                ? sourceSize(s.typography.fontSize)
+                : px(s["font-size"]);
               if (width === 1440) {
-                target[prefix + "_font_family"] = s["font-family"]
-                  .split(",")[0]
-                  .replace(/["']/g, "");
+                const font = fontStack(s["font-family"]);
+                target[prefix + "_font_family"] = font.family;
+                if (font.fallbacks) target.lse_font_fallbacks = font.fallbacks;
                 target[prefix + "_font_weight"] = s["font-weight"];
               } else {
                 if (s["font-family"] !== all[1440]["font-family"])
@@ -1920,10 +2438,15 @@
               )
                 target["lse_line_height" + suffix] = s["line-height"];
               if (parseFloat(s["line-height"]) > 0)
-                target[prefix + "_line_height" + suffix] = px(s["line-height"]);
-              target[prefix + "_letter_spacing" + suffix] = px(
-                s["letter-spacing"],
-              );
+                target[prefix + "_line_height" + suffix] = /^\d*\.?\d+$/.test(
+                  s.typography.lineHeight,
+                )
+                  ? { unit: "em", size: Number(s.typography.lineHeight) }
+                  : px(s["line-height"]);
+              target[prefix + "_letter_spacing" + suffix] = s.typography
+                .letterSpacing
+                ? sourceSize(s.typography.letterSpacing)
+                : px(s["letter-spacing"]);
               const colorControl =
                 widget === "heading"
                   ? "title_color"
@@ -1941,8 +2464,15 @@
                   ? "100%"
                   : "auto";
                 target["background_color" + suffix] = s["background-color"];
-                if (s.explicitHeight && parseFloat(s.height) > 0)
-                  target["lse_button_min_height" + suffix] = px(s.height);
+                if (
+                  (s.explicitHeight && parseFloat(s.height) > 0) ||
+                  parseFloat(s["min-height"]) > 0
+                )
+                  target["lse_button_min_height" + suffix] = sourceSize(
+                    s.explicitHeight
+                      ? s.specifiedHeight || s.height
+                      : s["min-height"],
+                  );
                 if (
                   s.explicitWidth &&
                   ["flex", "inline-flex"].includes(s.display)
@@ -2078,6 +2608,18 @@
                 row: String(parseFloat(s["row-gap"]) || 0),
                 isLinked: false,
               };
+              // Elementor keeps a container's desktop Grid/Flex class at
+              // smaller widths. Keep both sets of native alignment values in
+              // sync when the source switches layout mode at a breakpoint.
+              target["grid_gaps" + suffix] = target["flex_gap" + suffix];
+              for (const property of [
+                "align-items",
+                "justify-items",
+                "justify-content",
+                "align-content",
+              ])
+                target["grid_" + property.replaceAll("-", "_") + suffix] =
+                  s[property];
               if (s.display.includes("grid")) {
                 const cols = s["grid-template-columns"]
                   .split(/\s+/)
@@ -2095,16 +2637,11 @@
                   unit: "custom",
                   size: "auto",
                 };
-                target["grid_gaps" + suffix] = target["flex_gap" + suffix];
-                for (const property of [
-                  "align-items",
-                  "justify-items",
-                  "justify-content",
-                  "align-content",
-                ])
-                  target["grid_" + property.replaceAll("-", "_") + suffix] =
-                    s[property];
                 target["grid_auto_flow" + suffix] = s["grid-auto-flow"];
+              } else if (target.container_type === "grid") {
+                // Core gates responsive grid alignment on a custom column
+                // unit, even while our responsive Display control is Flex.
+                target["grid_columns_grid" + suffix] = target.grid_columns_grid;
               }
               const minHeight =
                 parseFloat(s["min-height"]) > 0
@@ -2150,8 +2687,111 @@
               }
             }
           }
+          if (
+            suffix !== null &&
+            !widget &&
+            element.settings.container_type === "grid"
+          ) {
+            // Core's Flex direction controls only emit selectors for .e-flex.
+            // A desktop Grid keeps .e-grid when the source becomes Flex later.
+            for (const property of ["direction", "wrap"])
+              element.settings["lse_flex_" + property + suffix] =
+                options.preserveCSS
+                  ? sourceVariable("flex-" + property)
+                  : s["flex-" + property];
+          }
           if (!options.preserveCSS) continue;
+          if (suffix !== null && widget !== "html") {
+            const target = element.settings;
+            if (textWidget)
+              target["typography_font_size" + suffix] = sourceSize(
+                sourceVariable("font-size"),
+              );
+            const displayControl = widget
+              ? "lse_widget_display"
+              : "lse_display";
+            if (Object.hasOwn(target, displayControl + suffix))
+              target[displayControl + suffix] = sourceVariable("display");
+            for (const [control, name] of [
+              [widget ? "_element_custom_width" : "width", "width"],
+              ["lse_height", "height"],
+              ["min_height", "min-height"],
+            ])
+              if (Object.hasOwn(target, control + suffix))
+                target[control + suffix] = sourceSize(sourceVariable(name));
+            for (const part of ["padding", "margin"]) {
+              if (
+                part === "padding" &&
+                (widget === "button" ||
+                  (widget === "image" && entry.node === entry.styleNode))
+              )
+                continue;
+              const control = (widget ? "_" : "") + part + suffix;
+              if (Object.hasOwn(target, control))
+                target[control] = {
+                  unit: "custom",
+                  isLinked: false,
+                  ...Object.fromEntries(
+                    ["top", "right", "bottom", "left"].map((side) => [
+                      side,
+                      sourceVariable(part + "-" + side),
+                    ]),
+                  ),
+                };
+            }
+            if (
+              widget === "button" &&
+              Object.hasOwn(target, "text_padding" + suffix)
+            )
+              target["text_padding" + suffix] = {
+                unit: "custom",
+                isLinked: false,
+                ...Object.fromEntries(
+                  ["top", "right", "bottom", "left"].map((side) => [
+                    side,
+                    sourceVariable("padding-" + side),
+                  ]),
+                ),
+              };
+            if (widget === "image")
+              target["height" + suffix] = sourceSize(
+                sourceVariable("image-height"),
+              );
+            if (!widget) {
+              target["flex_gap" + suffix] = target["grid_gaps" + suffix] = {
+                unit: "custom",
+                row: sourceVariable("row-gap"),
+                column: sourceVariable("column-gap"),
+                isLinked: false,
+              };
+              for (const name of [
+                "justify-content",
+                "align-items",
+                "justify-items",
+                "align-content",
+              ]) {
+                target["grid_" + name.replaceAll("-", "_") + suffix] =
+                  sourceVariable(name);
+                if (["justify-content", "align-items"].includes(name))
+                  target["flex_" + name.replaceAll("-", "_") + suffix] =
+                    sourceVariable(name);
+              }
+              if (target.container_type === "grid") {
+                target["grid_columns_grid" + suffix] = sourceSize(
+                  sourceVariable("grid-columns"),
+                );
+                target["grid_rows_grid" + suffix] = sourceSize(
+                  sourceVariable("grid-rows"),
+                );
+              }
+            }
+          }
           let declarations = [];
+          for (const [name, value] of Object.entries(sourceValues))
+            if (value && safeValue(value))
+              declarations.push("--lse-source-" + name + ":" + value);
+          if (["heading", "text-editor", "button"].includes(widget))
+            declarations.push("--lse-text-max-width:" + s.textMaxWidth);
           for (const p of outerProps) {
             if (
               widget === "image" &&
@@ -2403,10 +3043,7 @@
         );
       const regions = [];
       for (const entry of elements) {
-        if (
-          ["header", "footer"].includes(entry.tag) &&
-          entry.element.elType === "container"
-        ) {
+        if (siteRegion(entry) && entry.element.elType === "container") {
           let contextCSS = "",
             previous = new Set();
           for (const width of widths) {
@@ -2451,19 +3088,22 @@
             id: entry.element.id,
             kind: entry.tag,
             context_css: restoreRefs(contextCSS),
+            separate: true,
           });
         }
       }
       return {
-        elements: restore(tree),
+        elements: restore(blocks),
         css: restoreRefs(css),
         warnings: [...new Set(warnings)],
         fallbacks,
         regions,
+        structure,
         source: {
           html: page.html,
           css: page.css,
           js: page.js + "\n" + inlineScripts,
+          structure,
         },
         seo: page.seo || {},
         counts: { native: elements.length - fallbacks, fallbacks },
@@ -2481,9 +3121,27 @@
     const css = [...doc.querySelectorAll("style")]
       .map((n) => n.textContent)
       .join("\n");
-    const js = [...doc.querySelectorAll("script:not([src])")]
-      .map((n) => n.textContent)
-      .join("\n");
+    const scripts = [],
+      warnings = new Set();
+    for (const node of doc.querySelectorAll("script")) {
+      const kind = sourceScriptKind({
+        id: node.id,
+        src: node.getAttribute("src") || "",
+        type: node.type,
+        code: node.textContent,
+      });
+      if (kind === "analytics")
+        warnings.add(
+          "Source analytics scripts were omitted. Configure analytics on the destination separately.",
+        );
+      else if (kind === "module")
+        warnings.add(
+          "JavaScript modules need their destination dependencies configured.",
+        );
+      else if (kind === "script" && !node.hasAttribute("src"))
+        scripts.push(node.textContent);
+    }
+    const js = scripts.join("\n;\n");
     for (const node of doc.querySelectorAll("style,script:not([src])"))
       node.remove();
     const slug =
@@ -2513,6 +3171,7 @@
       assets: [],
       fonts: [],
       site: { home_key: slug, navigation: [] },
+      capture: { warnings: [...warnings] },
     });
     project.input_kind = "html";
     return project;
@@ -2529,5 +3188,7 @@
     cssReferences,
     replaceCSSReferences,
     importConditions,
+    fontStack,
+    sourceScriptKind,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

@@ -568,13 +568,22 @@
         parent = all.get(parent)?.parent_key || "";
       p.parent_key = parent;
     }
+    const navigation = (items) =>
+      items.flatMap((item) => {
+        const children = navigation(item.children || []);
+        if (keys.has(item.key)) return [{ ...item, children }];
+        if (item.url) {
+          return [{ ...item, children }];
+        }
+        return children;
+      });
     return {
       ...project,
       title: $("#lse-name").value.trim() || project.title || "Imported website",
       pages: chosen,
       site: {
         home_key: keys.has(project.site.home_key) ? project.site.home_key : "",
-        navigation: project.site.navigation.filter((n) => keys.has(n.key)),
+        navigation: navigation(project.site.navigation),
       },
     };
   }
@@ -598,6 +607,20 @@
     $("#lse-error-details").hidden = true;
     $("#lse-check").hidden = true;
     try {
+      if (file.length !== undefined && !file.name) {
+        const files = [...file];
+        if (files.length === 1) file = files[0];
+        else {
+          const entries = await Promise.all(
+            files.map(async (f) => ({
+              name: f.name,
+              data: JSON.parse((await f.text()).replace(/^\uFEFF/, "")),
+            })),
+          );
+          prepared = M.validate(window.LSENative.fromTemplates(entries));
+          file = { name: "elementor-page.json" };
+        }
+      }
       if (!/\.(json|html?)$/i.test(file.name))
         throw Error("Choose one .json, .html or .htm file.");
       status("Reading and checking your website…");
@@ -611,6 +634,10 @@
         (/\.html?$/i.test(file.name)
           ? M.fromHTML(text, file.name)
           : M.validate(JSON.parse(text.replace(/^\uFEFF/, ""))));
+      if (project.pages.some((p) => p.elementor)) {
+        for (const p of project.pages)
+          if (p.elementor) window.LSENative.requireWidgets(p.elementor);
+      }
       fingerprint = [
         ...new Uint8Array(
           await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
@@ -706,8 +733,11 @@
       const hasScripts = project.pages.some(
         (p) => p.js.trim() || /<script/i.test(p.html),
       );
-      $("#lse-scripts").checked = hasScripts && config.canScripts;
+      const converted = project.pages.some((p) => p.conversion);
+      $("#lse-scripts").checked = hasScripts && config.canScripts && !converted;
       $("#lse-scripts").closest("label").hidden = !hasScripts;
+      $("#lse-css").closest("label").hidden = converted;
+      $("#lse-layout").closest("label").hidden = converted;
       $("#lse-review").hidden = false;
       $("#lse-choose").hidden = true;
       $("#lse-progress").hidden = true;
@@ -743,19 +773,38 @@
         : "Import progress loaded.",
     );
   }
+  function confirmReplacement(count) {
+    const dialog = $("#lse-replace-dialog");
+    $("#lse-replace-count").textContent = String(count);
+    dialog.returnValue = "";
+    return new Promise((resolve) => {
+      dialog.addEventListener(
+        "close",
+        () => resolve(dialog.returnValue === "replace"),
+        { once: true },
+      );
+      dialog.showModal();
+    });
+  }
   async function run() {
     if (busy || !project) return;
     const source = selected();
     if (!source.pages.length) return;
     const target = window.LSEManage?.target;
+    const converted = source.pages.some((page) => page.conversion);
+    const layout = converted ? "elementor_canvas" : $("#lse-layout").value;
+    const preserveCSS = converted || $("#lse-css").checked;
+    if (converted && target && target.layout !== layout) {
+      status(
+        "This website export uses the standalone layout. Import it as a new website to keep the converted layout.",
+        true,
+      );
+      return;
+    }
     if (
       target &&
       $("#lse-overwrite").checked &&
-      !confirm(
-        "Replace the content of " +
-          source.pages.length +
-          " selected existing pages? Edited or published content may change immediately. Their IDs, addresses and publication status stay the same.",
-      )
+      !(await confirmReplacement(source.pages.length))
     )
       return;
     setBusy(true);
@@ -783,9 +832,9 @@
         ":" +
         source.pages.map((p) => p.key).join(",") +
         ":" +
-        $("#lse-layout").value +
+        layout +
         ":" +
-        $("#lse-css").checked +
+        preserveCSS +
         ":" +
         $("#lse-scripts").checked +
         ":" +
@@ -831,7 +880,7 @@
               warnings: source.capture.warnings || [],
             }
           : null,
-        layout: $("#lse-layout").value,
+        layout,
         scripts: $("#lse-scripts").checked,
       });
       if (job.state === "ready") {
@@ -1060,12 +1109,19 @@
       const pendingPages = source.pages.filter(
         (page) => !job.pages.find((p) => p.key === page.key)?.done,
       );
-      resources = M.resourceSession(source, job.map);
+      // Shared site templates use the homepage design when it is selected.
+      const homeIndex = pendingPages.findIndex(
+        (page) => page.key === source.site.home_key,
+      );
+      if (homeIndex > 0)
+        pendingPages.unshift(...pendingPages.splice(homeIndex, 1));
+      if (pendingPages.some((page) => !page.elementor))
+        resources = M.resourceSession(source, job.map);
       const prepare = (page) =>
         M.convert(source, page, {
           map: job.map,
           layout: job.layout,
-          preserveCSS: $("#lse-css").checked,
+          preserveCSS,
           resources,
         }).then(
           (value) => ({ value }),
@@ -1082,7 +1138,9 @@
         };
         progress(
           40 + (55 * i) / Math.max(1, pendingPages.length),
-          "Converting and saving page " +
+          (page.conversion
+            ? "Saving Elementor page "
+            : "Converting and saving page ") +
             (i + 1) +
             " of " +
             pendingPages.length +
@@ -1118,7 +1176,7 @@
         "Checking pages and preparing shared sections and navigation…",
       );
       do {
-        job = await request("finish", { job: job.id });
+        job = await request("finish", { job: job.id, compact: true });
       } while (job.state === "finishing");
       progress(
         100,
@@ -1148,7 +1206,7 @@
       setBusy(false);
     }
   }
-  $("#lse-file").addEventListener("change", (e) => choose(e.target.files[0]));
+  $("#lse-file").addEventListener("change", (e) => choose(e.target.files));
   const drop = $(".lse-drop");
   drop.addEventListener("dragover", (e) => {
     e.preventDefault();
@@ -1158,11 +1216,7 @@
   drop.addEventListener("drop", (e) => {
     e.preventDefault();
     drop.classList.remove("is-over");
-    if (e.dataTransfer.files.length !== 1) {
-      status("Drop one complete website JSON file.", true);
-      return;
-    }
-    choose(e.dataTransfer.files[0]);
+    choose(e.dataTransfer.files);
   });
   $("#lse-all").addEventListener("change", (e) => {
     document

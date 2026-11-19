@@ -213,6 +213,19 @@ final class LSE_Plugin
             require_once __DIR__ . '/shared-widget.php';
             $manager->register(new LSE_Shared_Widget());
         });
+        add_action('elementor/element/before_section_end', static function (
+            $element,
+        ) {
+            if (
+                $element->get_name() === 'nav-menu' &&
+                !$element->get_controls('lse_imported_menu')
+            ) {
+                $element->add_control('lse_imported_menu', [
+                    'type' => \Elementor\Controls_Manager::HIDDEN,
+                    'default' => '',
+                ]);
+            }
+        });
         add_action(
             'elementor/element/image/section_image/before_section_end',
             static function ($element) {
@@ -373,10 +386,45 @@ final class LSE_Plugin
                     'type' => \Elementor\Controls_Manager::TEXT,
                     'selectors' => [$selector => 'line-height:{{VALUE}};'],
                 ]);
+                $element->add_responsive_control('lse_text_max_width', [
+                    'label' => 'Text maximum width',
+                    'description' =>
+                        'Keeps source line wrapping on the actual text element, including ch/em units.',
+                    'type' => \Elementor\Controls_Manager::SLIDER,
+                    'size_units' => [
+                        'px',
+                        '%',
+                        'ch',
+                        'em',
+                        'rem',
+                        'vw',
+                        'custom',
+                    ],
+                    'selectors' => [$selector => 'max-width:{{SIZE}}{{UNIT}};'],
+                ]);
+                $element->add_control('lse_font_fallbacks', [
+                    'label' => 'Font fallbacks',
+                    'description' =>
+                        'The source fallback fonts, used after the font chosen in Typography. Clear to use Elementor defaults.',
+                    'type' => \Elementor\Controls_Manager::TEXT,
+                    'selectors' => [
+                        str_replace(
+                            '{{WRAPPER}}',
+                            '{{WRAPPER}}.elementor-element',
+                            $selector,
+                        ) => 'font-family:"{{typography_font_family.VALUE}}",{{VALUE}};',
+                    ],
+                ]);
                 $element->add_responsive_control('lse_font_family', [
                     'label' => 'Font family',
                     'type' => \Elementor\Controls_Manager::TEXT,
-                    'selectors' => [$selector => 'font-family: {{VALUE}};'],
+                    'selectors' => [
+                        str_replace(
+                            '{{WRAPPER}}',
+                            '{{WRAPPER}}.elementor-element',
+                            $selector,
+                        ) => 'font-family: {{VALUE}};',
+                    ],
                 ]);
                 $element->add_responsive_control('lse_font_weight', [
                     'label' => 'Font weight',
@@ -421,10 +469,34 @@ final class LSE_Plugin
             10,
             2,
         );
+        add_action('elementor/element/after_section_end', static function (
+            $element,
+        ) {
+            if ($element->get_name() !== 'container') {
+                return;
+            }
+            $control = $element->get_controls('html_tag');
+            if (is_array($control) && !isset($control['options']['button'])) {
+                $element->update_control('html_tag', [
+                    'options' => ($control['options'] ?? []) + [
+                        'button' => 'Button',
+                    ],
+                ]);
+            }
+        });
         add_action('elementor/frontend/before_render', static function (
             $element,
         ) {
             $settings = $element->get_data('settings');
+            if (
+                $element->get_name() === 'container' &&
+                ($settings['html_tag'] ?? '') === 'button' &&
+                ($settings['lse_attributes']['data-lse-source-tag'] ?? '') ===
+                    'button'
+            ) {
+                // Native action controls must never become accidental form submits.
+                $element->add_render_attribute('_wrapper', 'type', 'button');
+            }
             foreach (
                 is_array($settings['lse_attributes'] ?? null)
                     ? $settings['lse_attributes']
@@ -447,6 +519,7 @@ final class LSE_Plugin
                 }
             }
         });
+        LSE_Structure::init();
         add_action('wp_enqueue_scripts', [__CLASS__, 'front'], 30);
         add_action(
             'wp_print_styles',
@@ -527,6 +600,13 @@ final class LSE_Plugin
             'lse-converter',
             plugins_url('assets/converter.js', LSE_FILE),
             [],
+            LSE_CONVERTER_VERSION,
+            true,
+        );
+        wp_enqueue_script(
+            'lse-native',
+            plugins_url('assets/native-elementor.js', LSE_FILE),
+            ['lse-converter'],
             LSE_VERSION,
             true,
         );
@@ -540,22 +620,22 @@ final class LSE_Plugin
         wp_enqueue_script(
             'lse-admin',
             plugins_url('assets/admin.js', LSE_FILE),
-            ['lse-converter', 'lse-reports'],
-            LSE_VERSION,
+            ['lse-converter', 'lse-native', 'lse-reports'],
+            LSE_CONVERTER_VERSION,
             true,
         );
         wp_enqueue_script(
             'lse-capture',
             plugins_url('assets/capture.js', LSE_FILE),
             ['lse-admin', 'lse-manage'],
-            LSE_VERSION,
+            LSE_CONVERTER_VERSION,
             true,
         );
         wp_enqueue_script(
             'lse-manage',
             plugins_url('assets/manage.js', LSE_FILE),
             ['lse-admin'],
-            LSE_VERSION,
+            LSE_CONVERTER_VERSION,
             true,
         );
         if (current_user_can('update_plugins')) {
@@ -585,6 +665,13 @@ final class LSE_Plugin
                         ? ELEMENTOR_VERSION
                         : '',
                     'pro' => defined('ELEMENTOR_PRO_VERSION'),
+                    'nativeButtonContainers' =>
+                        class_exists('\\Elementor\\Utils') &&
+                        \Elementor\Utils::validate_html_tag('button') ===
+                            'button',
+                    'widgets' => class_exists('\\Elementor\\Plugin')
+                        ? array_keys(LSE_Native::widgets())
+                        : [],
                     'maxUpload' => wp_max_upload_size(),
                     'maxPost' => wp_convert_hr_to_bytes(
                         ini_get('post_max_size'),
@@ -638,7 +725,7 @@ final class LSE_Plugin
             <div class="lse-layout">
                 <aside class="lse-sidebar" aria-labelledby="lse-sidebar-title">
                     <button type="button" class="button button-primary" id="lse-new-import"><span aria-hidden="true">+</span> New import</button>
-                    <button type="button" class="button" data-capture-open aria-label="Import from website link">Import website link</button>
+                    <button type="button" class="button" data-export-open>Website to Elementor JSON</button>
                     <label for="lse-import-list" class="screen-reader-text">Imported website</label>
                     <select id="lse-import-list"><option value="">New import</option></select>
                     <h2 id="lse-sidebar-title">Imported websites</h2>
@@ -651,21 +738,22 @@ final class LSE_Plugin
                     <?php if (
                         !defined('ELEMENTOR_VERSION')
                     ): ?><p class="lse-notice is-error">Activate Elementor before importing.</p><?php endif; ?>
-                    <input type="file" id="lse-file" accept=".json,.html,.htm,application/json,text/html" hidden>
+                    <input type="file" id="lse-file" multiple accept=".json,.html,.htm,application/json,text/html" hidden>
                     <div id="lse-choose">
                         <div class="lse-drop">
                             <span class="lse-empty-icon" aria-hidden="true">↑</span>
                             <h1>Bring your website into Elementor</h1>
-                            <p>Drop a Little Studio JSON export or an HTML file here.</p>
+                            <p>Drop a Little Studio export, Elementor template JSON or an HTML file here.</p>
                             <div class="lse-actions lse-import-methods"><button type="button" class="button button-primary" id="lse-choose-file">Choose file</button>
-                            <button type="button" class="button" data-capture-open>Paste website link</button></div>
-                            <small>Imported pages are saved as drafts.</small>
+                            <button type="button" class="button" data-export-open>Paste website link</button></div>
+                            <small>For a split Elementor page, select header.json, content.json and footer.json together. Imported pages are saved as drafts.</small>
                         </div>
                     </div>
                     <section id="lse-project" aria-labelledby="lse-project-title" hidden>
                         <div class="lse-project-head">
                             <div><h1 id="lse-project-title"></h1><p id="lse-project-meta"></p></div>
                             <div class="lse-actions" id="lse-import-actions">
+                                <span class="lse-actions" id="lse-site-template-links"></span>
                                 <button type="button" class="button button-primary" id="lse-refresh-import"><span aria-hidden="true">↑</span> Update from file</button>
                                 <details class="lse-popover" id="lse-import-menu">
                                     <summary class="button lse-icon-button" aria-label="Import options">⋯</summary>
@@ -719,14 +807,21 @@ final class LSE_Plugin
         </dialog>
         <dialog id="lse-capture-dialog" class="lse-dialog" aria-labelledby="lse-capture-title">
             <form id="lse-capture-form">
-                <header class="lse-dialog-head"><h2 id="lse-capture-title">Import from a website link</h2><button type="button" class="button" id="lse-capture-close">Close</button></header>
+                <header class="lse-dialog-head"><h2 id="lse-capture-title">Website to Elementor JSON</h2><button type="button" class="button" id="lse-capture-close">Close</button></header>
                 <div class="lse-dialog-body">
-                    <p>Capture public pages, styles, images and fonts into a Little Studio JSON, then review the Elementor import.</p>
+                    <p>Enter a public website address. Download one file with the converted pages and their media.</p>
                     <label class="lse-field">Website address<input id="lse-capture-url" type="url" placeholder="https://your-website.com" required maxlength="2048"></label>
-                    <p class="lse-small">Keep this tab open. Review the result before publishing. Logins, stores, forms and JavaScript apps may need rebuilding.</p>
                     <p id="lse-capture-status" class="lse-notice" role="status" aria-live="polite"></p>
+                    <p id="lse-capture-feedback" class="lse-notice" hidden></p>
                 </div>
-                <footer class="lse-dialog-actions"><button type="button" class="button" id="lse-capture-retry" hidden>Retry capture</button><button type="submit" class="button button-primary" id="lse-capture-start">Capture website</button></footer>
+                <footer class="lse-dialog-actions"><a class="button" id="lse-capture-download" hidden>Download JSON</a><button type="button" class="button" id="lse-capture-retry" hidden>Retry</button><button type="submit" class="button button-primary" id="lse-capture-start">Convert to JSON</button></footer>
+            </form>
+        </dialog>
+        <dialog id="lse-replace-dialog" class="lse-dialog lse-page-dialog" aria-labelledby="lse-replace-title" aria-describedby="lse-replace-description">
+            <form method="dialog">
+                <header class="lse-dialog-head"><h2 id="lse-replace-title">Replace selected pages?</h2></header>
+                <div class="lse-dialog-body"><p>Replace the content of <strong id="lse-replace-count"></strong> selected existing pages?</p><p id="lse-replace-description">Edited or published content may change immediately. Their IDs, addresses and publication status stay the same.</p></div>
+                <footer class="lse-dialog-actions"><button type="submit" class="button" value="cancel" autofocus>Keep current pages</button><button type="submit" class="button button-primary" value="replace">Replace selected pages</button></footer>
             </form>
         </dialog>
         <dialog id="lse-remove-dialog" class="lse-dialog lse-page-dialog" aria-labelledby="lse-remove-title" aria-describedby="lse-remove-description">

@@ -237,7 +237,17 @@
         '">Edit in Elementor <span aria-hidden="true">↗</span></a>' +
         '<a class="button" target="_blank" rel="noopener" href="' +
         escapeHtml(page.preview_url) +
-        '">Preview page</a>';
+        '">Preview page</a>' +
+        (page.template_links || [])
+          .map(
+            (template) =>
+              '<a class="button" target="_blank" rel="noopener" href="' +
+              escapeHtml(template.edit_url) +
+              '">Edit ' +
+              escapeHtml(template.kind) +
+              "</a>",
+          )
+          .join("");
     } else if (page.can_edit && trashed) {
       actions =
         '<button type="button" class="button button-primary" data-operation="untrash">Restore as draft</button>';
@@ -274,7 +284,14 @@
   }
 
   function renderDetails() {
-    const templates = Object.values(current.templates || {});
+    const linked = new Set(
+      current.pages.flatMap((page) =>
+        (page.template_links || []).map((template) => template.edit_url),
+      ),
+    );
+    const templates = Object.values(current.templates || {}).filter(
+      (template) => linked.has(template.edit_url),
+    );
     $("#lse-import-summary").innerHTML = [
       ["Imported", dateLabel(current.created, true)],
       ["Pages", current.pages.length],
@@ -346,6 +363,18 @@
     renderSites();
     if (!current) return;
     $("#lse-project-title").textContent = current.title;
+    $("#lse-site-template-links").innerHTML = (
+      current.site_template_links || []
+    )
+      .map(
+        (part) =>
+          '<a class="button" target="_blank" rel="noopener" href="' +
+          escapeHtml(part.edit_url) +
+          '">Edit site ' +
+          escapeHtml(part.kind) +
+          "</a>",
+      )
+      .join("");
     $("#lse-project-meta").textContent =
       "Imported " +
       dateLabel(current.created, true) +
