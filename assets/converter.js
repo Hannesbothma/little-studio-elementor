@@ -2091,6 +2091,11 @@
         return widths.some((width) => {
           const style = snapshots.get(entry.element.id)[width];
           return (
+            style.display.includes("grid") ||
+            (style.display.includes("flex") &&
+              ["align-items", "justify-content"].some((prop) =>
+                /center|end|baseline|space-/.test(style[prop]),
+              )) ||
             ["absolute", "fixed", "sticky"].includes(style.position) ||
             (style["background-image"] &&
               style["background-image"] !== "none") ||
