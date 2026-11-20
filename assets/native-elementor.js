@@ -66,10 +66,14 @@
       );
   }
   function fromTemplates(entries) {
-    let template, key;
+    let template,
+      key,
+      siteParts = {};
     if (entries.length === 1) {
       template = structuredClone(validateTemplate(entries[0].data));
       key = "page";
+      if (["header", "footer"].includes(template.type))
+        siteParts[template.type] = template.content.map((n) => n.id);
     } else {
       const parts = new Map(entries.map((e) => [e.name.toLowerCase(), e.data]));
       if (
@@ -83,6 +87,8 @@
         );
       for (const t of parts.values()) validateTemplate(t);
       template = structuredClone(parts.get("content.json"));
+      for (const kind of ["header", "footer"])
+        siteParts[kind] = parts.get(kind + ".json").content.map((n) => n.id);
       template.title = "Home";
       template.type = "page";
       template.content = structuredClone([
@@ -113,6 +119,7 @@
           css: "",
           js: "",
           elementor: template,
+          site_parts: siteParts,
         },
       ],
       site: { home_key: key, navigation: [] },
@@ -204,7 +211,12 @@
       css: "",
       warnings: inspect(template).warnings,
       fallbacks,
-      regions: [],
+      regions: Object.entries(page.site_parts || {}).map(([kind, ids]) => ({
+        kind,
+        id: ids[0],
+        additional_ids: ids.slice(1),
+        separate: true,
+      })),
       source: {
         html: "",
         css: "",

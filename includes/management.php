@@ -587,6 +587,7 @@ trait LSE_Management
                 );
             }
             foreach ($prepared as [$index, $post, $source]) {
+                unset($job['pages'][$index]['skipped']);
                 $job['pages'][$index]['done'] = false;
                 $job['pages'][$index]['initial_stamp'] = self::stamp($post->ID);
                 $job['pages'][$index][
@@ -603,6 +604,7 @@ trait LSE_Management
             if (isset($input['site']['navigation'])) {
                 $job['site'] = $input['site'];
             }
+            $job['skipped_assets'] = [];
             $job['capture'] = self::capture_report($input['capture'] ?? null);
             $job['operation_id'] = $operation;
             $job['shared_done'] = [];

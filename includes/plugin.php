@@ -191,6 +191,8 @@ final class LSE_Plugin
             'capture_batch',
             'assets',
             'skip_asset',
+            'skip_page',
+            'import_diagnostics',
             'asset_lookup',
             'media_process',
             'media_skip',
@@ -600,7 +602,7 @@ final class LSE_Plugin
             'lse-converter',
             plugins_url('assets/converter.js', LSE_FILE),
             [],
-            LSE_CONVERTER_VERSION,
+            LSE_VERSION,
             true,
         );
         wp_enqueue_script(
@@ -621,21 +623,21 @@ final class LSE_Plugin
             'lse-admin',
             plugins_url('assets/admin.js', LSE_FILE),
             ['lse-converter', 'lse-native', 'lse-reports'],
-            LSE_CONVERTER_VERSION,
+            LSE_VERSION,
             true,
         );
         wp_enqueue_script(
             'lse-capture',
             plugins_url('assets/capture.js', LSE_FILE),
             ['lse-admin', 'lse-manage'],
-            LSE_CONVERTER_VERSION,
+            LSE_VERSION,
             true,
         );
         wp_enqueue_script(
             'lse-manage',
             plugins_url('assets/manage.js', LSE_FILE),
             ['lse-admin'],
-            LSE_CONVERTER_VERSION,
+            LSE_VERSION,
             true,
         );
         if (current_user_can('update_plugins')) {
@@ -659,12 +661,18 @@ final class LSE_Plugin
             'window.LSE_CONFIG=' .
                 wp_json_encode([
                     'version' => LSE_VERSION,
+                    'userId' => get_current_user_id(),
+                    'wordpress' => get_bloginfo('version'),
+                    'php' => PHP_VERSION,
                     'ajax' => admin_url('admin-ajax.php'),
                     'nonce' => wp_create_nonce('lse_import'),
                     'elementor' => defined('ELEMENTOR_VERSION')
                         ? ELEMENTOR_VERSION
                         : '',
                     'pro' => defined('ELEMENTOR_PRO_VERSION'),
+                    'themeBuilder' => class_exists(
+                        \ElementorPro\Modules\ThemeBuilder\Module::class,
+                    ),
                     'nativeButtonContainers' =>
                         class_exists('\\Elementor\\Utils') &&
                         \Elementor\Utils::validate_html_tag('button') ===
@@ -734,6 +742,7 @@ final class LSE_Plugin
                 </aside>
                 <main class="lse-workspace">
                     <div id="lse-status" class="lse-notice" role="status" aria-live="polite">Choose a file or capture a website link to get started.</div>
+                    <button type="button" class="button" data-lse-copy-report>Copy report</button>
                     <p id="lse-manage-message" class="lse-notice" role="status" aria-live="polite"></p>
                     <?php if (
                         !defined('ELEMENTOR_VERSION')
@@ -792,13 +801,18 @@ final class LSE_Plugin
         <dialog id="lse-flow-dialog" class="lse-dialog" aria-labelledby="lse-flow-title">
             <header class="lse-dialog-head"><h2 id="lse-flow-title">Review new import</h2><button type="button" class="button lse-subtle lse-icon-button" id="lse-flow-close" aria-label="Close import">×</button></header>
             <div class="lse-dialog-body">
+                <button type="button" class="button" data-lse-copy-report>Copy report</button>
                 <p id="lse-dialog-status" class="lse-notice" role="status" aria-live="polite" hidden></p>
                 <div id="lse-review" hidden>
                     <div id="lse-summary" class="lse-summary"></div>
                     <p id="lse-refresh-context" hidden></p>
                     <details class="lse-details" open><summary>Pages</summary><div class="lse-table-scroll"><table class="widefat striped"><thead><tr><th><input type="checkbox" id="lse-all" checked aria-label="Select all pages"></th><th>Page</th><th>Address</th><th>Review</th></tr></thead><tbody id="lse-pages"></tbody></table></div></details>
                     <div class="lse-setup" id="lse-setup" hidden><div id="lse-findings"></div></div>
-                    <details class="lse-details"><summary>Import options</summary><div class="lse-options"><label>Website name<input id="lse-name" type="text" maxlength="150"></label><label>Page layout<select id="lse-layout"><option value="elementor_canvas">Standalone pages</option><option value="elementor_header_footer">Use WordPress header and footer</option></select></label></div><label class="lse-check"><input type="checkbox" id="lse-scripts" checked> Keep website interactions</label><label class="lse-check"><input type="checkbox" id="lse-css" checked> Keep website styling</label></details>
+                    <details class="lse-details"><summary>Import options</summary><div class="lse-options"><label>Website name<input id="lse-name" type="text" maxlength="150"></label><label>Page layout<select id="lse-layout"><option value="elementor_canvas"><?php echo class_exists(
+                        \ElementorPro\Modules\ThemeBuilder\Module::class,
+                    )
+                        ? 'Use the source header and footer sitewide'
+                        : 'Standalone pages'; ?></option><option value="elementor_header_footer">Use WordPress header and footer</option></select></label></div><label class="lse-check"><input type="checkbox" id="lse-scripts" checked> Keep website interactions</label><label class="lse-check"><input type="checkbox" id="lse-css" checked> Keep website styling</label></details>
                     <label class="lse-check" id="lse-overwrite-option" hidden><input type="checkbox" id="lse-overwrite"> Allow replacing selected edited or published pages.</label>
                     <div class="lse-dialog-actions"><button type="button" class="button" id="lse-reset">Cancel</button><button type="button" class="button" id="lse-source-download">Download JSON</button><span id="lse-import-scope">New pages are saved as drafts.</span><button type="button" class="button button-primary" id="lse-import">Import</button></div>
                 </div>
@@ -889,6 +903,44 @@ final class LSE_Plugin
     }
     public static function front()
     {
+        if (class_exists(\ElementorPro\Modules\ThemeBuilder\Module::class)) {
+            $conditions = \ElementorPro\Modules\ThemeBuilder\Module::instance()->get_conditions_manager();
+            foreach (['header', 'footer'] as $kind) {
+                foreach (
+                    $conditions->get_documents_for_location($kind)
+                    as $template_id => $document
+                ) {
+                    if (
+                        get_post_meta($template_id, '_lse_site_part', true) !==
+                        $kind
+                    ) {
+                        continue;
+                    }
+                    $css = get_post_meta($template_id, '_lse_css', true);
+                    if ($css) {
+                        LSE_Styles::enqueue(
+                            $template_id,
+                            $css,
+                            'lse-site-' . $kind,
+                        );
+                    }
+                    wp_enqueue_script(
+                        'lse-interactions',
+                        plugins_url('assets/interactions.js', LSE_FILE),
+                        [],
+                        LSE_VERSION,
+                        true,
+                    );
+                    wp_enqueue_script(
+                        'lse-scrolling',
+                        plugins_url('assets/scrolling.js', LSE_FILE),
+                        [],
+                        LSE_VERSION,
+                        true,
+                    );
+                }
+            }
+        }
         if (!is_singular()) {
             return;
         }

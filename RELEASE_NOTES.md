@@ -1,3 +1,9 @@
+## LS Elementor 0.12.2
+
+When a media batch is refused, LS Elementor checks saved progress and retries files individually. Choose **Skip this file and continue** to finish the remaining uploads. Individual page conversion failures can also be skipped. Use **Copy report** during an import or reopen the import afterward to copy its errors, skipped items and saved progress. If the WordPress session expires, sign back in to resume.
+
+With Elementor Pro, imported sitewide headers and footers use Theme Builder. Converted pages also have fewer redundant containers.
+
 ## Website to Elementor JSON
 
 Paste a public website URL to download an Elementor JSON bundle with its

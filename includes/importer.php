@@ -754,6 +754,78 @@ final class LSE_Importer
             'media' => LSE_Media::status(array_column($job['assets'], 'id')),
         ];
     }
+    public static function import_diagnostics($input)
+    {
+        $job = self::load($input['job'] ?? '');
+        $events = $input['events'] ?? null;
+        if (!is_array($events) || count($events) > 20) {
+            throw new RuntimeException('Invalid diagnostic batch.');
+        }
+        $key = '_lse_diagnostics_' . $job['id'];
+        $lease = LSE_Locks::acquire($key . '_lock');
+        try {
+            $stored = get_option($key, []);
+            foreach ($events as $id => $message) {
+                if (
+                    !is_string($id) ||
+                    !preg_match('/^[a-f0-9-]{36}$/D', $id) ||
+                    !is_string($message) ||
+                    strlen($message) > 8192
+                ) {
+                    throw new RuntimeException('Invalid diagnostic entry.');
+                }
+                $stored[$id] = sanitize_text_field($message);
+            }
+            update_option($key, $stored, false);
+            return ['recorded' => array_keys($events)];
+        } finally {
+            LSE_Locks::release($lease);
+        }
+    }
+    public static function skip_page($input)
+    {
+        $lock = self::lock($input['job'] ?? '');
+        try {
+            $job = self::load($lock['id']);
+            $index = array_search(
+                $input['key'] ?? '',
+                array_column($job['pages'], 'key'),
+                true,
+            );
+            if ($index === false || $job['state'] !== 'importing') {
+                throw new RuntimeException('The import cannot skip this page.');
+            }
+            $page = $job['pages'][$index];
+            if ($page['done']) {
+                return [
+                    'saved' => true,
+                    'key' => $page['key'],
+                    'stamp' => $page['stamp'],
+                ];
+            }
+            if (!current_user_can('edit_post', $page['id'])) {
+                throw new RuntimeException(
+                    'The page cannot be edited by this account.',
+                );
+            }
+            self::recover_page_save($page['id'], $job['id']);
+            $job['pages'][$index]['skipped'] = true;
+            $job['pages'][$index]['regions'] = [];
+            $reason = LSE_Import_Error::clip(
+                $input['reason'] ?? 'Conversion failed.',
+                1000,
+            );
+            $job['reports'][$page['key']] = [
+                'native' => 0,
+                'fallbacks' => 0,
+                'warnings' => ['Skipped page: ' . $reason],
+            ];
+            self::store($job);
+            return ['skipped' => true, 'key' => $page['key']];
+        } finally {
+            self::unlock($lock);
+        }
+    }
     public static function skip_asset($input)
     {
         $lock = self::lock($input['job'] ?? '');
@@ -764,9 +836,19 @@ final class LSE_Importer
                     'This import no longer accepts file decisions.',
                 );
             }
-            $url = self::text($input['url'] ?? '', 2048);
-            if (!$url) {
+            $url = $input['url'] ?? '';
+            if (
+                !is_string($url) ||
+                !$url ||
+                strlen($url) > 2048 ||
+                preg_match('/[\x00-\x1f]/', $url)
+            ) {
                 throw new RuntimeException('Missing skipped file reference.');
+            }
+            foreach ($job['assets'] as $saved) {
+                if ($saved['source'] === $url) {
+                    return ['saved' => $saved];
+                }
             }
             $issue = [
                 'url' => $url,
@@ -1494,7 +1576,8 @@ final class LSE_Importer
             }
             $type = $item['elType'] ?? '';
             $widget = $item['widgetType'] ?? '';
-            if ($native) {
+            $carousel = in_array($widget, ['media-carousel', 'reviews'], true);
+            if ($native || $carousel) {
                 LSE_Native::element($item);
             }
             if (
@@ -1512,6 +1595,8 @@ final class LSE_Importer
                             'html',
                             'video',
                             'google_maps',
+                            'media-carousel',
+                            'reviews',
                         ],
                         true,
                     ))
@@ -1536,7 +1621,7 @@ final class LSE_Importer
                     ARRAY_FILTER_USE_KEY,
                 );
             }
-            if ($native) {
+            if ($native || $carousel) {
                 $settings = LSE_Native::settings(
                     $settings,
                     $job,
@@ -1809,12 +1894,19 @@ final class LSE_Importer
                     esc_url_raw($font['url']) .
                     '");font-display:swap}';
             }
+            if (
+                !empty($input['regions']) &&
+                class_exists(\ElementorPro\Modules\ThemeBuilder\Module::class)
+            ) {
+                $theme_lock = LSE_Locks::acquire('_lse_theme_builder_import');
+            }
             $source['site_parts'] = self::save_site_parts(
                 $job,
                 $page,
                 $tree,
                 $input['regions'] ?? [],
                 $css,
+                $source['layout_structure'] ?? [],
             );
             if (!empty($source['layout_structure'])) {
                 LSE_Structure::prepare_editor_blocks(
@@ -1983,6 +2075,7 @@ final class LSE_Importer
                 'skipped' => $skipped,
             ];
             self::invalidate_css($id);
+            unset($job['pages'][$index]['skipped']);
             $job['pages'][$index]['done'] = true;
             $job['pages'][$index]['stamp'] = self::stamp($id);
             self::store($job);
@@ -1995,6 +2088,9 @@ final class LSE_Importer
             }
             throw $error;
         } finally {
+            if (isset($theme_lock)) {
+                LSE_Locks::release($theme_lock);
+            }
             self::stop_page_tracking();
             self::unlock($lock);
         }
@@ -2012,11 +2108,52 @@ final class LSE_Importer
         &$tree,
         $regions,
         $css,
+        $layout,
     ) {
         if ($job['layout'] !== 'elementor_canvas') {
             return [];
         }
         $parts = [];
+        $documents = \Elementor\Plugin::$instance->documents;
+        $pro = class_exists(\ElementorPro\Modules\ThemeBuilder\Module::class);
+        if ($pro && $regions) {
+            $conditions = \ElementorPro\Modules\ThemeBuilder\Module::instance()->get_conditions_manager();
+            $conditions->get_cache()->refresh();
+            // Preflight both locations before publishing either of them.
+            foreach ($regions as $region) {
+                $kind = $region['kind'] ?? '';
+                if (
+                    empty($region['separate']) ||
+                    !in_array($kind, ['header', 'footer'], true) ||
+                    !$documents->get_document_type($kind, false)
+                ) {
+                    continue;
+                }
+                $existing = $job['templates']['site-' . $kind] ?? null;
+                if (
+                    !current_user_can('edit_theme_options') ||
+                    !current_user_can('publish_posts')
+                ) {
+                    throw new RuntimeException(
+                        'Publishing sitewide templates requires permission to edit theme options and publish posts.',
+                    );
+                }
+
+                if (
+                    $conditions->get_conditions_conflicts_by_location(
+                        'include/general',
+                        $kind,
+                        (int) ($existing['id'] ?? 0),
+                    )
+                ) {
+                    throw new RuntimeException(
+                        'Theme Builder already has an Entire Site ' .
+                            $kind .
+                            '. Review its display condition before importing another sitewide template.',
+                    );
+                }
+            }
+        }
         foreach ($regions as $region) {
             $kind = $region['kind'] ?? '';
             $id = $region['id'] ?? '';
@@ -2024,15 +2161,25 @@ final class LSE_Importer
                 empty($region['separate']) ||
                 !in_array($kind, ['header', 'footer'], true) ||
                 !is_string($id) ||
-                !preg_match('/^[a-f0-9]{8}$/D', $id) ||
+                !preg_match('/^[a-f0-9]{7,8}$/D', $id) ||
                 isset($parts[$kind]) ||
-                (self::find_node($tree, $id)['elType'] ?? '') !== 'container'
+                !self::find_node($tree, $id)
             ) {
                 continue;
             }
-            $node = LSE_Structure::detach($tree, $id, $slot);
+            $nodes = [LSE_Structure::detach($tree, $id, $slot)];
+            foreach ($region['additional_ids'] ?? [] as $member) {
+                $extra = LSE_Structure::detach($tree, $member, $unused);
+                if (!$extra) {
+                    throw new RuntimeException(
+                        'Missing native template element.',
+                    );
+                }
+                $nodes[] = $extra;
+            }
             $key = 'site-' . $kind;
             $existing = $job['templates'][$key] ?? null;
+            $global = $pro && $documents->get_document_type($kind, false);
             if ($existing) {
                 $template_id = $existing['id'];
                 if (
@@ -2052,7 +2199,7 @@ final class LSE_Importer
                 }
             } else {
                 $template = \Elementor\Plugin::$instance->documents->create(
-                    'section',
+                    $global ? $kind : 'section',
                     [
                         'post_title' => $job['title'] . ' — Site ' . $kind,
                         'post_status' => 'draft',
@@ -2064,23 +2211,111 @@ final class LSE_Importer
                     );
                 }
                 $template_id = $template->get_main_id();
+                update_post_meta($template_id, '_lse_job', $job['id']);
+                $job['templates'][$key] = [
+                    'id' => $template_id,
+                    'pending' => true,
+                ];
+                self::store($job);
+            }
+            $edited =
+                !empty($existing['stamp']) &&
+                !hash_equals($existing['stamp'], self::stamp($template_id));
+            $write_content =
+                !$existing ||
+                !empty($existing['pending']) ||
+                (!$edited &&
+                    $page['key'] === ($job['site']['home_key'] ?? '') &&
+                    current_user_can('edit_post', $template_id));
+            $promote =
+                $global &&
+                get_post_meta(
+                    $template_id,
+                    '_elementor_template_type',
+                    true,
+                ) !== $kind;
+            if ($promote) {
+                update_post_meta(
+                    $template_id,
+                    '_elementor_template_type',
+                    $kind,
+                );
+                wp_set_object_terms(
+                    $template_id,
+                    $kind,
+                    'elementor_library_type',
+                );
+                $documents->get($template_id, false);
             }
             // The homepage supplies the canonical design. Subsequent pages
             // only attach it. A manually edited template stays authoritative.
-            if (
-                !$existing ||
-                ($page['key'] === ($job['site']['home_key'] ?? '') &&
-                    current_user_can('edit_post', $template_id) &&
-                    hash_equals($existing['stamp'], self::stamp($template_id)))
-            ) {
-                $template = \Elementor\Plugin::$instance->documents->get(
-                    $template_id,
-                );
+            if ($write_content || $promote) {
+                $template = $documents->get($template_id);
                 $template->set_is_built_with_elementor(true);
-                if (!$template->save(['elements' => [$node]])) {
-                    throw new RuntimeException(
-                        'The site ' . $kind . ' template could not be saved.',
+                if ($write_content) {
+                    $settings =
+                        $global &&
+                        ($nodes[0]['settings']['html_tag'] ?? '') === $kind
+                            ? ['content_wrapper_html_tag' => 'div']
+                            : [];
+                    if (
+                        !$template->save([
+                            'elements' => $nodes,
+                            'settings' => $settings,
+                        ])
+                    ) {
+                        throw new RuntimeException(
+                            'The site ' .
+                                $kind .
+                                ' template could not be saved.',
+                        );
+                    }
+                    $node_ids = array_fill_keys(self::ids($nodes), true);
+                    $inner = array_filter(
+                        $layout['shells'] ?? [],
+                        static fn($shell) => isset(
+                            $node_ids[$shell['parent'] ?? ''],
+                        ),
                     );
+                    update_post_meta(
+                        $template_id,
+                        '_lse_source',
+                        wp_slash([
+                            'layout_structure' => [
+                                'shells' => $inner,
+                                'paths' => array_intersect_key(
+                                    $layout['paths'] ?? [],
+                                    $node_ids,
+                                ),
+                            ],
+                        ]),
+                    );
+                }
+                if (
+                    $global &&
+                    (!$existing || !empty($existing['pending']) || $promote)
+                ) {
+                    $published = wp_update_post(
+                        ['ID' => $template_id, 'post_status' => 'publish'],
+                        true,
+                    );
+                    if (
+                        is_wp_error($published) ||
+                        (get_post_meta(
+                            $template_id,
+                            '_elementor_conditions',
+                            true,
+                        ) !== ['include/general'] &&
+                            !$conditions->save_conditions($template_id, [
+                                ['type' => 'include', 'name' => 'general'],
+                            ]))
+                    ) {
+                        throw new RuntimeException(
+                            'Theme Builder could not assign the site ' .
+                                $kind .
+                                '.',
+                        );
+                    }
                 }
                 update_post_meta($template_id, '_lse_job', $job['id']);
                 update_post_meta($template_id, '_lse_shared', '1');
@@ -2098,23 +2333,30 @@ final class LSE_Importer
                         $template_scope,
                         $region['context_css'] ?? '',
                     );
-                update_post_meta(
-                    $template_id,
-                    '_lse_css',
-                    wp_slash($template_css),
-                );
+                if ($write_content) {
+                    update_post_meta(
+                        $template_id,
+                        '_lse_css',
+                        wp_slash($template_css),
+                    );
+                }
                 self::invalidate_css($template_id);
                 $job['templates'][$key] = [
                     'id' => $template_id,
                     'kind' => $kind,
-                    'stamp' => self::stamp($template_id),
+                    'stamp' => $edited
+                        ? $existing['stamp']
+                        : self::stamp($template_id),
                     'edit_url' => admin_url(
                         'post.php?post=' . $template_id . '&action=elementor',
                     ),
                 ];
                 self::store($job);
             }
-            $parts[$kind] = $slot + ['template_id' => $template_id];
+            $parts[$kind] = $slot + [
+                'template_id' => $template_id,
+                'theme_builder' => (bool) $global,
+            ];
         }
         return $parts;
     }
@@ -2460,7 +2702,7 @@ final class LSE_Importer
                 );
             }
             foreach ($job['pages'] as $page) {
-                if (!$page['done']) {
+                if (!$page['done'] && empty($page['skipped'])) {
                     throw new RuntimeException(
                         'Some pages have not finished. Retry the import.',
                     );
@@ -2490,13 +2732,17 @@ final class LSE_Importer
     public static function status($input)
     {
         $job = self::load($input['job'] ?? '');
+        $job['diagnostics'] = get_option('_lse_diagnostics_' . $job['id'], []);
         unset($job['owner'], $job['fingerprint']);
         $shared_cache = [];
         $templates = array_column($job['templates'] ?? [], null, 'id');
         $job['site_template_links'] = [];
         foreach (['header', 'footer'] as $kind) {
             $part = $job['templates']['site-' . $kind] ?? null;
-            if ($part && current_user_can('edit_post', $part['id'])) {
+            if (
+                !empty($part['edit_url']) &&
+                current_user_can('edit_post', $part['id'])
+            ) {
                 $job['site_template_links'][] = [
                     'kind' => $kind,
                     'edit_url' => $part['edit_url'],
@@ -2513,7 +2759,7 @@ final class LSE_Importer
             $page['template_links'] = [];
             foreach (array_keys($shared_stamps) as $id) {
                 if (
-                    isset($templates[$id]) &&
+                    !empty($templates[$id]['edit_url']) &&
                     current_user_can('edit_post', $id)
                 ) {
                     $page['template_links'][] = [

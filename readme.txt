@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1.4
 Requires PHP: 8.0
-Stable tag: 0.12.0
+Stable tag: 0.12.2
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -22,7 +22,7 @@ Import the bundle into editable Elementor draft pages with this plugin.
    page, select header.json, content.json and footer.json together. Use extracted
    JSON files rather than a template-parts ZIP. All pages are selected.
 6. Review the page list and setup items; enable interactions for a trusted file.
-7. Import as drafts, then open each page in Elementor and review all screen sizes.
+7. Import the pages as drafts. With Elementor Pro, importing the source header or footer publishes a Theme Builder template with the Entire Site condition. Open each page in Elementor to review it.
 
 == Updates ==
 
@@ -56,8 +56,7 @@ Plugin updates closes when clicking outside or pressing Escape.
 * Reconstructs responsive settings at 1440, 1024, 768 and 390 pixel references.
 * Preserves additional computed styling as page-scoped CSS. Native controls can
   change content and common style settings. Some advanced CSS requires review.
-* Shares a single editable header and footer across applicable pages of an
-  imported website. The templates have their own Elementor editors.
+* Publishes one header and one footer in Elementor Pro Theme Builder when the source contains those regions. Each has its own editor and Entire Site display condition. Elementor Free uses shared saved templates for imported pages.
 * Prepares an unassigned classic WordPress menu when navigation can be identified.
 * Stores source and SEO metadata; supplies basic SEO output without an SEO plugin.
 * Preserves interactive navigation, local calculators and enquiry controls.
@@ -176,6 +175,14 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.12.2 =
+* Isolate a refused media batch, skip a failed file and copy a persistent import diagnostic report.
+
+= 0.12.1 =
+* With Elementor Pro, publish source headers and footers as Theme Builder templates assigned to the entire site. Preserve existing assignments when another import conflicts.
+* Keep source layout wrappers out of the editable page sections and recover native Reviews and Media Carousel widgets from supported Elementor markup.
+
 
 = 0.12.0 =
 * Convert a public website URL into a downloadable Elementor JSON bundle with

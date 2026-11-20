@@ -74,15 +74,15 @@ final class LSE_Styles
         return self::$assets[$key];
     }
 
-    public static function enqueue($id, $css)
+    public static function enqueue($id, $css, $handle = 'lse-page')
     {
         $asset = self::asset($id, $css);
         if ($asset) {
-            wp_enqueue_style('lse-page', $asset['url'], [], $asset['version']);
+            wp_enqueue_style($handle, $asset['url'], [], $asset['version']);
         } else {
-            wp_register_style('lse-page', false, [], LSE_VERSION);
-            wp_enqueue_style('lse-page');
-            wp_add_inline_style('lse-page', $css);
+            wp_register_style($handle, false, [], LSE_VERSION);
+            wp_enqueue_style($handle);
+            wp_add_inline_style($handle, $css);
         }
     }
 

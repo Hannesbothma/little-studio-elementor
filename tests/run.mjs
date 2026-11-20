@@ -136,6 +136,7 @@ try {
     "conversion-memory",
     "media-regression",
     "import-regression",
+    "upload-recovery",
     "maps-regression",
     "fidelity-regression",
     "audit-regression",

@@ -983,6 +983,100 @@
       root.setAttribute("data-lse-source-content", "");
     return inner ? clone.innerHTML : clone.outerHTML;
   }
+  // Recover editable slide records from Elementor's public carousel markup.
+  function carouselSettings(node) {
+    const type = node.getAttribute("data-widget_type")?.split(".")[0];
+    if (
+      !["reviews", "media-carousel"].includes(type) ||
+      !root.LSE_CONFIG?.widgets?.includes(type)
+    )
+      return null;
+    const wrapper = node.querySelector(
+      ".elementor-main-swiper .swiper-wrapper",
+    );
+    if (!wrapper) return null;
+    const slides = [];
+    for (const slide of wrapper.querySelectorAll(
+      ":scope > .swiper-slide:not(.swiper-slide-duplicate)",
+    )) {
+      const anchor = slide.querySelector("a[href]");
+      const link = {
+        url: anchor?.getAttribute("href") || "",
+        is_external: anchor?.target === "_blank" ? "on" : "",
+      };
+      const item = { _id: (slides.length + 1).toString(16).padStart(7, "0") };
+      if (type === "media-carousel") {
+        const image = slide.querySelector(".elementor-carousel-image");
+        const url = image?.style.backgroundImage.match(
+          /^url\(["']?(.*?)["']?\)$/,
+        )?.[1];
+        if (
+          !url ||
+          slide.querySelector("video,iframe,.elementor-custom-embed-play")
+        )
+          return null;
+        Object.assign(item, {
+          type: "image",
+          image: { url, id: 0 },
+          image_link_to_type:
+            anchor?.hasAttribute("data-elementor-open-lightbox") &&
+            anchor.getAttribute("data-elementor-open-lightbox") !== "no"
+              ? "file"
+              : link.url
+                ? "custom"
+                : "",
+          image_link_to: link,
+        });
+      } else {
+        const name = slide.querySelector(".elementor-testimonial__name");
+        if (!name) return null;
+        const icon = slide.querySelector(".elementor-testimonial__icon svg");
+        const brand = [...(icon?.classList || [])]
+          .find((c) => c.startsWith("e-fab-"))
+          ?.slice(6);
+        Object.assign(item, {
+          name: name.textContent.trim(),
+          title:
+            slide
+              .querySelector(".elementor-testimonial__title")
+              ?.textContent.trim() || "",
+          content:
+            slide
+              .querySelector(".elementor-testimonial__text")
+              ?.textContent.trim() || "",
+          image: {
+            url:
+              slide
+                .querySelector(".elementor-testimonial__image img")
+                ?.getAttribute("src") || "",
+            id: 0,
+          },
+          rating:
+            slide.querySelectorAll(".elementor-star-full").length +
+            slide.querySelectorAll(".elementor-star-half").length / 2,
+          selected_social_icon: brand
+            ? { value: "fab fa-" + brand, library: "fa-brands" }
+            : { value: "", library: "" },
+          link,
+        });
+      }
+      slides.push(item);
+    }
+    if (!slides.length) return null;
+    let config = {};
+    try {
+      config = JSON.parse(node.getAttribute("data-settings") || "{}") || {};
+    } catch {}
+    const settings = { slides };
+    for (const [key, value] of Object.entries(config))
+      if (
+        /^(?:(?:slides_per_view|slides_to_scroll|space_between)(?:_(?:tablet|mobile|laptop|widescreen|tablet_extra|mobile_extra))?|skin|show_arrows|pagination|speed|autoplay|autoplay_speed|loop|pause_on_hover|pause_on_interaction)$/.test(
+          key,
+        )
+      )
+        settings[key] = value;
+    return { type, settings };
+  }
   function prepareSource(doc) {
     const warnings = [];
     let galleryIndex = 0;
@@ -1538,7 +1632,11 @@
         if (nativeInteractions.has(node))
           settings.lse_attributes["data-lse-interactive"] = "";
         const interactive = islands.has(node);
-        if (interactive) {
+        const carousel = carouselSettings(node);
+        if (carousel) {
+          widget = carousel.type;
+          Object.assign(settings, carousel.settings);
+        } else if (interactive) {
           fallbacks++;
           widget = "html";
           settings.html =
@@ -1944,89 +2042,141 @@
       const structure = [];
       const byId = new Map(elements.map((entry) => [entry.element.id, entry]));
       const layoutNodes = new Set();
-      const siteRegion = (entry) =>
-        ["header", "footer"].includes(entry.tag) &&
-        !entry.node.parentElement.closest(
-          "main,[role=main],article,aside,nav,section",
-        );
-      const normalFlow = (entry) =>
-        !entry.widget &&
-        !entry.interactive &&
-        widths.every((width) => {
-          const style = snapshots.get(entry.element.id)[width];
-          return (
-            style.display === "block" &&
-            style.position === "static" &&
-            style.transform === "none" &&
-            !style.inlineFlow
-          );
-        });
-      function pageBlocks(node, level = 0) {
-        const entry = byId.get(node.id);
-        const tag = entry.tag;
-        const children = node.elements;
-        const siteShell =
-          level === 1 &&
-          tag === "div" &&
-          children.some((child) =>
-            byId.get(child.id).node.matches("main,[role=main]"),
-          );
-        const sectionGroup =
-          tag === "div" &&
-          children.length > 1 &&
-          children.every((child) =>
-            ["section", "article"].includes(byId.get(child.id).tag),
-          );
+      const regionKind = (entry) => {
+        const node = entry.node;
         if (
-          !options.preserveCSS ||
-          options.layout === "elementor_header_footer" ||
-          !children.length ||
-          !normalFlow(entry) ||
-          !(
-            tag === "body" ||
-            entry.node.matches("main,[role=main]") ||
-            siteShell ||
-            sectionGroup
+          node.parentElement?.closest(
+            'main,[role=main],article,aside,nav,section,header,footer,[data-elementor-type="header"],[data-elementor-type="footer"]',
           )
         )
-          return [node];
-        // Store the layout ancestors separately from editable Elementor nodes.
-        // Restore them for visitor rendering, including the real main landmark.
-        const shell = {
-          id: node.id,
-          tag: tag === "main" ? "main" : "div",
-          classes: node.settings.css_classes || "",
-          anchor: node.settings._element_id || "",
-          attributes: node.settings.lse_attributes || {},
-          members: [],
-        };
-        structure.push(shell);
-        layoutNodes.add(node.id);
-        const blocks = children.flatMap((child) =>
-          pageBlocks(child, level + 1),
+          return "";
+        if (node.matches('header,[role=banner],[data-elementor-type="header"]'))
+          return "header";
+        if (
+          node.matches(
+            'footer,[role=contentinfo],[data-elementor-type="footer"]',
+          )
+        )
+          return "footer";
+        return "";
+      };
+      const sectionSelector =
+        "section,article,.e-con.e-parent,.elementor-top-section";
+      function stackedBlocks(entry, children) {
+        if (
+          children.length < 2 ||
+          !children.every((child) => {
+            const dom = byId.get(child.id).node;
+            return (
+              dom.matches(sectionSelector) ||
+              (dom.tagName === "DIV" && dom.querySelector("h1,h2,h3"))
+            );
+          })
+        )
+          return false;
+        return widths.every((width) => {
+          const style = snapshots.get(entry.element.id)[width];
+          if (style.display.includes("flex"))
+            return style["flex-direction"].startsWith("column");
+          if (style.display.includes("grid"))
+            return (
+              style["grid-template-columns"].trim().split(/\s+/).length === 1
+            );
+          return ["block", "contents", "none"].includes(style.display);
+        });
+      }
+      function hasDesignControls(entry) {
+        if (backgroundSettings(entry.node).background_slideshow_gallery?.length)
+          return true;
+        return widths.some((width) => {
+          const style = snapshots.get(entry.element.id)[width];
+          return (
+            ["absolute", "fixed", "sticky"].includes(style.position) ||
+            (style["background-image"] &&
+              style["background-image"] !== "none") ||
+            (style["background-color"] &&
+              !["transparent", "rgba(0, 0, 0, 0)"].includes(
+                style["background-color"],
+              )) ||
+            (style["box-shadow"] && style["box-shadow"] !== "none") ||
+            (style.specifiedWidth &&
+              !["auto", "100%"].includes(style.specifiedWidth)) ||
+            style.explicitHeight
+          );
+        });
+      }
+      function pageBlocks(node, parent = null, keepBlock = false) {
+        const entry = byId.get(node.id);
+        const { tag, node: dom } = entry;
+        const children = node.elements;
+        if (!children.length) return [node];
+        const section = dom.matches(sectionSelector);
+        const kind = regionKind(entry);
+        const isLayout =
+          !entry.widget &&
+          !entry.interactive &&
+          !nativeInteractions.has(dom) &&
+          !node.settings.lse_sticky;
+        const stack = !parent && !section && stackedBlocks(entry, children);
+        const pageFrame =
+          !parent &&
+          (dom.matches(
+            'main,[role=main],[data-elementor-type="wp-page"],[data-elementor-type="single-page"],.elementor',
+          ) ||
+            dom.querySelector(
+              'main,[role=main],header,footer,[role=banner],[role=contentinfo],[data-elementor-type="header"],[data-elementor-type="footer"]',
+            ));
+        const builderWrapper = dom.matches(
+          ".e-con-inner,.elementor-widget-wrap,.elementor-widget-container,.elementor-container",
         );
-        shell.members = blocks.map((block) => block.id);
-        return blocks;
+        const singleWrapper =
+          children.length === 1 &&
+          !hasDesignControls(entry) &&
+          !dom.matches("[role],[tabindex],[aria-controls],[aria-expanded]");
+        const shell =
+          isLayout &&
+          !kind &&
+          !keepBlock &&
+          !section &&
+          (tag === "body" ||
+            (!parent && dom.matches("main,[role=main]")) ||
+            (tag === "div" &&
+              (pageFrame || stack || builderWrapper || singleWrapper)));
+        if (shell) {
+          const record = {
+            id: node.id,
+            parent,
+            tag: tag === "main" ? "main" : "div",
+            classes: node.settings.css_classes || "",
+            anchor: node.settings._element_id || "",
+            attributes: node.settings.lse_attributes || {},
+            members: [],
+          };
+          structure.push(record);
+          layoutNodes.add(node.id);
+          const promoted = children.flatMap((child) =>
+            pageBlocks(child, parent, stack),
+          );
+          record.members = promoted.map((child) => child.id);
+          return promoted;
+        }
+        node.elements = children.flatMap((child) => pageBlocks(child, node.id));
+        const heading = dom.querySelector("h1,h2,h3,h4,h5,h6");
+        const label =
+          kind ||
+          dom.getAttribute("aria-label") ||
+          heading?.textContent.trim() ||
+          dom.id ||
+          [...dom.classList].find((c) => !/^(?:e-|elementor)/.test(c)) ||
+          (section ? "Section" : "");
+        if (label && !node.settings._title)
+          node.settings._title = (
+            label[0].toUpperCase() + label.slice(1)
+          ).slice(0, 100);
+        return [node];
       }
       const blocks = tree.flatMap((node) => pageBlocks(node));
-      if (structure.length) {
-        for (const block of blocks) {
-          const entry = byId.get(block.id);
-          const { node, tag } = entry;
-          const heading = node.querySelector(
-            ":scope > h1,:scope > h2,:scope > h3",
-          );
-          const sectionName = node.classList[0]?.replace(/[-_]+/g, " ");
-          const title =
-            (siteRegion(entry) ? tag : "") ||
-            node.getAttribute("aria-label") ||
-            heading?.textContent.trim() ||
-            sectionName;
-          if (title && !block.settings._title)
-            block.settings._title = (
-              title[0].toUpperCase() + title.slice(1)
-            ).slice(0, 100);
-        }
+      if (structure.length && options.preserveCSS) {
         const shellProps = [
           ...new Set([...outerProps, ...innerProps, ...snapshotProps]),
         ];
@@ -2053,10 +2203,11 @@
               '__LSE_SCOPE__ [data-lse-layout-shell="' +
               shell.id +
               '"]' +
+              (!shell.parent &&
               (shell === structure[0] ||
-              (!shell.anchor &&
-                shell.tag === "div" &&
-                shell.members.length === blocks.length)
+                (!shell.anchor &&
+                  shell.tag === "div" &&
+                  shell.members.length === blocks.length))
                 ? ",__LSE_SCOPE__ [data-lse-editor-context]"
                 : "");
             const rule = selector + "{" + declarations.join(";") + "}";
@@ -3043,7 +3194,8 @@
         );
       const regions = [];
       for (const entry of elements) {
-        if (siteRegion(entry) && entry.element.elType === "container") {
+        const kind = regionKind(entry);
+        if (kind) {
           let contextCSS = "",
             previous = new Set();
           for (const width of widths) {
@@ -3086,7 +3238,7 @@
           regions.push({
             hash,
             id: entry.element.id,
-            kind: entry.tag,
+            kind,
             context_css: restoreRefs(contextCSS),
             separate: true,
           });

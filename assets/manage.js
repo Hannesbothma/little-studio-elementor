@@ -65,7 +65,11 @@
       '<span class="lse-chip lse-status-' +
       escapeHtml(page.post_status) +
       '">' +
-      escapeHtml(statusLabels[page.post_status] || page.post_status) +
+      escapeHtml(
+        page.skipped
+          ? "Skipped"
+          : statusLabels[page.post_status] || page.post_status,
+      ) +
       "</span>"
     );
   }
@@ -556,6 +560,9 @@
     $("#lse-import-scope").textContent = target
       ? "Selected existing pages are replaced after your confirmation."
       : "New pages are saved as drafts.";
+    if (window.LSE_CONFIG.themeBuilder)
+      $("#lse-import-scope").textContent +=
+        " Importing a source header or footer publishes it in Theme Builder for the entire site.";
     if (!target) return;
     context.textContent =
       "Updating " +

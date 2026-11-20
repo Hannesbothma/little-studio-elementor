@@ -13,6 +13,40 @@ final class LSE_Structure
 
     public static function init()
     {
+        foreach (
+            ['header' => 'before', 'footer' => 'after']
+            as $kind => $position
+        ) {
+            add_action(
+                "elementor/page_templates/canvas/{$position}_content",
+                static function () use ($kind) {
+                    $part =
+                        self::site_parts(get_queried_object_id())[$kind] ?? [];
+                    if (
+                        !empty($part['theme_builder']) &&
+                        function_exists('elementor_theme_do_location')
+                    ) {
+                        elementor_theme_do_location($kind);
+                    }
+                },
+            );
+        }
+        // Block themes render template-part blocks instead of calling get_header()/get_footer().
+        add_filter('pre_render_block', [self::class, 'theme_block'], 10, 2);
+        add_action(
+            'elementor/theme/register_locations',
+            static function ($manager) {
+                if (!wp_is_block_theme()) {
+                    return;
+                }
+                foreach (['header', 'footer'] as $kind) {
+                    if (!$manager->get_location($kind)) {
+                        $manager->register_core_location($kind);
+                    }
+                }
+            },
+            20,
+        );
         add_filter(
             'elementor/frontend/builder_content_data',
             [self::class, 'render_tree'],
@@ -27,12 +61,52 @@ final class LSE_Structure
         );
     }
 
+    public static function theme_block($output, $block)
+    {
+        if (
+            $output !== null ||
+            $block['blockName'] !== 'core/template-part' ||
+            !wp_is_block_theme() ||
+            !function_exists('elementor_theme_do_location')
+        ) {
+            return $output;
+        }
+        $attrs = $block['attrs'] ?? [];
+        $kind = $attrs['area'] ?? ($attrs['tagName'] ?? ($attrs['slug'] ?? ''));
+        if (!in_array($kind, ['header', 'footer'], true)) {
+            return $output;
+        }
+        $conditions = \ElementorPro\Modules\ThemeBuilder\Module::instance()->get_conditions_manager();
+        $documents = $conditions->get_documents_for_location($kind);
+        if (
+            !$documents ||
+            get_post_meta(
+                array_key_first($documents),
+                '_lse_site_part',
+                true,
+            ) !== $kind
+        ) {
+            return $output;
+        }
+        ob_start();
+        $rendered = elementor_theme_do_location($kind);
+        $html = ob_get_clean();
+        return $rendered ? $html : $output;
+    }
+
     public static function clean($structure, $elements)
     {
-        if (!is_array($structure) || count($structure) > 64) {
+        if (!is_array($structure) || count($structure) > 10000) {
             throw new RuntimeException('Invalid source layout.');
         }
-        $roots = array_fill_keys(array_column($elements, 'id'), true);
+        $parents = [];
+        $index = static function ($nodes, $parent) use (&$index, &$parents) {
+            foreach ($nodes as $node) {
+                $parents[$node['id']] = $parent;
+                $index($node['elements'] ?? [], $node['id']);
+            }
+        };
+        $index($elements, null);
         $clean = [];
         $paths = [];
         foreach ($structure as $shell) {
@@ -40,7 +114,7 @@ final class LSE_Structure
             if (
                 !is_string($id) ||
                 !preg_match('/^[a-f0-9]{8}$/D', $id) ||
-                isset($roots[$id]) ||
+                array_key_exists($id, $parents) ||
                 isset($clean[$id]) ||
                 !in_array($shell['tag'] ?? '', ['div', 'main'], true) ||
                 !is_array($shell['members'] ?? null)
@@ -61,11 +135,19 @@ final class LSE_Structure
                     $attributes[$name] = $value;
                 }
             }
+            $parent = $shell['parent'] ?? null;
+            if (
+                $parent !== null &&
+                (!is_string($parent) || !array_key_exists($parent, $parents))
+            ) {
+                throw new RuntimeException('Invalid layout parent.');
+            }
             $members = [];
             foreach ($shell['members'] as $member) {
                 if (
                     !is_string($member) ||
-                    !isset($roots[$member]) ||
+                    !array_key_exists($member, $parents) ||
+                    $parents[$member] !== $parent ||
                     isset($members[$member])
                 ) {
                     throw new RuntimeException(
@@ -77,6 +159,7 @@ final class LSE_Structure
             }
             $clean[$id] = [
                 'id' => $id,
+                'parent' => $parent,
                 'tag' => $shell['tag'],
                 'classes' => sanitize_text_field(
                     (string) ($shell['classes'] ?? ''),
@@ -222,6 +305,7 @@ final class LSE_Structure
         }
         foreach ($shells as $shell) {
             if (
+                empty($shell['parent']) &&
                 $shell['tag'] === 'div' &&
                 $shell['members'] === $shells[0]['members']
             ) {
@@ -262,6 +346,12 @@ final class LSE_Structure
         }
         unset($element);
         foreach (self::site_parts($post_id) as $kind => $slot) {
+            if (
+                !empty($slot['theme_builder']) &&
+                class_exists(\ElementorPro\Modules\ThemeBuilder\Module::class)
+            ) {
+                continue;
+            }
             $slot['after'] = $replacements[$slot['after']] ?? $slot['after'];
             $slot['before'] = $replacements[$slot['before']] ?? $slot['before'];
             $id = substr(
@@ -294,16 +384,62 @@ final class LSE_Structure
         }
         // New blocks belong to the page's shared outer context. If a new
         // block sits between two existing blocks, keep their common group.
-        $outer = reset($layout['shells'])['members'];
+        $instances = [];
+        $restore = static function (&$nodes) use (
+            &$restore,
+            $paths,
+            $layout,
+            &$instances,
+        ) {
+            foreach ($nodes as &$node) {
+                if (empty($node['elements'])) {
+                    continue;
+                }
+                $restore($node['elements']);
+                $local = [];
+                foreach ($node['elements'] as $child) {
+                    $path = $paths[$child['id']] ?? [];
+                    if (
+                        $path &&
+                        ($layout['shells'][$path[0]]['parent'] ?? null) ===
+                            $node['id']
+                    ) {
+                        $local[$child['id']] = $path;
+                    }
+                }
+                if ($local) {
+                    $node['elements'] = self::wrap(
+                        $node['elements'],
+                        $local,
+                        $layout['shells'],
+                        $instances,
+                    );
+                }
+            }
+        };
+        $restore($elements);
+        $root_shells = array_filter(
+            $layout['shells'],
+            static fn($shell) => empty($shell['parent']),
+        );
+        if (!$root_shells) {
+            return $elements;
+        }
+        $outer = reset($root_shells)['members'];
         $default = array_map(
             'strval',
             array_keys(
                 array_filter(
-                    $layout['shells'],
+                    $root_shells,
                     static fn($shell) => $shell['members'] === $outer,
                 ),
             ),
         );
+        foreach ($paths as $id => $path) {
+            if ($path && !isset($root_shells[$path[0]])) {
+                unset($paths[$id]);
+            }
+        }
         $following = [];
         $next = null;
         foreach (array_reverse($elements, true) as $index => $element) {
@@ -329,7 +465,6 @@ final class LSE_Structure
                 $paths[$id] = array_slice($previous, 0, $length);
             }
         }
-        $instances = [];
         return self::wrap($elements, $paths, $layout['shells'], $instances);
     }
 

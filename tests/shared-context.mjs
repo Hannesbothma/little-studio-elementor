@@ -34,9 +34,9 @@ const project = {
     html:
       '<body class="kit"><header><h2>Shared header context</h2><img src="' +
       source +
-      '" alt="Context image"><ul><li><span class="context-label">Inherited component color</span></li></ul></header><main><p>Page ' +
+      '" alt="Context image"><ul><li><span class="context-label">Inherited component color</span></li></ul></header><main><section><div><div><div><p>Page ' +
       key +
-      "</p></main></body>",
+      "</p></div></div></div></section><section><h2>Second section</h2></section></main></body>",
     css: "header{padding:12px}header img{width:20px}.context-label{color:var(--ink)}",
     js: "",
   })),
@@ -173,6 +173,12 @@ try {
     "Unchanged shared component was duplicated",
   );
   for (const imported of ready.pages) {
+    const tree = (await rpc("test", { id: imported.id })).elements;
+    assert.equal(tree.length, 2);
+    assert.deepEqual(
+      tree.map((section) => section.elements.map((child) => child.widgetType)),
+      [["text-editor"], ["heading"]],
+    );
     assert.doesNotMatch(
       JSON.stringify((await rpc("test", { id: imported.id })).elements),
       /lse-shared/,

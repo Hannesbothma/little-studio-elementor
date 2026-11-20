@@ -120,7 +120,7 @@
           "The hosting server rejected the request because it is too large. Check the server request/upload limits.";
       else if (res.status === 403)
         message =
-          "The server refused this save. Completed drafts are kept. Save the error details if retrying still fails.";
+          "The server refused this request without giving LS Elementor a reason. Saved drafts are kept.";
       else if (res.status >= 500)
         message =
           "WordPress or the hosting server could not complete this request. Check the PHP/server error log; some draft progress may already be saved.";
@@ -142,10 +142,19 @@
         res.status +
         ").",
     );
+    // A generic refusal from the HTTP layer carries no file-level diagnosis.
+    error.uploadRefused =
+      !details.converterHandler &&
+      !data?.message &&
+      !data?.data?.message &&
+      clean !== "-1" &&
+      clean !== "0" &&
+      !/wp-login\.php|id=["']loginform["']/i.test(clean) &&
+      [403, 413, 415, 422].includes(res.status);
     error.lseMessage = message;
     error.lseDetails = {
       ...details,
-      error: data?.data?.error || null,
+      error: data?.data?.error || (data?.code ? { code: data.code } : null),
       responseKind:
         data === undefined ? (/<[^>]+>/.test(clean) ? "html" : "text") : "json",
     };
@@ -283,6 +292,10 @@
         ...details,
         durationMs: Math.round(performance.now() - requestStarted),
         httpStatus: res.status,
+        endpoint:
+          pageUpload && config.pageRest && !details.restFallback
+            ? "WordPress REST"
+            : "admin-ajax.php",
         contentType: res.headers.get("content-type") || "",
         redirected: res.redirected,
         requestId:
@@ -310,6 +323,9 @@
       clearTimeout(timer);
     }
   }
+  const journal = window.LSEReports.journal(config, (id, events) =>
+    request("import_diagnostics", { job: id, events }),
+  );
   function recordError(error, phase) {
     lastError = {
       plugin: "Little Studio to Elementor",
@@ -320,6 +336,10 @@
       message: error.message,
       ...(error.lseDetails || {}),
     };
+    if (!error.lseRecorded) {
+      error.lseRecorded = true;
+      journal.add(window.LSEReports.describe(lastError));
+    }
     $("#lse-error-details").hidden = false;
   }
   async function decideFailure(error, context = {}, canSkip = false) {
@@ -350,6 +370,15 @@
       : "This failure cannot be isolated safely. Retry this request or pause; completed work is kept.";
     status(error.message, true);
     $("#lse-retry").hidden = false;
+    if (canSkip && context.kind === "page" && issue.skip?.kind !== "css")
+      $("#lse-error-item-effect").textContent =
+        "Skip leaves this page at its last saved content. The other selected pages continue.";
+    $("#lse-skip-item").textContent =
+      context.kind === "asset"
+        ? "Skip this file and continue"
+        : context.kind === "page" && issue.skip?.kind !== "css"
+          ? "Skip this page and continue"
+          : "Skip this item and continue";
     $("#lse-skip-item").hidden = !canSkip;
     $("#lse-pause-import").hidden = false;
     $("#lse-retry").focus();
@@ -364,6 +393,16 @@
       "#lse-pause-import",
     ])
       $(id).hidden = true;
+    journal.add(
+      [
+        choice === "skip"
+          ? "Skip requested"
+          : choice === "pause"
+            ? "Paused"
+            : "Retry requested",
+        context.name || context.title || context.kind || "import request",
+      ].join(" · "),
+    );
     if (choice === "pause") throw error;
     status(
       choice === "skip"
@@ -382,6 +421,51 @@
           files,
         );
       } catch (error) {
+        const batch = action === "assets";
+        const possibleFile =
+          error.uploadRefused ||
+          ["host_upload_limit", "host_post_limit"].includes(
+            error.lseDetails?.error?.code,
+          );
+        if (
+          (batch || action === "asset" || action === "page") &&
+          possibleFile
+        ) {
+          error.lseDetails.item = context;
+          recordError(error, $("#lse-current").textContent);
+          // An upload may have committed before its response was blocked.
+          // Verify the same job and session before replaying or offering Skip.
+          const saved = await request("status", { job: payload.job });
+          if (saved.state !== "importing")
+            throw Error(
+              "The import is no longer accepting uploads. Check saved progress.",
+            );
+          if (batch) {
+            journal.add("Trying this batch one file at a time.");
+            return { individual: true };
+          }
+          if (action === "page") {
+            const page = saved.pages.find((p) => p.key === payload.key);
+            if (page?.done)
+              return { saved: true, key: page.key, stamp: page.stamp };
+            if (!page) throw error;
+            if ((await decideFailure(error, context, true)) === "skip")
+              return skipPage(context, error);
+            continue;
+          }
+          const existing = saved.assets.find(
+            (item) => item.source === payload.url,
+          );
+          if (existing) {
+            journal.add("Already saved · " + context.name);
+            return existing;
+          }
+          error.lseDetails.error = {
+            code: "single_upload_refused",
+            recoverable: true,
+            skip: { kind: "asset" },
+          };
+        }
         const issue = error.lseDetails?.error;
         const canSkip = !!(
           issue?.recoverable &&
@@ -392,17 +476,32 @@
         if (choice === "skip") {
           if (issue.skip.kind === "css") approved.push(issue.skip.id);
           else {
-            await request("skip_asset", {
+            const decision = await request("skip_asset", {
               job: job.id,
               url: payload.url,
               name: context.name,
               reason: error.lseMessage || error.message,
             });
+            if (decision.saved) return decision.saved;
+            journal.add(
+              "Skipped file · " +
+                context.name +
+                " · left its source reference in place.",
+            );
             return null;
           }
         }
       }
     }
+  }
+  async function skipPage(context, error) {
+    const result = await request("skip_page", {
+      job: job.id,
+      key: context.key,
+      reason: error.lseMessage || error.message,
+    });
+    if (result.skipped) journal.add("Skipped page · " + context.title);
+    return result;
   }
   function showMedia() {
     const media = job?.media;
@@ -498,7 +597,7 @@
   }
   $("#lse-media-details").addEventListener("click", () => {
     const issue = job?.media?.errors?.[0];
-    if (issue) {
+    if (issue && !lastError) {
       const error = Error(issue.message);
       error.lseDetails = {
         action: "media_process",
@@ -528,6 +627,9 @@
         token: issue.skip.token,
       });
       if (job === current) {
+        journal.add(
+          "Skipped image size · " + issue.name + " · " + issue.skip.size,
+        );
         current.media = response.media;
         mediaPaused = false;
       }
@@ -599,6 +701,8 @@
     setBusy(true);
     selectionStarted = true;
     operationId = crypto.randomUUID();
+    journal.reset(operationId);
+    originalFile = file.name || "";
     job = null;
     mediaPaused = false;
     scheduleMedia();
@@ -748,6 +852,7 @@
     } catch (e) {
       project = null;
       $("#lse-file").value = "";
+      recordError(e, "Reading import file");
       window.dispatchEvent(new Event("lse:file-error"));
       status(e.message || "The file could not be read.", true);
     } finally {
@@ -757,6 +862,7 @@
   }
   function result(data) {
     job = data;
+    journal.attach(data);
     mediaPaused = false;
     scheduleMedia();
     $("#lse-choose").hidden = true;
@@ -765,11 +871,14 @@
     window.dispatchEvent(new CustomEvent("lse:import-saved", { detail: data }));
     status(
       data.state === "ready"
-        ? data.capture?.complete === false
-          ? "Pages saved. The capture has missing resources; review its report before publishing."
-          : data.refreshing
-            ? "Pages updated."
-            : "Imported. Your pages are ready to edit."
+        ? data.pages?.some((p) => p.skipped) ||
+          Object.keys(data.skipped_assets || {}).length
+          ? "Import finished with skipped items. Copy the report for details."
+          : data.capture?.complete === false
+            ? "Pages saved. The capture has missing resources; review its report before publishing."
+            : data.refreshing
+              ? "Pages updated."
+              : "Imported. Your pages are ready to edit."
         : "Import progress loaded.",
     );
   }
@@ -883,6 +992,7 @@
         layout,
         scripts: $("#lse-scripts").checked,
       });
+      journal.attach(job, true);
       if (job.state === "ready") {
         result(job);
         return;
@@ -935,7 +1045,10 @@
       };
       // Match existing Library files before sending their bytes over the network.
       const knownURLs = new Set(job.assets.map((asset) => asset.source));
-      const checks = source.assets.filter((asset) => !knownURLs.has(asset.url));
+      const skipped = new Set(Object.keys(job.skipped_assets || {}));
+      const checks = source.assets.filter(
+        (asset) => !knownURLs.has(asset.url) && !skipped.has(asset.url),
+      );
       for (let offset = 0; offset < checks.length; offset += 128) {
         const assets = await Promise.all(
           checks.slice(offset, offset + 128).map(async (asset) => ({
@@ -971,9 +1084,9 @@
       }
       const savedURLs = new Set(job.assets.map((asset) => asset.source));
       const pendingAssets = source.assets.filter(
-        (asset) => !savedURLs.has(asset.url),
+        (asset) => !savedURLs.has(asset.url) && !skipped.has(asset.url),
       );
-      const maxBatch = Math.max(1, config.mediaBatchSize || 4);
+      let maxBatch = Math.max(1, config.mediaBatchSize || 4);
       let uploaded = 0,
         uploadBatchSize = maxBatch,
         millisecondsPerAsset = 0;
@@ -1049,12 +1162,30 @@
             "assets",
             { job: job.id, assets: inputs },
             files,
-            { kind: "media-batch", name: "Media upload batch" },
+            {
+              kind: "media-batch",
+              name: group.map((asset) => asset.name).join(", "),
+            },
           );
+          if (response.individual) {
+            i -= group.length;
+            uploadBatchSize = maxBatch = 1;
+            continue;
+          }
           savedAssets = response.assets || [];
           completed = response.assets?.length || 0;
           if (response.failure) {
             const failedIndex = savedAssets.length;
+            const batchError = Error(response.failure.message);
+            batchError.lseDetails = {
+              action: "assets",
+              error: response.failure.error,
+              item: { name: group[failedIndex].name },
+            };
+            recordError(
+              batchError,
+              "Batch reported a file failure; trying that file separately",
+            );
             const saved = await recoverableRequest(
               "asset",
               { job: job.id, ...inputs[failedIndex] },
@@ -1107,7 +1238,8 @@
         uploaded += completed;
       }
       const pendingPages = source.pages.filter(
-        (page) => !job.pages.find((p) => p.key === page.key)?.done,
+        (page) =>
+          !job.pages.some((p) => p.key === page.key && (p.done || p.skipped)),
       );
       // Shared site templates use the homepage design when it is selected.
       const homeIndex = pendingPages.findIndex(
@@ -1147,8 +1279,29 @@
             ": " +
             page.title,
         );
-        const converted = await prepared;
-        if (converted.error) throw converted.error;
+        let converted = await prepared;
+        while (converted.error) {
+          const choice = await decideFailure(
+            converted.error,
+            currentItem,
+            true,
+          );
+          if (choice === "skip") {
+            const decision = await skipPage(currentItem, converted.error);
+            const entry = job.pages.find((p) => p.key === page.key);
+            if (decision.saved) {
+              entry.done = true;
+              entry.stamp = decision.stamp;
+            } else entry.skipped = true;
+            break;
+          }
+          converted = await prepare(page);
+        }
+        if (converted.error) {
+          prepared =
+            i + 1 < pendingPages.length ? prepare(pendingPages[i + 1]) : null;
+          continue;
+        }
         const saving = recoverableRequest(
           "page",
           {
@@ -1163,6 +1316,10 @@
         prepared =
           i + 1 < pendingPages.length ? prepare(pendingPages[i + 1]) : null;
         const saved = await saving;
+        if (saved.skipped && saved.key === page.key) {
+          job.pages.find((p) => p.key === page.key).skipped = true;
+          continue;
+        }
         if (!saved.saved || saved.key !== page.key)
           throw Error(
             "The page save was not confirmed. Check saved progress before retrying.",
@@ -1243,6 +1400,28 @@
     status("Choose a JSON or HTML file.");
     window.dispatchEvent(new Event("lse:choose-reset"));
   });
+  for (const button of document.querySelectorAll("[data-lse-copy-report]")) {
+    button.addEventListener("click", async () => {
+      const report = journal.report(job, project, originalFile);
+      try {
+        await navigator.clipboard.writeText(report);
+      } catch {
+        const area = document.createElement("textarea");
+        area.value = report;
+        (button.closest("dialog") || app).append(area);
+        area.select();
+        if (!document.execCommand("copy")) {
+          status("Select the report text and copy it.", true);
+          return;
+        }
+        area.remove();
+      }
+      button.textContent = "Copied";
+      setTimeout(() => {
+        button.textContent = "Copy report";
+      }, 1500);
+    });
+  }
   $("#lse-download").addEventListener("click", () => {
     if (!job) return;
     const blob = new Blob(
@@ -1374,6 +1553,7 @@
     run,
     setJob(data) {
       job = data;
+      if (data) journal.attach(data);
       mediaPaused = false;
       scheduleMedia();
       selectionStarted = true;
@@ -1402,6 +1582,7 @@
         if (["ready", "interrupted"].includes(data.state)) result(data);
         else if (["importing", "finishing"].includes(data.state)) {
           job = data;
+          journal.attach(data);
           $("#lse-progress").hidden = false;
           $("#lse-cancel").hidden = false;
           status(
