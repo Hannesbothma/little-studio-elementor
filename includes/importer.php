@@ -2053,6 +2053,7 @@ final class LSE_Importer
                 'fallbacks' => $fallbacks,
                 'warnings' => array_merge(
                     $warnings,
+                    array_column($source['site_parts'], 'warning'),
                     array_map(
                         static fn($item) => 'Skipped file ' .
                             $item['name'] .
@@ -2116,41 +2117,39 @@ final class LSE_Importer
         $parts = [];
         $documents = \Elementor\Plugin::$instance->documents;
         $pro = class_exists(\ElementorPro\Modules\ThemeBuilder\Module::class);
+        $draft_reason = $job['site_parts_draft_reason'] ?? '';
         if ($pro && $regions) {
             $conditions = \ElementorPro\Modules\ThemeBuilder\Module::instance()->get_conditions_manager();
             $conditions->get_cache()->refresh();
-            // Preflight both locations before publishing either of them.
-            foreach ($regions as $region) {
-                $kind = $region['kind'] ?? '';
-                if (
-                    empty($region['separate']) ||
-                    !in_array($kind, ['header', 'footer'], true) ||
-                    !$documents->get_document_type($kind, false)
-                ) {
-                    continue;
-                }
-                $existing = $job['templates']['site-' . $kind] ?? null;
-                if (
-                    !current_user_can('edit_theme_options') ||
-                    !current_user_can('publish_posts')
-                ) {
-                    throw new RuntimeException(
-                        'Publishing sitewide templates requires permission to edit theme options and publish posts.',
-                    );
-                }
-
-                if (
-                    $conditions->get_conditions_conflicts_by_location(
-                        'include/general',
-                        $kind,
-                        (int) ($existing['id'] ?? 0),
-                    )
-                ) {
-                    throw new RuntimeException(
-                        'Theme Builder already has an Entire Site ' .
+            if (!$draft_reason) {
+                // An existing sitewide assignment means this import must
+                // keep both new templates separate from the destination site.
+                foreach (['header', 'footer'] as $kind) {
+                    $existing = $job['templates']['site-' . $kind] ?? [];
+                    if (
+                        $conditions->get_conditions_conflicts_by_location(
+                            'include/general',
+                            $kind,
+                            (int) ($existing['id'] ?? 0),
+                        )
+                    ) {
+                        $draft_reason =
+                            'Theme Builder already has an Entire Site ' .
                             $kind .
-                            '. Review its display condition before importing another sitewide template.',
-                    );
+                            '.';
+                        break;
+                    }
+                }
+                if (
+                    !$draft_reason &&
+                    (!current_user_can('edit_theme_options') ||
+                        !current_user_can('publish_posts'))
+                ) {
+                    $draft_reason =
+                        'This account cannot publish sitewide templates.';
+                }
+                if ($draft_reason) {
+                    $job['site_parts_draft_reason'] = $draft_reason;
                 }
             }
         }
@@ -2293,6 +2292,7 @@ final class LSE_Importer
                 }
                 if (
                     $global &&
+                    !$draft_reason &&
                     (!$existing || !empty($existing['pending']) || $promote)
                 ) {
                     $published = wp_update_post(
@@ -2353,10 +2353,29 @@ final class LSE_Importer
                 ];
                 self::store($job);
             }
+            $assigned =
+                $global &&
+                get_post_status($template_id) === 'publish' &&
+                in_array(
+                    'include/general',
+                    (array) get_post_meta(
+                        $template_id,
+                        '_elementor_conditions',
+                        true,
+                    ),
+                    true,
+                );
             $parts[$kind] = $slot + [
                 'template_id' => $template_id,
-                'theme_builder' => (bool) $global,
+                'theme_builder' => $assigned,
             ];
+            if ($global && !$assigned && $draft_reason) {
+                $parts[$kind]['warning'] =
+                    $draft_reason .
+                    ' The imported ' .
+                    $kind .
+                    ' is available as a separate template for the imported pages.';
+            }
         }
         return $parts;
     }

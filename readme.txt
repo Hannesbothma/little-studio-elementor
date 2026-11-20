@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1.4
 Requires PHP: 8.0
-Stable tag: 0.12.3
+Stable tag: 0.12.4
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -175,6 +175,10 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.12.4 =
+* Continue importing when Elementor Pro already has a sitewide header or footer. Keep the imported templates with their own pages.
+* Offer Skip this page and continue for page-specific save errors.
 
 = 0.12.3 =
 * Open the import review directly after capturing a website link. Downloading JSON is optional on the review screen.

@@ -58,12 +58,20 @@ try {
     slug: "unreadable",
     title: "Unreadable page",
   });
+  input.pages.push({
+    ...input.pages[0],
+    key: "invalid",
+    slug: "rejected",
+    title: "Invalid page",
+  });
   await tab.evaluate(() => {
     const convert = LSEConverter.convert;
     LSEConverter.convert = async (project, page, options) => {
       if (page.key === "unreadable")
         throw Error("Fixture page conversion failed.");
-      return convert(project, page, options);
+      const result = await convert(project, page, options);
+      if (page.key === "invalid") result.elements[0].elType = "invalid";
+      return result;
     };
   });
   const refusals = [];
@@ -113,7 +121,18 @@ try {
   await tab
     .getByRole("button", { name: "Skip this page and continue" })
     .click({ timeout: 120000 });
-  console.log("Skipped one file and one page");
+  await tab
+    .locator("#lse-error-item-title")
+    .filter({ hasText: "Invalid page" })
+    .waitFor({
+      timeout: 120000,
+    });
+  await tab
+    .getByRole("button", { name: "Skip this page and continue" })
+    .click({ timeout: 120000 });
+  console.log(
+    "Skipped one file, a failed conversion and a server-rejected page",
+  );
   await tab.waitForFunction(
     () => window.LSEAdmin.job?.state === "ready" && !LSEAdmin.busy,
     null,
@@ -124,6 +143,8 @@ try {
   assert.equal(job.pages[0].done, true);
   assert.equal(job.pages[1].skipped, true);
   assert.equal(job.pages[1].done, false);
+  assert.equal(job.pages[2].skipped, true);
+  assert.equal(job.pages[2].done, false);
   assert.deepEqual(
     job.assets.map((v) => v.source).sort(),
     [assets[0].url, assets[2].url].sort(),
@@ -145,12 +166,14 @@ try {
   const final = await copied();
   for (const part of [
     "ready",
-    "1/2 pages",
+    "1/3 pages",
     "2 files",
     "Skipped file",
     "Skipped page",
     "403",
     "qa-refusal",
+    "import_validation",
+    "HTTP 400",
   ])
     assert(final.includes(part), part);
   assert(!final.includes("PRIVATE"));

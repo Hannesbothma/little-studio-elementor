@@ -1,3 +1,7 @@
+## LS Elementor 0.12.4
+
+Existing sitewide headers and footers no longer stop page imports. LS Elementor keeps conflicting templates separate and uses them on the imported pages. Page-specific save errors now offer **Skip this page and continue**.
+
 ## LS Elementor 0.12.3
 
 Paste a website link and review the captured pages in WordPress. Click **Import** to create editable Elementor drafts. **Download JSON** is available on the review screen for a portable copy.

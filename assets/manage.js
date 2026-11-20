@@ -562,7 +562,7 @@
       : "New pages are saved as drafts.";
     if (window.LSE_CONFIG.themeBuilder)
       $("#lse-import-scope").textContent +=
-        " Importing a source header or footer publishes it in Theme Builder for the entire site.";
+        " Source headers and footers go into Theme Builder. If this site already has a sitewide header or footer, the new templates stay with the imported pages.";
     if (!target) return;
     context.textContent =
       "Updating " +

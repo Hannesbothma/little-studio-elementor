@@ -467,14 +467,26 @@
           };
         }
         const issue = error.lseDetails?.error;
-        const canSkip = !!(
+        const skipCSS = issue?.recoverable && issue.skip?.kind === "css";
+        const skipAsset =
+          action === "asset" &&
           issue?.recoverable &&
-          (issue.skip?.kind === "css" ||
-            (action === "asset" && issue.skip?.kind === "asset"))
+          issue.skip?.kind === "asset";
+        const skipRejectedPage =
+          action === "page" &&
+          issue?.stage === "page" &&
+          issue.page_key === payload.key &&
+          ["import_validation", "import_conflict", "server_error"].includes(
+            issue.code,
+          );
+        const choice = await decideFailure(
+          error,
+          context,
+          !!(skipCSS || skipAsset || skipRejectedPage),
         );
-        const choice = await decideFailure(error, context, canSkip);
         if (choice === "skip") {
-          if (issue.skip.kind === "css") approved.push(issue.skip.id);
+          if (skipCSS) approved.push(issue.skip.id);
+          else if (skipRejectedPage) return skipPage(context, error);
           else {
             const decision = await request("skip_asset", {
               job: job.id,
