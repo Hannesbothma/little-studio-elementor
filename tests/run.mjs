@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { readFile, writeFile, mkdir, mkdtemp, cp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 const root = process.cwd();
 const port = process.env.LSE_TEST_PORT || "9416";
 const blueprintPath = "tests/results/blueprint-" + port + ".json";
@@ -76,6 +76,15 @@ blueprint.steps = blueprint.steps.map((step) =>
       }
     : step,
 );
+const proZip =
+  process.env.LSE_TEST_PRO_ZIP && resolve(process.env.LSE_TEST_PRO_ZIP);
+if (proZip) {
+  blueprint.steps.splice(1, 0, {
+    step: "installPlugin",
+    pluginData: { resource: "vfs", path: "/test-pro/" + basename(proZip) },
+    options: { activate: true },
+  });
+}
 await mkdir("tests/results", { recursive: true });
 await writeFile(blueprintPath, JSON.stringify(blueprint));
 // Use one PHP worker and shared uploads for deterministic CSS regeneration.
@@ -87,6 +96,7 @@ const args = [
   "--mount-before-install=" + uploads + ":/wordpress/wp-content/uploads",
   "--mount=" + root + "/tests:/tests",
   "--mount=" + root + "/dist:/packages",
+  ...(proZip ? ["--mount=" + dirname(proZip) + ":/test-pro"] : []),
   "--blueprint=" + blueprintPath,
   "--port=" + port,
   "--workers=1",
@@ -139,6 +149,8 @@ try {
     "upload-recovery",
     "capture-skip",
     "capture-recovery",
+    "background-work",
+    ...(proZip ? ["theme-builder-work"] : []),
     "portable-content",
     "workflow-cleanup",
     "maps-regression",

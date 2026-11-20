@@ -1,3 +1,9 @@
+## LS Elementor 0.12.10
+
+Use **Scan in background** to crawl a website with WordPress scheduled tasks. Use **Import in background** to let WordPress save the pages once the browser has prepared and uploaded them. You can close the tab after the importer shows the job is queued. Open an interrupted import and choose **Resume import** to recover the source from the same browser.
+
+With Elementor Pro, you can assign an imported header or footer to the entire site and restore the prior display conditions. Basic captured Elementor contact forms are rebuilt as editable Forms. Configure their submission actions in Elementor before publishing.
+
 ## LS Elementor 0.12.9
 
 If a scan is interrupted, reopening LS Elementor lets you copy its last recorded stage and resume from the last stored scan batch. Media is decoded as needed to reduce browser memory use on larger scans and imports.

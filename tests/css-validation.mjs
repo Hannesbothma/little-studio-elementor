@@ -14,11 +14,13 @@ try {
     "native-elementor",
     "page-save",
     "management",
+    "background-import",
+    "theme-parts",
     "importer",
   ])
     php.writeFile("/" + f + ".php", await readFile("includes/" + f + ".php"));
   const result = await php.run({
-    code: `<?php define('ABSPATH','/');require '/errors.php';require '/css.php';require '/native-elementor.php';require '/page-save.php';require '/management.php';require '/importer.php';
+    code: `<?php define('ABSPATH','/');require '/errors.php';require '/css.php';require '/native-elementor.php';require '/page-save.php';require '/management.php';require '/background-import.php';require '/theme-parts.php';require '/importer.php';
 function current_user_can($cap){return true;}
 function check($v,$label){if(!$v)throw new RuntimeException($label);}
 $valid=['a[href^="javascript:"]:after{content:""}','/* @import and expression( are documentation */.x{content:"javascript:; @import";color:red}','.x{transition-behavior:allow-discrete;background:url("https://example.com/a.png")}','@media print{a[href^="javascript:"]::after{content:""}}'];

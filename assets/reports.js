@@ -320,9 +320,26 @@
           : []),
         "",
         "Events (UTC)",
-        ...Object.values(active.entries).sort(),
+        ...[
+          ...Object.values(active.entries),
+          ...(job?.background?.events || []).map(plain),
+        ].sort(),
       ];
-      if (!Object.keys(active.entries).length)
+      if (job?.background?.error) {
+        lines.push(
+          "Background import paused · " +
+            describe({
+              ...job.background.error,
+              phase: "Saving a background import",
+              item: pages.find(
+                (page) => page.key === job.background.error.error?.page_key,
+              ),
+            }),
+        );
+      } else if (
+        !Object.keys(active.entries).length &&
+        !job?.background?.events?.length
+      )
         lines.push("No recorded failures or recovery actions.");
       const findings = new Set();
       const addFinding = (s) => findings.add(plain(s));

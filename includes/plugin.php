@@ -32,7 +32,10 @@ final class LSE_Plugin
     private static function input($action)
     {
         if (isset($_FILES['payload_file'])) {
-            if ($action !== 'page' || isset($_POST['payload'])) {
+            if (
+                !in_array($action, ['page', 'stage_page'], true) ||
+                isset($_POST['payload'])
+            ) {
                 throw new RuntimeException(
                     'Unexpected or ambiguous page upload.',
                 );
@@ -139,7 +142,9 @@ final class LSE_Plugin
                             $response = new WP_REST_Response(
                                 [
                                     'success' => true,
-                                    'data' => LSE_Importer::page($input),
+                                    'data' => !empty($input['stage_only'])
+                                        ? LSE_Importer::stage_page($input)
+                                        : LSE_Importer::page($input),
                                 ],
                                 200,
                             );
@@ -189,6 +194,9 @@ final class LSE_Plugin
             'capture_step',
             'capture_cancel',
             'capture_batch',
+            'capture_active',
+            'capture_delivery',
+            'capture_restart_worker',
             'assets',
             'skip_asset',
             'skip_page',
@@ -196,6 +204,12 @@ final class LSE_Plugin
             'asset_lookup',
             'media_process',
             'media_skip',
+            'resume_prepared',
+            'stage_page',
+            'background_start',
+            'background_status',
+            'background_decide',
+            'theme_part',
         ];
         $requested = $_REQUEST['action'] ?? '';
         if (
@@ -323,18 +337,30 @@ final class LSE_Plugin
                         );
                     }
                     $input = self::input($action);
-                    self::send(
-                        true,
-                        str_starts_with($action, 'capture_')
-                            ? LSE_Capture::$action($input)
-                            : (in_array(
-                                $action,
-                                ['update_check', 'update_install'],
-                                true,
-                            )
-                                ? LSE_Updates::$action($input)
-                                : LSE_Importer::$action($input)),
-                    );
+                    $result = str_starts_with($action, 'capture_')
+                        ? LSE_Capture::$action($input)
+                        : (in_array(
+                            $action,
+                            ['update_check', 'update_install'],
+                            true,
+                        )
+                            ? LSE_Updates::$action($input)
+                            : LSE_Importer::$action($input));
+                    if (
+                        in_array(
+                            $action,
+                            [
+                                'background_start',
+                                'background_status',
+                                'background_decide',
+                                'theme_part',
+                            ],
+                            true,
+                        )
+                    ) {
+                        LSE_Spool::kick();
+                    }
+                    self::send(true, $result);
                 } catch (Throwable $error) {
                     self::send(
                         false,
@@ -620,9 +646,16 @@ final class LSE_Plugin
             true,
         );
         wp_enqueue_script(
+            'lse-recovery',
+            plugins_url('assets/recovery.js', LSE_FILE),
+            [],
+            LSE_VERSION,
+            true,
+        );
+        wp_enqueue_script(
             'lse-admin',
             plugins_url('assets/admin.js', LSE_FILE),
-            ['lse-converter', 'lse-native', 'lse-reports'],
+            ['lse-converter', 'lse-native', 'lse-reports', 'lse-recovery'],
             LSE_VERSION,
             true,
         );
@@ -776,6 +809,12 @@ final class LSE_Plugin
                                 </details>
                             </div>
                         </div>
+                        <div id="lse-saved-work" class="lse-actions" hidden>
+                            <span id="lse-saved-status" role="status"></span>
+                            <button type="button" class="button" id="lse-resume-import" hidden>Resume import</button>
+                            <button type="button" class="button" id="lse-worker-retry" hidden>Retry</button>
+                            <button type="button" class="button" id="lse-worker-skip" hidden>Skip this page and continue</button>
+                        </div>
                         <div class="lse-tabs" role="tablist" aria-label="Import workspace">
                             <button type="button" class="lse-tab" id="lse-pages-tab" role="tab" aria-selected="true" aria-controls="lse-managed-pages" data-tab="pages">Pages <span id="lse-page-count"></span></button>
                             <button type="button" class="lse-tab" id="lse-details-tab" role="tab" aria-selected="false" aria-controls="lse-import-details" data-tab="details" tabindex="-1">Import details</button>
@@ -817,7 +856,7 @@ final class LSE_Plugin
                         ? 'Use the source header and footer sitewide'
                         : 'Standalone pages'; ?></option><option value="elementor_header_footer">Use WordPress header and footer</option></select></label></div><label class="lse-check"><input type="checkbox" id="lse-scripts" checked> Keep website interactions</label><label class="lse-check"><input type="checkbox" id="lse-css" checked> Keep website styling</label></details>
                     <label class="lse-check" id="lse-overwrite-option" hidden><input type="checkbox" id="lse-overwrite"> Allow replacing selected edited or published pages.</label>
-                    <div class="lse-dialog-actions"><button type="button" class="button" id="lse-reset">Cancel</button><button type="button" class="button" id="lse-source-download">Download JSON</button><span id="lse-import-scope">New pages are saved as drafts.</span><button type="button" class="button button-primary" id="lse-import">Import</button></div>
+                    <div class="lse-dialog-actions"><button type="button" class="button" id="lse-reset">Cancel</button><button type="button" class="button" id="lse-source-download">Download JSON</button><span id="lse-import-scope">New pages are saved as drafts.</span><button type="button" class="button" id="lse-import-background">Import in background</button><button type="button" class="button button-primary" id="lse-import">Import</button></div>
                 </div>
                 <div id="lse-progress" hidden><button type="button" class="button" data-lse-background hidden>Run in background</button><progress id="lse-meter" max="100" value="0"></progress><p id="lse-current" role="status"></p><div id="lse-error-item" class="lse-notice is-error" hidden><strong id="lse-error-item-title"></strong><p id="lse-error-item-location"></p><pre id="lse-error-item-snippet" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><p id="lse-error-item-effect"></p></div><div class="lse-actions"><button class="button" type="button" id="lse-retry" hidden>Retry</button><button class="button" type="button" id="lse-check" hidden>Check progress</button><button class="button" type="button" id="lse-error-details" hidden>Error details</button><button class="button" type="button" id="lse-skip-item" hidden>Skip this item and continue</button><button class="button" type="button" id="lse-pause-import" hidden>Pause import</button><button class="button lse-danger" type="button" id="lse-cancel" hidden>Remove import</button></div></div>
             </div>
@@ -830,7 +869,7 @@ final class LSE_Plugin
                     <label class="lse-field">Website address<input id="lse-capture-url" type="url" placeholder="https://your-website.com" required maxlength="2048"></label>
                     <p id="lse-capture-status" class="lse-notice" role="status" aria-live="polite"></p>
                 </div>
-                <footer class="lse-dialog-actions"><button type="button" class="button" data-lse-background hidden>Run in background</button><button type="button" class="button" id="lse-capture-copy" hidden>Copy report</button><button type="button" class="button" id="lse-capture-retry" hidden>Retry</button><button type="button" class="button" id="lse-capture-skip" hidden>Skip this page and continue</button><button type="button" class="button" id="lse-capture-resume" hidden>Resume scan</button><button type="submit" class="button button-primary" id="lse-capture-start">Scan website</button></footer>
+                <footer class="lse-dialog-actions"><button type="button" class="button" data-lse-background hidden>Run in background</button><button type="button" class="button" id="lse-capture-copy" hidden>Copy report</button><button type="button" class="button" id="lse-capture-retry" hidden>Retry</button><button type="button" class="button" id="lse-capture-skip" hidden>Skip this page and continue</button><button type="button" class="button" id="lse-capture-resume" hidden>Resume scan</button><button type="button" class="button" id="lse-capture-background">Scan in background</button><button type="submit" class="button button-primary" id="lse-capture-start">Scan website</button></footer>
             </form>
         </dialog>
         <dialog id="lse-replace-dialog" class="lse-dialog lse-page-dialog" aria-labelledby="lse-replace-title" aria-describedby="lse-replace-description">

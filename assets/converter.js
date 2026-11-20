@@ -1017,6 +1017,82 @@
       ".elementor-slides-wrapper .swiper-wrapper > .swiper-slide:not(.swiper-slide-duplicate)",
     );
   }
+  function contactForm(node) {
+    if (
+      !root.LSE_CONFIG?.widgets?.includes("form") ||
+      !node.matches('.elementor-form,[data-widget_type^="form."]')
+    )
+      return null;
+    const form = node.matches("form") ? node : node.querySelector("form");
+    if (
+      !form ||
+      form.matches("[data-fr-cost],[data-lse-local-form]") ||
+      form.closest("[data-lse-interaction]")
+    )
+      return null;
+    const fields = [];
+    const seen = new Set();
+    for (const field of form.querySelectorAll("input,textarea,select")) {
+      if (
+        field.disabled ||
+        field.matches(
+          'input:is([type="hidden"],[type="submit"],[type="button"],[type="reset"])',
+        )
+      )
+        continue;
+      const type =
+        field.tagName === "INPUT" ? field.type : field.tagName.toLowerCase();
+      if (
+        !["text", "email", "tel", "url", "number", "textarea"].includes(type) ||
+        !field.name ||
+        seen.has(field.name)
+      )
+        return null;
+      seen.add(field.name);
+      const wrapper = field.closest(".elementor-field-group");
+      const match = field.name.match(/^form_fields\[([a-zA-Z0-9_-]+)\]$/);
+      const width = wrapper?.className.match(
+        /(?:^|\s)elementor-col-(\d+)(?:\s|$)/,
+      )?.[1];
+      fields.push({
+        _id: fields.length.toString(16).padStart(7, "0"),
+        custom_id: match?.[1] || "field_" + (fields.length + 1),
+        field_type: type,
+        field_label: (
+          field.labels?.[0]?.textContent ||
+          field.getAttribute("aria-label") ||
+          field.placeholder ||
+          ""
+        )
+          .trim()
+          .slice(0, 150),
+        required: field.required ? "true" : "",
+        placeholder: (field.placeholder || "").slice(0, 200),
+        width:
+          width && Number(width) <= 100 && Number(width) > 0 ? width : "100",
+        ...(type === "textarea" && { rows: field.rows }),
+      });
+    }
+    if (
+      !fields.some((field) => field.field_type === "email") ||
+      !fields.some((field) => field.field_type === "textarea")
+    )
+      return null;
+    const button = form.querySelector(
+      'button[type="submit"],input[type="submit"]',
+    );
+    return {
+      _title: "Contact form",
+      form_name: (form.getAttribute("name") || "Contact form").slice(0, 150),
+      form_fields: fields,
+      button_text: (
+        button?.textContent?.trim() ||
+        button?.value ||
+        "Send"
+      ).slice(0, 100),
+      submit_actions: [],
+    };
+  }
   function slidesSettings(node, w) {
     const wrapper = node.querySelector(".elementor-slides-wrapper");
     const items = sourceSlides(node);
@@ -1809,8 +1885,14 @@
           if (nativeButtons) nativeInteractions.add(region);
           else islands.add(region);
         }
-      for (const n of d.querySelectorAll("form"))
-        islands.add(n.closest(".fr-calculator,[data-lse-interaction]") || n);
+      const formWidgets = new Map();
+      for (const n of d.querySelectorAll("form")) {
+        const block = n.closest('[data-widget_type^="form."]') || n;
+        const settings = contactForm(block);
+        if (settings) formWidgets.set(block, settings);
+        else
+          islands.add(n.closest(".fr-calculator,[data-lse-interaction]") || n);
+      }
       for (const n of d.querySelectorAll("[data-fr-brief]"))
         islands.add(n.closest(".fr-form") || n.parentElement);
       for (const n of d.querySelectorAll(
@@ -1927,7 +2009,10 @@
           node.children.length === 2 &&
           node.querySelector(":scope > img") &&
           node.querySelector(":scope > figcaption");
-        if (slides) {
+        if (formWidgets.has(node)) {
+          widget = "form";
+          Object.assign(settings, formWidgets.get(node));
+        } else if (slides) {
           widget = "slides";
           Object.assign(settings, slides);
         } else if (carousel) {
@@ -2432,7 +2517,7 @@
               'main,[role=main],header,footer,[role=banner],[role=contentinfo],[data-elementor-type="header"],[data-elementor-type="footer"]',
             ));
         const builderWrapper = dom.matches(
-          ".e-con-inner,.elementor-widget-wrap,.elementor-widget-container,.elementor-container",
+          ".e-con-inner,.elementor-widget-wrap,.elementor-widget-container,.elementor-container,.elementor-column-wrap,.elementor-element-populated,.elementor-section-wrap",
         );
         const removableWrapper =
           (builderWrapper || children.length === 1) &&

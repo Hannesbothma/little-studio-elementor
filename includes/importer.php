@@ -6,6 +6,28 @@ final class LSE_Importer
 {
     use LSE_Management;
     use LSE_Page_Save;
+    use LSE_Background_Import;
+    use LSE_Theme_Parts;
+    public static function resume_prepared($input)
+    {
+        $job = self::load($input['job'] ?? '');
+        if (
+            ($input['fingerprint'] ?? null) !== $job['fingerprint'] ||
+            !in_array($job['state'], ['importing', 'finishing'], true)
+        ) {
+            throw new RuntimeException(
+                'This saved preparation no longer matches the import.',
+            );
+        }
+        $result = self::status($input);
+        $result['staged_pages'] = array_values(
+            array_filter(
+                array_column($job['pages'], 'key'),
+                static fn($key) => LSE_Spool::has('import-' . $job['id'], $key),
+            ),
+        );
+        return $result;
+    }
     private static function key($id)
     {
         if (!is_string($id) || !preg_match('/^[a-f0-9]{32}$/', $id)) {
@@ -1618,7 +1640,7 @@ final class LSE_Importer
                 ['media-carousel', 'reviews', 'slides'],
                 true,
             );
-            if ($native || $carousel) {
+            if ($native || $carousel || $widget === 'form') {
                 LSE_Native::element($item);
             }
             if (
@@ -1636,6 +1658,7 @@ final class LSE_Importer
                             'html',
                             'video',
                             'google_maps',
+                            'form',
                             'media-carousel',
                             'reviews',
                             'slides',
@@ -1652,6 +1675,64 @@ final class LSE_Importer
                 throw new RuntimeException(
                     'Element settings must be an object.',
                 );
+            }
+            if (!$native && $widget === 'form') {
+                // Recreate the public fields. Delivery must be configured in the destination editor.
+                $fields = [];
+                foreach ((array) ($settings['form_fields'] ?? []) as $field) {
+                    if (
+                        !is_array($field) ||
+                        !in_array(
+                            $field['field_type'] ?? '',
+                            [
+                                'text',
+                                'email',
+                                'tel',
+                                'url',
+                                'number',
+                                'textarea',
+                            ],
+                            true,
+                        )
+                    ) {
+                        throw new RuntimeException(
+                            'Invalid converted contact form field.',
+                        );
+                    }
+                    $index = count($fields);
+                    $fields[] = [
+                        '_id' => str_pad(dechex($index), 7, '0', STR_PAD_LEFT),
+                        'custom_id' => self::text(
+                            $field['custom_id'] ?? 'field_' . ($index + 1),
+                            100,
+                        ),
+                        'field_type' => $field['field_type'],
+                        'field_label' => self::text(
+                            $field['field_label'] ?? '',
+                            600,
+                        ),
+                        'placeholder' => self::text(
+                            $field['placeholder'] ?? '',
+                            800,
+                        ),
+                        'width' => (string) max(
+                            1,
+                            min(100, (int) ($field['width'] ?? 100)),
+                        ),
+                        'required' => empty($field['required']) ? '' : 'true',
+                        'rows' => max(1, min(30, (int) ($field['rows'] ?? 4))),
+                    ];
+                }
+                $settings['form_fields'] = $fields;
+                $settings['form_name'] = self::text(
+                    $settings['form_name'] ?? 'Contact form',
+                    600,
+                );
+                $settings['button_text'] = self::text(
+                    $settings['button_text'] ?? 'Send',
+                    400,
+                );
+                $settings['submit_actions'] = [];
             }
             if (is_array($settings['lse_attributes'] ?? null)) {
                 $settings['lse_attributes'] = array_filter(
@@ -2823,6 +2904,20 @@ final class LSE_Importer
                 $job['site_template_links'][] = [
                     'kind' => $kind,
                     'edit_url' => $part['edit_url'],
+                    'assign' =>
+                        $job['state'] === 'ready' &&
+                        current_user_can('edit_theme_options') &&
+                        current_user_can('publish_posts') &&
+                        get_post_meta(
+                            $part['id'],
+                            '_elementor_template_type',
+                            true,
+                        ) === $kind &&
+                        !self::theme_part_state($part['id'])['conditions'],
+                    'restore' =>
+                        $job['state'] === 'ready' &&
+                        current_user_can('edit_theme_options') &&
+                        !empty($job['site_part_swaps'][$kind]),
                 ];
             }
         }
@@ -2875,6 +2970,7 @@ final class LSE_Importer
                 hash_equals($page['stamp'] ?? '', $native_stamp);
         }
         unset($page);
+        $job['background'] = self::background_status($input);
         $job['media'] = LSE_Media::status(array_column($job['assets'], 'id'));
         return $job;
     }

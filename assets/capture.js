@@ -699,7 +699,8 @@
     capturedCount = 0,
     capturedBytes = 0,
     durable = false,
-    finalBatch = null;
+    finalBatch = null,
+    background = false;
   const scanSummary = (phase) =>
     window.LSEReports.checkpoint({
       phase,
@@ -711,6 +712,7 @@
     form = $("#lse-capture-form"),
     status = $("#lse-capture-status"),
     start = $("#lse-capture-start"),
+    startBackground = $("#lse-capture-background"),
     retry = $("#lse-capture-retry"),
     skipPage = $("#lse-capture-skip"),
     copy = $("#lse-capture-copy"),
@@ -732,7 +734,7 @@
     }
   }
   const buttons = () => {
-    start.disabled = busy;
+    start.disabled = startBackground.disabled = busy;
     form.querySelector("[data-lse-background]").hidden = !busy;
     window.dispatchEvent(new Event("lse:busy-changed"));
     form.querySelectorAll("input,select").forEach((el) => (el.disabled = busy));
@@ -750,7 +752,7 @@
       } catch {}
     }
   };
-  async function run(resume = false) {
+  async function run(resume = false, startOnServer = false) {
     if (busy || A.busy || window.LSEManage?.busy) return;
     if (!window.LSE_CONFIG?.elementor) {
       status.textContent = "Activate Elementor before scanning a website.";
@@ -764,13 +766,15 @@
     buttons();
     try {
       if (resume && !session) {
-        const saved = scanState();
-        if (!saved)
+        const saved = scanState() || (await A.request("capture_active", {}));
+        if (!saved.capture)
           throw Error("The scan checkpoint expired. Scan the website again.");
         session = saved.capture;
-        sequence = saved.seq;
-        capturedCount = saved.count;
-        capturedBytes = saved.bytes;
+        $("#lse-capture-url").value = saved.url;
+        sequence = saved.seq ?? 0;
+        capturedCount = saved.count ?? 0;
+        capturedBytes = saved.bytes ?? 0;
+        background = saved.background ?? saved.seq === undefined;
         durable = true;
         if (saved.done) {
           const stored = await scanStorage("readonly", (store) =>
@@ -793,10 +797,13 @@
         scanSummary(status.textContent);
         const job = await A.request("capture_start", {
           url: $("#lse-capture-url").value,
+          background: startOnServer,
         });
         session = job.capture;
+        background = !!job.background;
         scanState({
           capture: session,
+          background,
           url: $("#lse-capture-url").value,
           seq: 0,
           count: 0,
@@ -804,6 +811,8 @@
           expires: Date.now() + scanLifetime,
         });
       }
+      if (resume && background && !finalBatch)
+        await A.request("capture_restart_worker", { capture: session });
       while (!cancelled) {
         pending = true;
         scanSummary(
@@ -813,12 +822,19 @@
         );
         const step =
           finalBatch ||
-          (await A.request("capture_batch", {
+          (await A.request(background ? "capture_delivery" : "capture_batch", {
             capture: session,
             seq: sequence,
           }));
         pending = false;
         if (cancelled) break;
+        if (step.waiting) {
+          status.textContent =
+            step.message +
+            " You can close this tab and come back to Resume scan.";
+          await new Promise((resolve) => setTimeout(resolve, 2500));
+          continue;
+        }
         if (!finalBatch) {
           const from = sequence;
           const batchRecords = step.records;
@@ -848,6 +864,7 @@
             scanState({
               last: from,
               capture: session,
+              background,
               url: $("#lse-capture-url").value,
               seq: sequence,
               count: capturedCount,
@@ -978,6 +995,12 @@
     copy.hidden = true;
     retry.hidden = true;
     resumeScan.hidden = !scanState();
+    if (resumeScan.hidden)
+      A.request("capture_active", {})
+        .then((active) => {
+          if (!busy && dialog.open && active.capture) resumeScan.hidden = false;
+        })
+        .catch(() => {});
     dialog.showModal();
     $("#lse-capture-url").focus();
   }
@@ -985,18 +1008,13 @@
     e.preventDefault();
     run();
   });
-  resumeScan.addEventListener("click", () => {
-    const saved = scanState();
-    if (!saved) {
-      resumeScan.hidden = true;
-      return;
-    }
-    $("#lse-capture-url").value = saved.url;
-    run(true);
+  startBackground.addEventListener("click", () => {
+    if (form.reportValidity()) run(false, true);
   });
+  resumeScan.addEventListener("click", () => run(true));
   copy.addEventListener("click", () => A.copyReport(copy, failureReport));
   window.addEventListener("beforeunload", (event) => {
-    if (!busy) return;
+    if (!busy || (background && session && !finalBatch)) return;
     event.preventDefault();
     event.returnValue = "";
   });

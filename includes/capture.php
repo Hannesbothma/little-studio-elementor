@@ -6,6 +6,8 @@ if (!defined('ABSPATH')) {
 /** Administrator-only public website capture, checkpointed between small requests. */
 final class LSE_Capture
 {
+    use LSE_Background_Capture;
+
     private static function url($value, $base = '')
     {
         if (!is_string($value) || strlen($value) > 2048) {
@@ -154,12 +156,21 @@ final class LSE_Capture
             is_string($previous) &&
             preg_match('/^[a-f0-9]{32}$/D', $previous)
         ) {
-            self::remove_batch($previous);
-            delete_transient(self::key($previous));
+            self::capture_cancel(['capture' => $previous]);
         }
         set_transient(self::key($id), $job, HOUR_IN_SECONDS);
         update_user_meta(get_current_user_id(), '_lse_capture', $id);
-        return ['capture' => $id, 'source' => $url, 'seq' => 0];
+        $background = !empty($input['background']);
+        if ($background) {
+            self::start_delivery($id, $url);
+            LSE_Spool::kick();
+        }
+        return [
+            'capture' => $id,
+            'source' => $url,
+            'seq' => 0,
+            'background' => $background,
+        ];
     }
     private static function enqueue(
         &$job,
@@ -904,10 +915,31 @@ final class LSE_Capture
     }
     public static function capture_cancel($input)
     {
-        [$id] = self::load($input);
+        $id = $input['capture'] ?? '';
+        if (!is_string($id) || !preg_match('/^[a-f0-9]{32}$/D', $id)) {
+            throw new RuntimeException('Invalid capture session.');
+        }
+        set_transient(self::key($id) . '_cancelled', true, HOUR_IN_SECONDS);
+        try {
+            $lease = self::delivery_lease($id);
+        } catch (RuntimeException $error) {
+            // The active background worker clears its spool after the in-flight batch.
+            return ['cancelled' => true];
+        }
+        try {
+            self::clear_capture($id);
+            return ['cancelled' => true];
+        } finally {
+            LSE_Locks::release($lease);
+        }
+    }
+
+    private static function clear_capture($id)
+    {
+        self::clear_delivery($id);
         self::remove_batch($id);
         delete_transient(self::key($id));
-        return ['cancelled' => true];
+        delete_transient(self::key($id) . '_cancelled');
     }
 }
 

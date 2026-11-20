@@ -15,6 +15,7 @@
   let inspectorOpen = false;
   let backgroundDialog = null;
   let metadataContext = null;
+  let workerTimer = null;
   const flowDialog = $("#lse-flow-dialog");
   const captureDialog = $("#lse-capture-dialog");
   const backgroundTask = $("#lse-background-task");
@@ -82,6 +83,7 @@
     const disabled = locked();
     for (const element of document.querySelectorAll(
       "#lse-new-import,#lse-import-list,#lse-more-imports,[data-import-id],#lse-choose-file," +
+        "#lse-resume-import,#lse-worker-retry,#lse-worker-skip,[data-lse-theme-part]," +
         "#lse-page-search,#lse-page-filter,[data-managed-key],#lse-page-inspector button," +
         "#lse-remove-import,#lse-download,#lse-activate,#lse-restore,#lse-page-form input," +
         "#lse-page-save,#lse-page-close,#lse-page-cancel,#lse-flow-close",
@@ -403,8 +405,94 @@
     $("#lse-restoration").textContent = (current.restoration || []).join(" ");
   }
 
+  function renderSavedWork() {
+    clearTimeout(workerTimer);
+    const checkpoint = current;
+    const worker = checkpoint?.background;
+    const panel = $("#lse-saved-work");
+    panel.hidden = true;
+    $("#lse-resume-import").hidden = true;
+    $("#lse-worker-retry").hidden = true;
+    $("#lse-worker-skip").hidden = true;
+    if (!checkpoint || !["importing", "finishing"].includes(checkpoint.state))
+      return;
+    const label = $("#lse-saved-status");
+    if (worker?.phase) {
+      panel.hidden = false;
+      if (worker.phase === "paused") {
+        const issue = worker.error?.error;
+        const page = checkpoint.pages.find(
+          (page) => page.key === issue?.page_key,
+        );
+        label.textContent =
+          (page ? page.title + " · " : "") +
+          (worker.error?.message || "Background import paused.");
+        $("#lse-worker-retry").hidden = false;
+        $("#lse-worker-skip").hidden = !page;
+        $("#lse-worker-skip").textContent =
+          issue?.skip?.kind === "css"
+            ? "Skip this CSS and continue"
+            : "Skip this page and continue";
+        return;
+      }
+      label.textContent =
+        worker.position < worker.total
+          ? "Background import · " +
+            worker.position +
+            " of " +
+            worker.total +
+            " pages processed. You can close this tab."
+          : "Background import · Checking shared sections and navigation. You can close this tab.";
+      workerTimer = setTimeout(async () => {
+        if (current !== checkpoint || A.busy) return;
+        try {
+          const next = await A.request("background_status", {
+            job: checkpoint.id,
+          });
+          if (current !== checkpoint) return;
+          if (["ready", "paused"].includes(next.phase)) {
+            current = await A.request("status", { job: checkpoint.id });
+            render();
+            await list();
+          } else {
+            checkpoint.background = next;
+            renderSavedWork();
+          }
+        } catch (error) {
+          if (current === checkpoint) label.textContent = error.message;
+        }
+      }, 3000);
+      return;
+    }
+    window.LSERecovery.available(checkpoint.id).then((available) => {
+      if (!available || current !== checkpoint) return;
+      label.textContent =
+        "You can continue with the source saved in this browser.";
+      panel.hidden = false;
+      $("#lse-resume-import").hidden = false;
+    });
+  }
+
+  async function decideWorker(decision) {
+    if (!current || locked()) return;
+    const checkpoint = current;
+    setLoading(true);
+    try {
+      checkpoint.background = await A.request("background_decide", {
+        job: checkpoint.id,
+        decision,
+      });
+      renderSavedWork();
+    } catch (error) {
+      message(error.message, true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function render() {
     A.setJob(current);
+    renderSavedWork();
     view(current ? "manage" : "choose");
     renderSites();
     if (!current) return;
@@ -418,7 +506,18 @@
           escapeHtml(part.edit_url) +
           '">Edit site ' +
           escapeHtml(part.kind) +
-          "</a>",
+          "</a>" +
+          (part.assign || part.restore
+            ? '<button type="button" class="button" data-lse-theme-part="' +
+              escapeHtml(part.kind) +
+              '" data-operation="' +
+              (part.restore ? "restore" : "assign") +
+              '">' +
+              (part.restore
+                ? "Restore previous " + part.kind
+                : "Use " + part.kind + " sitewide") +
+              "</button>"
+            : ""),
       )
       .join("");
     $("#lse-project-meta").textContent =
@@ -494,6 +593,7 @@
         consent: true,
       });
       clearTarget();
+      void window.LSERecovery.remove(latest.id);
       current = result.state === "removed" ? null : result;
       selectedKey = current?.pages[0]?.key || null;
       render();
@@ -702,6 +802,51 @@
     }
   });
   $("#lse-remove-import").addEventListener("click", () => remove());
+  $("#lse-site-template-links").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-lse-theme-part]");
+    if (!button || !current || locked()) return;
+    const kind = button.dataset.lseThemePart;
+    const operation = button.dataset.operation;
+    if (
+      !confirm(
+        operation === "restore"
+          ? "Restore the previous sitewide " + kind + " display conditions?"
+          : "Use this imported " +
+              kind +
+              " across the site? You can restore the previous sitewide assignment here.",
+      )
+    )
+      return;
+    setLoading(true);
+    try {
+      current = await A.request("theme_part", {
+        job: current.id,
+        kind,
+        operation,
+        consent: true,
+      });
+      render();
+      message(
+        operation === "restore"
+          ? "Previous " + kind + " restored."
+          : "Imported " + kind + " assigned sitewide.",
+      );
+    } catch (error) {
+      message(error.message, true);
+    } finally {
+      setLoading(false);
+    }
+  });
+  $("#lse-resume-import").addEventListener("click", async () => {
+    if (!current || locked()) return;
+    try {
+      await A.resumeImport(current.id);
+    } catch (error) {
+      message(error.message, true);
+    }
+  });
+  $("#lse-worker-retry").addEventListener("click", () => decideWorker("retry"));
+  $("#lse-worker-skip").addEventListener("click", () => decideWorker("skip"));
   $("#lse-refresh-import").addEventListener("click", refreshImport);
   $("#lse-page-search").addEventListener("input", renderPages);
   $("#lse-page-filter").addEventListener("change", renderPages);

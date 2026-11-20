@@ -7,8 +7,10 @@ trait LSE_Management
 {
     public static function remove_import($input)
     {
-        $lock = self::lock($input['job'] ?? '');
+        $id = $input['job'] ?? '';
+        $background_lease = self::background_lease($id);
         try {
+            $lock = self::lock($id);
             $job = self::load($lock['id']);
             if (empty($input['consent'])) {
                 throw new RuntimeException(
@@ -34,6 +36,14 @@ trait LSE_Management
                     throw new RuntimeException(
                         'Your account cannot remove every page in this import. Nothing was removed.',
                     );
+                }
+            }
+            if (!empty($job['site_part_swaps'])) {
+                $theme_lock = LSE_Locks::acquire('_lse_theme_builder_import');
+                $manager = self::theme_part_manager();
+                foreach (array_keys($job['site_part_swaps']) as $kind) {
+                    self::restore_theme_part($job, $kind, $manager);
+                    self::store($job);
                 }
             }
             if (!empty($job['activated'])) {
@@ -124,6 +134,7 @@ trait LSE_Management
                 'assets_failed' => $failed_assets,
             ];
             self::store($job);
+            self::background_remove($job['owner'], $job['id']);
             if (
                 $job['state'] === 'removed' &&
                 get_user_meta(get_current_user_id(), '_lse_last_job', true) ===
@@ -133,7 +144,13 @@ trait LSE_Management
             }
             return self::status(['job' => $job['id']]);
         } finally {
-            self::unlock($lock);
+            if (isset($theme_lock)) {
+                LSE_Locks::release($theme_lock);
+            }
+            if (isset($lock)) {
+                self::unlock($lock);
+            }
+            LSE_Locks::release($background_lease);
         }
     }
     private static function menu_used_elsewhere($id, $excluded)

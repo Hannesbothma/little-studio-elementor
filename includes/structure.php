@@ -183,7 +183,26 @@ final class LSE_Structure
 
     public static function site_parts($post_id)
     {
-        return get_post_meta($post_id, '_lse_source', true)['site_parts'] ?? [];
+        $parts =
+            get_post_meta($post_id, '_lse_source', true)['site_parts'] ?? [];
+        if (class_exists(\ElementorPro\Modules\ThemeBuilder\Module::class)) {
+            foreach ($parts as &$part) {
+                $id = $part['template_id'];
+                $part['theme_builder'] =
+                    get_post_status($id) === 'publish' &&
+                    in_array(
+                        'include/general',
+                        (array) get_post_meta(
+                            $id,
+                            '_elementor_conditions',
+                            true,
+                        ),
+                        true,
+                    );
+            }
+            unset($part);
+        }
+        return $parts;
     }
 
     public static function prepare_editor_blocks(&$elements, &$layout, $ids)

@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1.4
 Requires PHP: 8.0
-Stable tag: 0.12.9
+Stable tag: 0.12.10
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -106,8 +106,10 @@ shared-section rendering, SEO fallback and enabled custom scripts. Deactivation
 does not delete imported content, but those supporting features stop rendering.
 There is no destructive uninstall routine or automatic media deletion.
 
-Only the most recent import can be resumed from the interface. Choose the same
-file, selection, name and options to continue it. A new import uses new drafts.
+Open an unfinished import and choose Resume import to recover its source and
+options from the same browser. Browser storage can be cleared or unavailable.
+If the checkpoint is gone, use the original file and options to continue the
+most recent matching import. A new import uses new drafts.
 Select an existing import and Update from file to refresh its pages.
 Native JSON and self-contained HTML files can be imported.
 
@@ -132,9 +134,10 @@ No converter service, AI API, CDN library, telemetry or API key is required.
 Analysis occurs in your browser; import sends data to your WordPress server.
 Website link capture makes public HTTP requests from your WordPress host to the
 source site and linked file hosts. Captured files are held in your browser and in a temporary host checkpoint for
-reliable batch retries. Acknowledgement replaces that checkpoint; cancellation
-removes it. Abandoned checkpoints expire with crawl metadata after one hour and
-are removed by WordPress scheduled cleanup when cron runs.
+reliable batch retries. Cancelling clears that scan's stored files. Background
+scan batches remain available for up to a day after the last crawl step. Prepared
+page payloads are removed after job completion or removal. The browser stores
+an unfinished import's source for use by Resume import.
 The source preview blocks scripts and external requests. Imported pages may still
 reference external media, fonts or links when those were not packaged; review them.
 Elementor itself can make its usual network requests. This plugin does not control
@@ -155,8 +158,11 @@ versions before production use. No live website is changed by building this ZIP.
 Choose Import website link and paste a public HTTP/HTTPS address. Capture follows
 linked pages automatically without a plugin page-count or link-depth quota. Small
 resources are batched per request. No HTTrack or external service is required.
-Keep the tab open. Retry
-continues the current capture; reloading requires starting the capture again.
+Scan in background uses WordPress scheduled tasks to crawl when the browser
+is closed. Use Resume scan to collect and convert the saved capture in the
+browser. On hosts that disable WP-Cron, a host cron schedule must be configured.
+For background imports, leave the page open while it prepares and uploads the
+source. After the queue confirms, WordPress can save pages without the browser.
 Linked pages stay on the same origin. Capture has no fixed resource-count,
 response-size or combined-byte quota. Per-request work remains checkpointed in
 small batches; cancellation and hosting/network resource limits still apply.
@@ -176,6 +182,12 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.12.10 =
+* Schedule background website crawling and prepared page saves in WordPress.
+* Resume an interrupted import from its saved browser source and options.
+* Assign imported headers and footers sitewide with a restore action.
+* Rebuild simple Elementor Pro contact forms as native editable widgets.
 
 = 0.12.9 =
 * Keep a browser checkpoint in the copied report when a scan or import is interrupted.

@@ -17,7 +17,8 @@
     failureChoice = null,
     mediaTimer = null,
     mediaRunning = false,
-    mediaPaused = false;
+    mediaPaused = false,
+    lastRun = {};
   const status = (message, error = false) => {
     for (const element of [$("#lse-status"), $("#lse-dialog-status")]) {
       element.textContent = message;
@@ -163,12 +164,13 @@
   async function request(action, payload, file) {
     if (action === "prepare")
       payload = { converter_version: config.conversionVersion, ...payload };
+    if (action === "stage_page") payload = { ...payload, stage_only: true };
     const requestStarted = performance.now();
     const encoded = JSON.stringify(payload),
       bytes = new TextEncoder().encode(encoded).length;
     const files = Array.isArray(file) ? file : file ? [file] : [];
     const pageUpload =
-      action === "page" &&
+      ["page", "stage_page"].includes(action) &&
       ["json-file-v1", "json-gzip-v1"].includes(config.pageTransport);
     let upload = pageUpload
         ? new Blob([encoded], { type: "application/json" })
@@ -240,7 +242,12 @@
       );
     else if (file) form.set("file", file, file.name);
     const controller = new AbortController(),
-      timeout = { check: 30000, status: 30000, update_check: 55000 }[action],
+      timeout = {
+        check: 30000,
+        status: 30000,
+        background_status: 30000,
+        update_check: 55000,
+      }[action],
       timer = timeout ? setTimeout(() => controller.abort(), timeout) : null;
     let details = {
       action,
@@ -430,7 +437,7 @@
             error.lseDetails?.error?.code,
           );
         if (
-          (batch || action === "asset" || action === "page") &&
+          (batch || ["asset", "page", "stage_page"].includes(action)) &&
           possibleFile
         ) {
           error.lseDetails.item = context;
@@ -446,7 +453,7 @@
             journal.add("Trying this batch one file at a time.");
             return { individual: true };
           }
-          if (action === "page") {
+          if (["page", "stage_page"].includes(action)) {
             const page = saved.pages.find((p) => p.key === payload.key);
             if (page?.done)
               return { saved: true, key: page.key, stamp: page.stamp };
@@ -475,8 +482,8 @@
           issue?.recoverable &&
           issue.skip?.kind === "asset";
         const skipRejectedPage =
-          action === "page" &&
-          issue?.stage === "page" &&
+          ["page", "stage_page"].includes(action) &&
+          issue?.stage === action &&
           issue.page_key === payload.key &&
           ["import_validation", "import_conflict", "server_error"].includes(
             issue.code,
@@ -706,7 +713,8 @@
   function refreshSelect() {
     const nodes = [...document.querySelectorAll("[data-page-key]")];
     const checked = nodes.filter((x) => x.checked).length;
-    $("#lse-import").disabled = !checked || !config.elementor || busy;
+    $("#lse-import-background").disabled = $("#lse-import").disabled =
+      !checked || !config.elementor || busy;
     $("#lse-all").checked = checked === nodes.length;
     $("#lse-all").indeterminate = checked > 0 && checked < nodes.length;
   }
@@ -939,11 +947,12 @@
       dialog.showModal();
     });
   }
-  async function run() {
+  async function run({ background = false, recovery = null } = {}) {
     if (busy || !project) return;
+    lastRun = { background, recovery };
     const source = selected();
     if (!source.pages.length) return;
-    const target = window.LSEManage?.target;
+    const target = recovery?.target || window.LSEManage?.target;
     const converted = source.pages.some((page) => page.conversion);
     const layout = converted ? "elementor_canvas" : $("#lse-layout").value;
     const preserveCSS = converted || $("#lse-css").checked;
@@ -955,6 +964,7 @@
       return;
     }
     if (
+      !recovery &&
       target &&
       $("#lse-overwrite").checked &&
       !(await confirmReplacement(source.pages.length))
@@ -974,7 +984,8 @@
     step(2);
     window.dispatchEvent(new Event("lse:import-started"));
     let resources = null,
-      currentItem = null;
+      currentItem = null,
+      localRecovery = false;
     const progress = (n, message) => {
       window.LSEReports.checkpoint({
         phase: message,
@@ -1017,39 +1028,46 @@
       pendingFingerprint = importIdentity;
       $("#lse-check").hidden = true;
       progress(1, "Preparing your protected WordPress drafts…");
-      job = await request("prepare", {
-        fingerprint: importIdentity,
-        operation_id: operationId,
-        site_id: source.site_id,
-        target_job: target?.id || "",
-        expected_stamps: target
-          ? Object.fromEntries(
-              target.pages.map((p) => [p.key, p.current_stamp]),
-            )
-          : {},
-        overwrite: $("#lse-overwrite").checked,
-        title: source.title,
-        pages: source.pages.map(({ key, title, slug, url, parent_key }) => ({
-          key,
-          title,
-          slug,
-          url,
-          parent_key,
-        })),
-        site: source.site,
-        capture: source.capture
-          ? {
-              source: source.capture.source,
-              complete: source.capture.complete !== false,
-              failed_resources: source.capture.failed_resources || [],
-              warnings: source.capture.warnings || [],
-            }
-          : null,
-        layout,
-        scripts: $("#lse-scripts").checked,
-      });
+      job = recovery
+        ? await request("resume_prepared", {
+            job: recovery.id,
+            fingerprint: importIdentity,
+          })
+        : await request("prepare", {
+            fingerprint: importIdentity,
+            operation_id: operationId,
+            site_id: source.site_id,
+            target_job: target?.id || "",
+            expected_stamps: target
+              ? Object.fromEntries(
+                  target.pages.map((p) => [p.key, p.current_stamp]),
+                )
+              : {},
+            overwrite: $("#lse-overwrite").checked,
+            title: source.title,
+            pages: source.pages.map(
+              ({ key, title, slug, url, parent_key }) => ({
+                key,
+                title,
+                slug,
+                url,
+                parent_key,
+              }),
+            ),
+            site: source.site,
+            capture: source.capture
+              ? {
+                  source: source.capture.source,
+                  complete: source.capture.complete !== false,
+                  failed_resources: source.capture.failed_resources || [],
+                  warnings: source.capture.warnings || [],
+                }
+              : null,
+            layout,
+            scripts: $("#lse-scripts").checked,
+          });
       journal.attach(job, true);
-      if (job.state === "ready") {
+      if (job.state === "ready" || job.background?.phase) {
         result(job);
         return;
       }
@@ -1061,6 +1079,25 @@
         throw Error(
           "Draft preparation stopped early. Remove this import’s unchanged drafts before starting it again.",
         );
+      if (!recovery) {
+        try {
+          await window.LSERecovery.save(job.id, project, {
+            id: job.id,
+            title: source.title,
+            name: originalFile,
+            fingerprint,
+            keys: source.pages.map((page) => page.key),
+            target: target && { id: target.id, layout: target.layout },
+            layout,
+            preserveCSS,
+            scripts: $("#lse-scripts").checked,
+            background,
+          });
+          localRecovery = true;
+        } catch {}
+      } else {
+        localRecovery = true;
+      }
       const imageAlt = new Map(),
         fontFamilies = new Map();
       for (const page of source.pages) {
@@ -1290,6 +1327,7 @@
       }
       const pendingPages = source.pages.filter(
         (page) =>
+          (!background || !job.staged_pages?.includes(page.key)) &&
           !job.pages.some((p) => p.key === page.key && (p.done || p.skipped)),
       );
       // Shared site templates use the homepage design when it is selected.
@@ -1321,9 +1359,11 @@
         };
         progress(
           40 + (55 * i) / Math.max(1, pendingPages.length),
-          (page.conversion
-            ? "Saving Elementor page "
-            : "Converting and saving page ") +
+          (background
+            ? "Preparing page for background import "
+            : page.conversion
+              ? "Saving Elementor page "
+              : "Converting and saving page ") +
             (i + 1) +
             " of " +
             pendingPages.length +
@@ -1353,17 +1393,15 @@
             i + 1 < pendingPages.length ? prepare(pendingPages[i + 1]) : null;
           continue;
         }
-        const saving = recoverableRequest(
-          "page",
-          {
-            job: job.id,
-            key: page.key,
-            ...converted.value,
-            compact: true,
-          },
-          undefined,
-          { kind: "page", key: page.key, title: page.title, url: page.url },
-        );
+        const payload = {
+          job: job.id,
+          key: page.key,
+          ...converted.value,
+          compact: true,
+        };
+        const saving = background
+          ? recoverableRequest("stage_page", payload, undefined, currentItem)
+          : recoverableRequest("page", payload, undefined, currentItem);
         prepared =
           i + 1 < pendingPages.length ? prepare(pendingPages[i + 1]) : null;
         const saved = await saving;
@@ -1371,6 +1409,7 @@
           job.pages.find((p) => p.key === page.key).skipped = true;
           continue;
         }
+        if (background && saved.staged && saved.key === page.key) continue;
         if (!saved.saved || saved.key !== page.key)
           throw Error(
             "The page save was not confirmed. Check saved progress before retrying.",
@@ -1378,6 +1417,13 @@
         const entry = job.pages.find((p) => p.key === page.key);
         entry.done = true;
         entry.stamp = saved.stamp;
+      }
+      if (background) {
+        await request("background_start", { job: job.id });
+        job = await request("status", { job: job.id });
+        if (localRecovery) void window.LSERecovery.remove(job.id);
+        result(job);
+        return;
       }
       progress(
         98,
@@ -1392,6 +1438,7 @@
           ? "Pages saved; image sizes are processing."
           : "Website import complete.",
       );
+      void window.LSERecovery.remove(job.id);
       result(job);
     } catch (e) {
       const phase = $("#lse-current").textContent;
@@ -1439,9 +1486,12 @@
     refreshSelect();
   });
   $("#lse-pages").addEventListener("change", refreshSelect);
-  $("#lse-import").addEventListener("click", run);
+  $("#lse-import").addEventListener("click", () => run());
+  $("#lse-import-background").addEventListener("click", () =>
+    run({ background: true }),
+  );
   $("#lse-retry").addEventListener("click", () =>
-    failureChoice ? failureChoice("retry") : run(),
+    failureChoice ? failureChoice("retry") : run(lastRun),
   );
   $("#lse-skip-item").addEventListener("click", () => failureChoice?.("skip"));
   $("#lse-pause-import").addEventListener("click", () =>
@@ -1610,8 +1660,25 @@
     $("#lse-scripts").parentElement.title =
       "Your account cannot run unfiltered JavaScript.";
   }
+  async function resumeImport(id) {
+    const saved = await window.LSERecovery.load(id);
+    if (!saved) throw Error("The saved source is unavailable in this browser.");
+    const recovery = saved.options;
+    await choose({ name: recovery.name }, M.validate(saved.project));
+    if (!project) return;
+    fingerprint = recovery.fingerprint;
+    $("#lse-name").value = recovery.title;
+    $("#lse-layout").value = recovery.layout;
+    $("#lse-css").checked = recovery.preserveCSS;
+    $("#lse-scripts").checked = recovery.scripts && config.canScripts;
+    for (const input of document.querySelectorAll("[data-page-key]"))
+      input.checked = recovery.keys.includes(input.dataset.pageKey);
+    refreshSelect();
+    await run({ background: recovery.background, recovery });
+  }
   window.LSEAdmin = {
     request,
+    resumeImport,
     copyReport,
     choose,
     chooseProject(project, name) {

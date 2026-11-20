@@ -48,6 +48,41 @@ add_action( 'wp_ajax_lse_test', static function() {
     $input = json_decode( wp_unslash( $_POST['payload'] ?? '{}' ), true ); $id = (int) ( $input['id'] ?? 0 );
     try {
         switch ( $input['operation'] ?? 'inspect' ) {
+            case 'background-cron':
+                $hook = $input['kind'] === 'scan' ? 'lse_scan_work' : 'lse_import_work';
+                $owner = get_current_user_id();
+                $args = [$owner, $input['queue']];
+                $due = wp_next_scheduled($hook, $args);
+                if ($due === false || $due > time()) {
+                    wp_send_json_success(false);
+                }
+                wp_unschedule_event($due, $hook, $args);
+                wp_set_current_user(0);
+                try {
+                    do_action_ref_array($hook, $args);
+                } finally {
+                    wp_set_current_user($owner);
+                }
+                wp_send_json_success(true);
+            case 'theme-builder-template':
+                if (!class_exists(\ElementorPro\Modules\ThemeBuilder\Module::class)) {
+                    throw new RuntimeException('Elementor Pro is required for this test.');
+                }
+                $kind = $input['kind'];
+                $document = \Elementor\Plugin::$instance->documents->create($kind, [
+                    'post_title' => 'Existing sitewide ' . $kind,
+                    'post_status' => 'publish',
+                ]);
+                $id = $document->get_main_id();
+                update_post_meta($id, '_elementor_conditions', ['include/general', 'exclude/singular/post/123']);
+                \ElementorPro\Modules\ThemeBuilder\Module::instance()->get_conditions_manager()->get_cache()->regenerate();
+                wp_send_json_success($id);
+            case 'theme-builder-conditions':
+                wp_send_json_success([
+                    'status' => get_post_status($id),
+                    'conditions' => get_post_meta($id, '_elementor_conditions', true),
+                    'type' => get_post_meta($id, '_elementor_template_type', true),
+                ]);
             case 'external-gallery':
                 wp_send_json_success(wp_insert_post([
                     'post_type' => 'page',
