@@ -85,7 +85,7 @@ try {
       refusals.push(action);
       console.log("Refusing", action);
       return route.fulfill({
-        status: 403,
+        status: action === "lse_assets" ? 403 : 504,
         contentType: "text/html",
         headers: { "x-request-id": "qa-refusal" },
         body: "<h1>Forbidden</h1>",
@@ -112,6 +112,7 @@ try {
     "403",
     "first.svg",
     "blocked.svg",
+    "HTTP 504",
     "qa-refusal",
     "one file at a time",
   ])

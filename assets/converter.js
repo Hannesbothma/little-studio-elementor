@@ -983,20 +983,27 @@
       root.setAttribute("data-lse-source-content", "");
     return inner ? clone.innerHTML : clone.outerHTML;
   }
+  function slideKey(item, index) {
+    return (
+      [...item.classList]
+        .find((name) => /^elementor-repeater-item-[a-f0-9]{7,8}$/.test(name))
+        ?.split("-")
+        .pop() || (index + 1).toString(16).padStart(7, "0")
+    );
+  }
+  function sourceSlides(node) {
+    return node.querySelectorAll(
+      ".elementor-slides-wrapper .swiper-wrapper > .swiper-slide:not(.swiper-slide-duplicate)",
+    );
+  }
   function slidesSettings(node, w) {
     const wrapper = node.querySelector(".elementor-slides-wrapper");
-    const items = wrapper?.querySelectorAll(
-      ".swiper-wrapper > .swiper-slide:not(.swiper-slide-duplicate)",
-    );
-    if (!items?.length) return null;
+    const items = sourceSlides(node);
+    if (!items.length) return null;
     const slides = [];
     const seen = new Set();
     for (const [index, item] of items.entries()) {
-      const key =
-        [...item.classList]
-          .find((name) => /^elementor-repeater-item-[a-f0-9]{7,8}$/.test(name))
-          ?.split("-")
-          .pop() || (index + 1).toString(16).padStart(7, "0");
+      const key = slideKey(item, index);
       if (seen.has(key)) continue;
       seen.add(key);
       const bg = item.querySelector(".swiper-slide-bg");
@@ -1046,7 +1053,14 @@
           : {}),
       });
     }
-    const settings = { slides };
+    const arrows = !!wrapper.querySelector(
+      ".elementor-swiper-button, .swiper-button-next",
+    );
+    const dots = !!wrapper.querySelector(".swiper-pagination");
+    const settings = {
+      slides,
+      navigation: arrows ? (dots ? "both" : "arrows") : dots ? "dots" : "",
+    };
     for (const [key, value] of Object.entries(backgroundSettings(node) || {}))
       if (
         /^(?:navigation|autoplay|autoplay_speed|transition|transition_speed|infinite|pause_on_hover|pause_on_interaction)$/.test(
@@ -1078,7 +1092,8 @@
     return settings;
   }
   function slideAppearance(node, w) {
-    const slide = node.querySelector(".swiper-wrapper > .swiper-slide");
+    const items = sourceSlides(node);
+    const slide = items[0];
     const inner = slide.querySelector(".swiper-slide-inner");
     const content = slide.querySelector(".swiper-slide-contents");
     const parts = {};
@@ -1113,6 +1128,19 @@
       align: innerStyle.textAlign,
       padding: dim(innerStyle, "padding"),
       parts,
+      backgroundPositions: Object.fromEntries(
+        [...items].flatMap((item, index) => {
+          const image = item.querySelector(".swiper-slide-bg");
+          return image
+            ? [
+                [
+                  slideKey(item, index),
+                  w.getComputedStyle(image).backgroundPosition,
+                ],
+              ]
+            : [];
+        }),
+      ),
       overlay: {
         "background-color": contentStyle.backgroundColor,
         width: content?.computedStyleMap?.().get("width")?.toString() || "",
@@ -1247,7 +1275,72 @@
         settings[key] = value;
     return { type, settings };
   }
+  function prepareLazyMedia(doc) {
+    for (const image of doc.querySelectorAll("img")) {
+      const source = image.getAttribute("src")?.trim();
+      const lazy = [
+        "data-src",
+        "data-lazy-src",
+        "data-original",
+        "data-original-src",
+        "data-ll-src",
+      ]
+        .map((name) => image.getAttribute(name)?.trim())
+        .find(Boolean);
+      if (
+        lazy &&
+        (!source || /^data:image\/(?:gif|svg\+xml)[;,]/i.test(source))
+      )
+        image.setAttribute("src", lazy);
+    }
+    for (const node of doc.querySelectorAll("img, picture source")) {
+      const srcset = node.getAttribute("srcset")?.trim();
+      if (srcset && !/^data:/i.test(srcset)) continue;
+      const lazy = ["data-srcset", "data-lazy-srcset", "data-original-srcset"]
+        .map((name) => node.getAttribute(name)?.trim())
+        .find(Boolean);
+      if (lazy) node.setAttribute("srcset", lazy);
+    }
+  }
+  function sourceLink(node) {
+    return {
+      url: node.getAttribute("href") || "",
+      is_external: node.target === "_blank" ? "on" : "",
+      nofollow: node.relList.contains("nofollow") ? "on" : "",
+    };
+  }
+  function hostedVideo(node, restoreURL) {
+    if (
+      node.querySelector("track") ||
+      node.querySelectorAll("source").length > 1
+    )
+      return null;
+    const source = node.querySelector("source");
+    const url = node.getAttribute("src") || source?.getAttribute("src");
+    const original = url && restoreURL(url);
+    if (
+      !original ||
+      !/^https?:\/\//i.test(original) ||
+      !/\.(?:mp4|webm)(?:[?#]|$)/i.test(original)
+    )
+      return null;
+    const poster = node.getAttribute("poster");
+    const preload = node.getAttribute("preload");
+    return {
+      video_type: "hosted",
+      hosted_url: { url, id: 0 },
+      ...(poster ? { poster: { url: poster, id: 0 } } : {}),
+      ...(preload && ["auto", "metadata", "none"].includes(preload)
+        ? { preload }
+        : {}),
+      controls: node.hasAttribute("controls") ? "yes" : "",
+      autoplay: node.hasAttribute("autoplay") ? "yes" : "",
+      loop: node.hasAttribute("loop") ? "yes" : "",
+      mute: node.hasAttribute("muted") ? "yes" : "",
+    };
+  }
   function prepareSource(doc) {
+    prepareLazyMedia(doc);
     const warnings = [];
     let galleryIndex = 0;
     let menuIndex = 0;
@@ -1807,6 +1900,12 @@
           root.LSE_CONFIG?.widgets?.includes("slides") &&
           slidesSettings(node, w);
         const carousel = carouselSettings(node);
+        const video = tag === "video" && hostedVideo(node, restoreRefs);
+        const figureImage =
+          tag === "figure" &&
+          node.children.length === 2 &&
+          node.querySelector(":scope > img") &&
+          node.querySelector(":scope > figcaption");
         if (slides) {
           widget = "slides";
           Object.assign(settings, slides);
@@ -1854,15 +1953,20 @@
           settings.address = map.address;
           settings.zoom = { size: map.zoom, unit: "px" };
           delete settings.lse_attributes["data-lse-map"];
-        } else if (tag === "img") {
+        } else if (video) {
+          widget = "video";
+          Object.assign(settings, video);
+        } else if (tag === "img" || figureImage) {
+          const image = figureImage ? node.querySelector(":scope > img") : node;
           widget = "image";
           settings.image = {
-            url: rewrite(node.getAttribute("src") || "", options.map || {}),
+            url: rewrite(image.getAttribute("src") || "", options.map || {}),
             id: 0,
           };
           settings.image_size = "full";
-          settings.caption_source = "none";
-          settings.lse_image_alt = node.getAttribute("alt") || "";
+          settings.caption_source = figureImage ? "custom" : "none";
+          if (figureImage) settings.caption = sourceHTML(figureImage, true);
+          settings.lse_image_alt = image.getAttribute("alt") || "";
           settings.lse_alt_override = "yes";
         } else if (
           tag === "a" &&
@@ -1886,9 +1990,10 @@
             node.getAttribute("data-elementor-open-lightbox") === "no"
               ? "no"
               : "yes";
-          settings.link = { url: node.getAttribute("href") || "" };
+          settings.link = sourceLink(node);
         } else if (
           tag === "a" &&
+          node.hasAttribute("href") &&
           node.children.length <= 1 &&
           !node.querySelector(
             "div,section,article,img,svg,h1,h2,h3,h4,h5,h6,p,ul,ol",
@@ -1897,11 +2002,7 @@
         ) {
           widget = "button";
           settings.text = sourceHTML(node, true);
-          settings.link = {
-            url: node.getAttribute("href") || "",
-            is_external: node.target === "_blank" ? "on" : "",
-            nofollow: node.rel.includes("nofollow") ? "on" : "",
-          };
+          settings.link = sourceLink(node);
         } else if (tag === "hr") {
           widget = "divider";
           settings.color = w.getComputedStyle(node).borderTopColor;
@@ -1929,11 +2030,8 @@
           if (tag === "canvas")
             warnings.push("Canvas drawing needs its original drawing code.");
         } else {
-          if (tag === "a")
-            settings.link = {
-              url: node.getAttribute("href") || "",
-              is_external: node.target === "_blank" ? "on" : "",
-            };
+          if (tag === "a" && node.hasAttribute("href"))
+            settings.link = sourceLink(node);
           settings.content_width = "full";
           settings.html_tag = [
             "main",
@@ -1983,7 +2081,9 @@
           styleNode:
             widget === "image" && node.tagName === "A"
               ? node.querySelector("img")
-              : node,
+              : figureImage
+                ? node.querySelector(":scope > img")
+                : node,
           element,
           widget,
           tag,
@@ -2417,23 +2517,43 @@
             applySlideAppearance(element.settings, all[width].slides, suffix);
           if (options.preserveCSS) {
             let previous = "";
+            const previousPositions = new Map();
+            const scope = "__LSE_SCOPE__ .elementor-element-" + element.id;
             for (const width of widths) {
-              const declarations = Object.entries(all[width].slides.overlay)
+              const { overlay, backgroundPositions } = all[width].slides;
+              const declarations = Object.entries(overlay)
                 .filter(([, value]) => value && safeValue(value))
                 .map(([key, value]) => key + ":" + value)
                 .join(";");
-              if (declarations === previous) continue;
-              previous = declarations;
-              const rule =
-                "__LSE_SCOPE__ .elementor-element-" +
-                element.id +
-                " .swiper-slide-contents{" +
-                declarations +
-                "}";
-              css +=
-                width === 1440
-                  ? rule
-                  : "@media(max-width:" + width + "px){" + rule + "}";
+              let rules = "";
+              if (declarations !== previous && declarations) {
+                rules +=
+                  scope + " .swiper-slide-contents{" + declarations + "}";
+                previous = declarations;
+              }
+              for (const [id, position] of Object.entries(
+                backgroundPositions,
+              )) {
+                if (
+                  !position ||
+                  !safeValue(position) ||
+                  position === (previousPositions.get(id) || "50% 50%")
+                )
+                  continue;
+                previousPositions.set(id, position);
+                rules +=
+                  scope +
+                  " .elementor-repeater-item-" +
+                  id +
+                  " .swiper-slide-bg{background-position:" +
+                  position +
+                  "}";
+              }
+              if (rules)
+                css +=
+                  width === 1440
+                    ? rules
+                    : "@media(max-width:" + width + "px){" + rules + "}";
             }
           }
         }

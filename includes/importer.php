@@ -501,6 +501,7 @@ final class LSE_Importer
             'audio/x-wav',
             'audio/ogg',
             'application/pdf',
+            'text/vtt',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         ]);
     }
@@ -677,6 +678,7 @@ final class LSE_Importer
                             'audio/wav',
                             'audio/x-wav',
                             'application/pdf',
+                            'text/vtt',
                         ],
                         true,
                     )
@@ -1508,6 +1510,20 @@ final class LSE_Importer
                 $allowed[$tag][$attr] = true;
             }
         }
+        $allowed['input'] += [
+            'src' => true,
+            'alt' => true,
+            'width' => true,
+            'height' => true,
+        ];
+        $allowed['source']['media'] = true;
+        $allowed['track'] = [
+            'src' => true,
+            'kind' => true,
+            'srclang' => true,
+            'label' => true,
+            'default' => true,
+        ];
         $html = preg_replace(
             '~<(script|iframe|object|embed|style)\b[^>]*>[\s\S]*?</\1\s*>~i',
             '',
@@ -1651,7 +1667,7 @@ final class LSE_Importer
                 }
                 unset($slide);
             }
-            foreach (['title', 'editor', 'html'] as $field) {
+            foreach (['title', 'editor', 'html', 'caption'] as $field) {
                 if (isset($settings[$field])) {
                     $settings[$field] = self::html(
                         $settings[$field],
@@ -1684,7 +1700,7 @@ final class LSE_Importer
             foreach (array_keys($settings) as $field) {
                 if (
                     preg_match(
-                        '/^(?:image|background_image|background_overlay_image|lse_image_background_image)(?:_(?:tablet|mobile))?$/D',
+                        '/^(?:image|background_image|background_overlay_image|lse_image_background_image|hosted_url|poster)(?:_(?:tablet|mobile))?$/D',
                         $field,
                     ) &&
                     isset($settings[$field]['url'])

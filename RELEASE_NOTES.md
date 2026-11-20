@@ -1,3 +1,7 @@
+## LS Elementor 0.12.7
+
+This release improves source capture, editable media, and import recovery. It preserves more lazy images, responsive images, PDF links, image captions, simple self-hosted video settings, and slider framing. Copied reports name the pages, count skipped items, and give clearer server request details.
+
 ## LS Elementor 0.12.6
 
 Captured Elementor Pro sliders use native Slides widgets with their source height, photos, captions and booking buttons. Refreshing the importer opens the dashboard directly, including when an earlier import is unfinished.

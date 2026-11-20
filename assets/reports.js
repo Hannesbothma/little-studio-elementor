@@ -125,13 +125,20 @@
       error.item?.name || error.item?.title,
       error.item?.url,
       error.message,
-      error.httpStatus && "HTTP " + error.httpStatus,
+      error.httpStatus &&
+        !error.message?.includes("HTTP " + error.httpStatus) &&
+        "HTTP " + error.httpStatus,
       issue.code,
       issue.field,
       issue.line
         ? "line " + issue.line + ", column " + (issue.column || 1)
         : "",
       error.endpoint,
+      error.restFallback &&
+        "REST returned HTTP " + error.restFallback + " before AJAX retry",
+      error.transport,
+      error.transferBytes !== undefined &&
+        error.transferBytes + " payload bytes",
       error.durationMs !== undefined ? error.durationMs + " ms" : "",
       error.responseKind,
       error.contentType,
@@ -219,6 +226,8 @@
     }
     function report(job, project, filename) {
       const pages = job?.pages || [];
+      const skippedPages = pages.filter((page) => page.skipped).length;
+      const skippedFiles = Object.values(job?.skipped_assets || {});
       const lines = [
         "LS Elementor import report",
         "Generated " + new Date().toISOString(),
@@ -246,6 +255,15 @@
           " pages confirmed | " +
           (job?.assets?.length || 0) +
           " files confirmed",
+        ...(skippedPages || skippedFiles.length
+          ? [
+              "Skipped " +
+                skippedPages +
+                " page(s) | " +
+                skippedFiles.length +
+                " file(s)",
+            ]
+          : []),
         "",
         "Events (UTC)",
         ...Object.values(active.entries).sort(),
@@ -255,21 +273,29 @@
       const findings = new Set();
       const addFinding = (s) => findings.add(plain(s));
       const capture = job?.capture || project?.capture;
-      for (const warning of capture?.warnings || []) addFinding(warning);
-      for (const item of capture?.failed_resources || [])
+      const failures = capture?.failed_resources || [];
+      const failedURLs = new Set(failures.map((item) => item.url));
+      for (const warning of capture?.warnings || []) {
+        const omitted = /^Could not package (https?:\/\/\S+): /i.exec(warning);
+        if (!omitted || !failedURLs.has(omitted[1])) addFinding(warning);
+      }
+      for (const item of failures)
         addFinding(
           (item.kind === "page"
             ? "Skipped unavailable source page · "
             : "Capture · ") +
             item.url +
             " · " +
-            (item.error || item.status || "failed"),
+            (item.error || (item.status ? "HTTP " + item.status : "failed")),
         );
-      for (const item of Object.values(job?.skipped_assets || {}))
+      for (const item of skippedFiles)
         addFinding("Skipped file · " + item.name + " · " + item.reason);
+      const pageTitles = new Map(
+        pages.map((page) => [page.key, page.current_title || page.title]),
+      );
       for (const [key, r] of Object.entries(job?.reports || {}))
         for (const warning of r.warnings || [])
-          addFinding(key + " · " + warning);
+          addFinding((pageTitles.get(key) || key) + " · " + warning);
       for (const issue of [
         ...(job?.media?.errors || []),
         ...(job?.media?.skipped || []),

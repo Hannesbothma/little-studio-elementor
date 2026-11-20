@@ -150,7 +150,7 @@
       clean !== "-1" &&
       clean !== "0" &&
       !/wp-login\.php|id=["']loginform["']/i.test(clean) &&
-      [403, 413, 415, 422].includes(res.status);
+      [403, 413, 415, 422, 502, 503, 504].includes(res.status);
     error.lseMessage = message;
     error.lseDetails = {
       ...details,
@@ -240,9 +240,8 @@
       );
     else if (file) form.set("file", file, file.name);
     const controller = new AbortController(),
-      timer = ["check", "status"].includes(action)
-        ? setTimeout(() => controller.abort(), 30000)
-        : null;
+      timeout = { check: 30000, status: 30000, update_check: 55000 }[action],
+      timer = timeout ? setTimeout(() => controller.abort(), timeout) : null;
     let details = {
       action,
       httpStatus: 0,
@@ -279,7 +278,7 @@
           .json()
           .catch(() => null);
         if (!failure || failure.code === "rest_no_route") {
-          details.restFallback = true;
+          details.restFallback = res.status;
           res = await fetch(config.ajax, {
             method: "POST",
             credentials: "same-origin",
@@ -308,7 +307,10 @@
       return responseData(res, await res.text(), details);
     } catch (e) {
       if (!e.lseDetails) {
-        e.lseDetails = details;
+        e.lseDetails = {
+          ...details,
+          durationMs: Math.round(performance.now() - requestStarted),
+        };
         if (e.name === "AbortError")
           e.message =
             (actionNames[action] || "WordPress request") +
@@ -931,8 +933,14 @@
     setBusy(true);
     $("#lse-progress").hidden = false;
     $("#lse-review").hidden = true;
-    $("#lse-retry").hidden = true;
-    $("#lse-cancel").hidden = true;
+    for (const id of [
+      "lse-error-item",
+      "lse-retry",
+      "lse-skip-item",
+      "lse-pause-import",
+      "lse-cancel",
+    ])
+      document.getElementById(id).hidden = true;
     step(2);
     window.dispatchEvent(new Event("lse:import-started"));
     let resources = null,
@@ -1418,9 +1426,19 @@
       try {
         await navigator.clipboard.writeText(report);
       } catch {
-        const area = document.createElement("textarea");
+        const container = button.closest("dialog") || app;
+        let area = container.querySelector("textarea[data-lse-report-text]");
+        if (!area) {
+          area = document.createElement("textarea");
+          area.readOnly = true;
+          area.rows = 8;
+          area.className = "large-text";
+          area.dataset.lseReportText = "";
+          area.setAttribute("aria-label", "Import report");
+          button.after(area);
+        }
         area.value = report;
-        (button.closest("dialog") || app).append(area);
+        area.focus();
         area.select();
         if (!document.execCommand("copy")) {
           status("Select the report text and copy it.", true);

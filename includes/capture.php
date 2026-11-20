@@ -364,7 +364,15 @@ final class LSE_Capture
             if (
                 in_array(
                     $tag,
-                    ['img', 'script', 'source', 'video', 'audio'],
+                    [
+                        'img',
+                        'script',
+                        'source',
+                        'video',
+                        'audio',
+                        'input',
+                        'track',
+                    ],
                     true,
                 )
             ) {
@@ -375,6 +383,8 @@ final class LSE_Capture
                         'data-src',
                         'data-lazy-src',
                         'data-original',
+                        'data-original-src',
+                        'data-ll-src',
                     ]
                     as $attr
                 ) {
@@ -386,7 +396,15 @@ final class LSE_Capture
                         0,
                     );
                 }
-                foreach (['srcset', 'data-srcset'] as $attr) {
+                foreach (
+                    [
+                        'srcset',
+                        'data-srcset',
+                        'data-lazy-srcset',
+                        'data-original-srcset',
+                    ]
+                    as $attr
+                ) {
                     foreach (
                         explode(',', $el->getAttribute($attr))
                         as $candidate
@@ -432,12 +450,14 @@ final class LSE_Capture
             }
         }
         foreach ($dom->getElementsByTagName('a') as $a) {
+            $href = $a->getAttribute('href');
+            $document = preg_match('~\.pdf(?:[?#]|$)~i', $href);
             self::enqueue(
                 $job,
-                $a->getAttribute('href'),
+                $href,
                 $base,
-                'page',
-                $item['depth'] + 1,
+                $document ? 'asset' : 'page',
+                $document ? 0 : $item['depth'] + 1,
             );
         }
     }

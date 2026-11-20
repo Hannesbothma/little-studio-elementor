@@ -24,6 +24,7 @@
   const mediaType = (record, url) => {
     const aliases = {
       "image/jpg": "image/jpeg",
+      "application/x-pdf": "application/pdf",
       "application/font-woff": "font/woff",
       "application/x-font-woff": "font/woff",
       "application/font-woff2": "font/woff2",
@@ -32,6 +33,8 @@
       "application/vnd.ms-fontobject": "",
     };
     let type = aliases[record.type] ?? record.type;
+    if (type === "text/plain" && /\.vtt$/i.test(new URL(url).pathname))
+      type = "text/vtt";
     if (
       [
         "application/octet-stream",
@@ -57,8 +60,10 @@
           mp3: "audio/mpeg",
           ogg: "audio/ogg",
           wav: "audio/wav",
+          pdf: "application/pdf",
+          vtt: "text/vtt",
         }[new URL(url).pathname.split(".").pop().toLowerCase()] || type;
-    return /^(?:image\/(?:jpeg|png|gif|webp|avif|svg\+xml)|font\/(?:woff2?|ttf|otf)|video\/(?:mp4|webm)|audio\/(?:mpeg|wav|ogg))$/.test(
+    return /^(?:image\/(?:jpeg|png|gif|webp|avif|svg\+xml)|font\/(?:woff2?|ttf|otf)|video\/(?:mp4|webm)|audio\/(?:mpeg|wav|ogg)|application\/pdf|text\/vtt)$/.test(
       type,
     )
       ? type
@@ -75,6 +80,7 @@
       resources.set(r.url, r);
       resources.set(r.requested, r);
     }
+    const startPage = resources.get(source)?.url || source;
     const pages = [
       ...new Map(
         records
@@ -82,6 +88,8 @@
           .map((r) => [r.url, r]),
       ).values(),
     ];
+    const startIndex = pages.findIndex((page) => page.url === startPage);
+    if (startIndex > 0) pages.unshift(...pages.splice(startIndex, 1));
     if (!pages.length)
       throw Error(
         "No HTML pages were captured. Try Desktop capture for this website.",
@@ -216,7 +224,9 @@
       documents = new Map();
     for (const record of pages) {
       const doc = new DOMParser().parseFromString(text(record), "text/html");
-      contextTitle = doc.title.trim() || new URL(record.url).hostname;
+      const pageTitle =
+        doc.title.trim() || doc.querySelector("h1")?.textContent.trim();
+      contextTitle = pageTitle || new URL(record.url).hostname;
       notesFor(doc);
       function notesFor(document) {
         for (const warning of M.prepareSource(document)) notes.add(warning);
@@ -332,9 +342,15 @@
           "data-src",
           "data-lazy-src",
           "data-original",
+          "data-original-src",
+          "data-ll-src",
         ]) {
           if (!el.hasAttribute(attr)) continue;
-          if (["IMG", "SOURCE", "VIDEO", "AUDIO", "INPUT"].includes(el.tagName))
+          if (
+            ["IMG", "SOURCE", "VIDEO", "AUDIO", "INPUT", "TRACK"].includes(
+              el.tagName,
+            )
+          )
             el.setAttribute(
               attr,
               await asset(
@@ -357,14 +373,12 @@
             else el.removeAttribute(attr);
           }
         }
-        if (el.tagName === "IMG" && !el.getAttribute("src")) {
-          const lazy =
-            el.getAttribute("data-src") ||
-            el.getAttribute("data-lazy-src") ||
-            el.getAttribute("data-original");
-          if (lazy) el.setAttribute("src", lazy);
-        }
-        for (const attr of ["srcset", "data-srcset"])
+        for (const attr of [
+          "srcset",
+          "data-srcset",
+          "data-lazy-srcset",
+          "data-original-srcset",
+        ])
           if (
             el.hasAttribute(attr) &&
             !el.getAttribute(attr).includes("data:")
@@ -372,10 +386,9 @@
             const candidates = [];
             for (const candidate of el.getAttribute(attr).split(",")) {
               const [url, ...descriptor] = candidate.trim().split(/\s+/);
-              if (url)
-                candidates.push(
-                  [await asset(url, base), ...descriptor].join(" "),
-                );
+              const packaged = url ? await asset(url, base) : "";
+              if (packaged)
+                candidates.push([packaged, ...descriptor].join(" "));
             }
             el.setAttribute(attr, candidates.join(", "));
           }
@@ -386,8 +399,11 @@
         for (const attr of ["href", "action"])
           if (el.hasAttribute(attr)) {
             if (["use", "image"].includes(el.tagName.toLowerCase())) continue;
-            const value = el.getAttribute(attr);
-            if (/^(?:#|mailto:|tel:)/i.test(value)) continue;
+            const value = el.getAttribute(attr).trim();
+            if (/^(?:#|mailto:|tel:)/i.test(value)) {
+              el.setAttribute(attr, value);
+              continue;
+            }
             const url = absolute(value, base);
             if (
               url &&
@@ -408,21 +424,25 @@
             } else el.removeAttribute(attr);
           }
       }
-      const title = (
-        doc.title.trim() ||
-        new URL(record.url).pathname ||
-        "Home"
-      ).slice(0, 300);
+      const title = (pageTitle || new URL(record.url).pathname || "Home").slice(
+        0,
+        300,
+      );
       const meta = (selector) =>
         (doc.querySelector(selector)?.getAttribute("content") || "").trim();
-      const url = new URL(record.url),
-        slug =
-          decodeURIComponent(url.pathname)
-            .toLowerCase()
-            .replace(/^\/+|\/+$/g, "")
-            .replace(/[^a-z0-9-]+/g, "-")
-            .replace(/^-+|-+$/g, "")
-            .slice(0, 150) || "home";
+      let path = new URL(record.url).pathname;
+      try {
+        path = decodeURIComponent(path);
+      } catch {
+        // A malformed URL escape should not discard the rest of the capture.
+      }
+      const slug =
+        path
+          .toLowerCase()
+          .replace(/^\/+|\/+$/g, "")
+          .replace(/[^a-z0-9-]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .slice(0, 150) || "home";
       output.push({
         key,
         title,
@@ -440,7 +460,10 @@
               record.url,
             base,
           ),
-          indexing: /noindex/i.test(meta('meta[name="robots"]'))
+          indexing: [...doc.querySelectorAll('meta[name="robots" i]')].some(
+            (node) =>
+              /(?:^|[\s,])(?:noindex|none)(?:[\s,]|$)/i.test(node.content),
+          )
             ? "noindex"
             : "default",
           social_title: meta('meta[property="og:title"]').slice(0, 300),

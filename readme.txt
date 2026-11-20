@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1.4
 Requires PHP: 8.0
-Stable tag: 0.12.6
+Stable tag: 0.12.7
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -175,6 +175,11 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.12.7 =
+* Capture more lazy media and PDF links, handle redirects and broken URL escapes, and retain robots directives.
+* Build editable image captions and simple self-hosted videos, preserve link behavior, and keep slider framing and controls.
+* Improve recovery after request failures and make copied reports easier to read.
 
 = 0.12.6 =
 * Convert source Elementor Pro sliders into editable Slides widgets with their backgrounds, height, text and buttons.
