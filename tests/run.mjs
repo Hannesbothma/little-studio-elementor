@@ -18,6 +18,7 @@ await run(process.execPath, ["tests/typography.mjs"]);
 await run(process.execPath, ["tests/styles-regression.mjs"]);
 await run(process.execPath, ["tests/css-validation.mjs"]);
 await run(process.execPath, ["tests/fetch-validation.mjs"]);
+await run(process.execPath, ["tests/recovery-responsiveness.mjs"]);
 await run(process.execPath, ["scripts/package.mjs", ".", "dist"]);
 const version = (await readFile("little-studio-elementor.php", "utf8")).match(
   /Version:\s*(\d+\.\d+\.\d+)/,

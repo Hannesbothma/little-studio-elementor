@@ -1080,6 +1080,7 @@
           "Draft preparation stopped early. Remove this import’s unchanged drafts before starting it again.",
         );
       if (!recovery) {
+        progress(2, "Saving a browser recovery copy…");
         try {
           await window.LSERecovery.save(job.id, project, {
             id: job.id,
@@ -1098,6 +1099,7 @@
       } else {
         localRecovery = true;
       }
+      progress(3, "Reading page image labels and fonts…");
       const imageAlt = new Map(),
         fontFamilies = new Map();
       for (const page of source.pages) {

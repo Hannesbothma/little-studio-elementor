@@ -651,7 +651,8 @@
         new Promise((resolve, reject) => {
           const transaction = db.transaction("batches", mode);
           const result = work(transaction.objectStore("batches"));
-          transaction.oncomplete = () => resolve(result.result);
+          transaction.oncomplete = () =>
+            resolve(typeof result === "function" ? result() : result.result);
           transaction.onabort = () => reject(transaction.error);
           transaction.onerror = () => reject(transaction.error);
         }),
@@ -659,8 +660,19 @@
   }
   const scanRange = (id) =>
     IDBKeyRange.bound([id, 0], [id, Number.MAX_SAFE_INTEGER]);
-  const savedBatches = (id) =>
-    scanStorage("readonly", (store) => store.getAll(scanRange(id)));
+  function savedRecords(id) {
+    return scanStorage("readonly", (store) => {
+      const records = [];
+      const request = store.openCursor(scanRange(id));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        for (const record of cursor.value.records) records.push(record);
+        cursor.continue();
+      };
+      return () => records;
+    });
+  }
   async function saveBatch(id, from, step) {
     return scanStorage("readwrite", (store) =>
       store.put({ ...step, storedAt: Date.now() }, [id, from]),
@@ -842,9 +854,7 @@
             try {
               await saveBatch(session, sequence, step);
             } catch {
-              records = (await savedBatches(session).catch(() => [])).flatMap(
-                (batch) => batch.records,
-              );
+              records = await savedRecords(session).catch(() => []);
               if (records.length !== capturedCount)
                 throw Error(
                   "The browser could not read the saved scan files. Scan the website again.",
@@ -883,9 +893,7 @@
             notes.push(
               "The capture reached a page, depth, or resource limit. Some linked content was not included.",
             );
-          const raw = durable
-            ? (await savedBatches(session)).flatMap((batch) => batch.records)
-            : records;
+          const raw = durable ? await savedRecords(session) : records;
           if (raw.length !== capturedCount)
             throw Error(
               "Some browser scan files are missing. Scan the website again.",

@@ -18,10 +18,16 @@
       return await new Promise((resolve, reject) => {
         const transaction = db.transaction("checkpoints", mode);
         const store = transaction.objectStore("checkpoints");
-        const result = work(store);
-        transaction.oncomplete = () => resolve(result?.result);
-        transaction.onabort = () => reject(transaction.error);
-        transaction.onerror = () => reject(transaction.error);
+        let result;
+        transaction.oncomplete = () => resolve(result);
+        transaction.onabort = () =>
+          reject(
+            transaction.error ||
+              Error("The browser checkpoint was interrupted."),
+          );
+        work(store, (value) => {
+          result = value;
+        });
       });
     } finally {
       db.close();
@@ -35,33 +41,61 @@
     async save(id, project, options) {
       const { pages, assets, ...metadata } = project;
       await transact("readwrite", (store) => {
-        store.delete(range(id));
-        store.put({ metadata, options, pages: pages.length }, [id, 0]);
         let index = 0;
-        for (const record of pages) store.put(record, [id, ++index]);
-        for (const record of assets) store.put(record, [id, ++index]);
+        function saveNext() {
+          if (index > pages.length + assets.length) return;
+          const record =
+            index === 0
+              ? { metadata, options, pages: pages.length }
+              : index <= pages.length
+                ? pages[index - 1]
+                : assets[index - pages.length - 1];
+          // IndexedDB clones each value synchronously. Wait for the request
+          // before cloning the next record, within the same atomic checkpoint.
+          store.put(record, [id, index++]).onsuccess = saveNext;
+        }
+        store.delete(range(id)).onsuccess = saveNext;
       });
     },
     async available(id) {
       try {
-        return !!(await transact("readonly", (store) => store.getKey([id, 0])));
+        return !!(await transact("readonly", (store, complete) => {
+          const request = store.getKey([id, 0]);
+          request.onsuccess = () => complete(request.result);
+        }));
       } catch {
         return false;
       }
     },
     async load(id) {
-      const [checkpoint, ...records] = await transact("readonly", (store) =>
-        store.getAll(range(id)),
-      );
-      if (!checkpoint) return null;
-      return {
-        options: checkpoint.options,
-        project: {
-          ...checkpoint.metadata,
-          pages: records.slice(0, checkpoint.pages),
-          assets: records.slice(checkpoint.pages),
-        },
-      };
+      return transact("readonly", (store, complete) => {
+        let checkpoint = null,
+          totalPages = 0;
+        const request = store.openCursor(range(id));
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) {
+            complete(checkpoint);
+            return;
+          }
+          const index = cursor.key[1];
+          const record = cursor.value;
+          if (index === 0) {
+            totalPages = record.pages;
+            checkpoint = {
+              options: record.options,
+              project: { ...record.metadata, pages: [], assets: [] },
+            };
+          } else if (checkpoint) {
+            const records =
+              index <= totalPages
+                ? checkpoint.project.pages
+                : checkpoint.project.assets;
+            records.push(record);
+          }
+          cursor.continue();
+        };
+      });
     },
     async remove(id) {
       try {

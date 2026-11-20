@@ -1,3 +1,7 @@
+## LS Elementor 0.12.11
+
+Large scans give the browser time to respond between page layout and stylesheet measurements. Scan and import recovery read or save one batch at a time. The copied report identifies when the importer is saving its browser recovery copy.
+
 ## LS Elementor 0.12.10
 
 Use **Scan in background** to crawl a website with WordPress scheduled tasks. Use **Import in background** to let WordPress save the pages once the browser has prepared and uploaded them. You can close the tab after the importer shows the job is queued. Open an interrupted import and choose **Resume import** to recover the source from the same browser.

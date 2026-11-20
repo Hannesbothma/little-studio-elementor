@@ -1625,6 +1625,20 @@
     return warnings;
   }
 
+  function browserTimeSlice() {
+    let deadline = performance.now() + 24;
+    return () => {
+      if (performance.now() < deadline) return null;
+      const turn =
+        typeof root.scheduler?.yield === "function"
+          ? root.scheduler.yield()
+          : new Promise((resolve) => setTimeout(resolve, 0));
+      return turn.then(() => {
+        deadline = performance.now() + 24;
+      });
+    };
+  }
+
   function resourceSession(project, map = {}) {
     const previewMap = {},
       originalAssets = new Map(),
@@ -1640,20 +1654,29 @@
         styles.clear();
       }
     };
-    for (const asset of project.assets) {
-      const blob = URL.createObjectURL(
-        new Blob([asset.bytes], { type: asset.type }),
-      );
-      blobs.push(blob);
-      previewMap[asset.url] = blob;
-      try {
-        previewMap[new URL(asset.url).pathname] = blob;
-      } catch {}
-      if (map[asset.url]) previewMap[map[asset.url]] = blob;
-      originalAssets.set(blob, map[asset.url] || asset.url);
+    let previews;
+    async function preparePreviews() {
+      const pause = browserTimeSlice();
+      for (const asset of project.assets) {
+        const turn = pause();
+        if (turn) await turn;
+        const blob = URL.createObjectURL(
+          new Blob([asset.bytes], { type: asset.type }),
+        );
+        blobs.push(blob);
+        previewMap[asset.url] = blob;
+        try {
+          previewMap[new URL(asset.url).pathname] = blob;
+        } catch {}
+        if (map[asset.url]) previewMap[map[asset.url]] = blob;
+        originalAssets.set(blob, map[asset.url] || asset.url);
+      }
+      return Object.freeze(previewMap);
     }
     return {
-      previewMap: Object.freeze(previewMap),
+      prepare() {
+        return (previews ??= preparePreviews());
+      },
       originalAssets,
       destMap,
       styles,
@@ -1712,7 +1735,9 @@
   }
   async function convertDocument(project, page, options, resources) {
     const warnings = [...inspect(page).warnings];
-    const { previewMap, originalAssets } = resources;
+    const previewMap = await resources.prepare();
+    const { originalAssets } = resources;
+    const pause = browserTimeSlice();
     const restoreRefs = (value) =>
       String(value).replace(/blob:[^\s"')<>]+/g, (url) => {
         const hash = url.indexOf("#");
@@ -2243,6 +2268,8 @@
           return value;
         };
         for (const entry of elements) {
+          const turn = pause();
+          if (turn) await turn;
           const s = w.getComputedStyle(entry.node),
             content = w.getComputedStyle(entry.styleNode),
             props = {};
@@ -2611,6 +2638,8 @@
         }
       }
       for (const entry of elements) {
+        const turn = pause();
+        if (turn) await turn;
         const { element, widget } = entry;
         if (layoutNodes.has(element.id)) continue;
         const all = snapshots.get(element.id);
@@ -3536,9 +3565,11 @@
           "\n"
         );
       }
-      function sourceStyles(rules) {
+      async function sourceStyles(rules) {
         const fragments = [];
         for (const rule of rules) {
+          const turn = pause();
+          if (turn) await turn;
           const key = String(!!options.preserveCSS) + rule.cssText;
           if (resources.styles.has(key)) {
             fragments.push(resources.styles.get(key));
@@ -3618,7 +3649,7 @@
             fragment =
               rule.cssText.slice(0, rule.cssText.indexOf("{")) +
               "{" +
-              sourceStyles(rule.cssRules) +
+              (await sourceStyles(rule.cssRules)) +
               "}\n";
           resources.styles.set(key, fragment);
           fragments.push(fragment);
@@ -3626,9 +3657,8 @@
         return fragments.join("");
       }
       if (options.preserveCSS || islands.size)
-        css += sourceSheets
-          .map((sheet) => sourceStyles(sheet.cssRules))
-          .join("");
+        for (const sheet of sourceSheets)
+          css += await sourceStyles(sheet.cssRules);
       if (/<script[^>]+src=/i.test(page.html))
         warnings.push(
           "External scripts were not downloaded. Their dependencies must be configured separately.",

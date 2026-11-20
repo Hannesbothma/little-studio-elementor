@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1.4
 Requires PHP: 8.0
-Stable tag: 0.12.10
+Stable tag: 0.12.11
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -182,6 +182,9 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.12.11 =
+* Give the browser time to respond during complex layout conversion and large recovery reads and writes.
 
 = 0.12.10 =
 * Schedule background website crawling and prepared page saves in WordPress.
