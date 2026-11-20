@@ -743,6 +743,9 @@ final class LSE_Plugin
                 <main class="lse-workspace">
                     <div id="lse-status" class="lse-notice" role="status" aria-live="polite">Choose a file or capture a website link to get started.</div>
                     <button type="button" class="button" data-lse-copy-report>Copy report</button>
+                    <div id="lse-background-task" class="lse-notice lse-actions" hidden><span id="lse-background-status" role="status"></span><button type="button" class="button" id="lse-background-view">View progress</button><a class="button" href="<?php echo esc_url(
+                        admin_url('index.php'),
+                    ); ?>" target="_blank" rel="noopener">Keep working in WordPress</a></div>
                     <p id="lse-manage-message" class="lse-notice" role="status" aria-live="polite"></p>
                     <?php if (
                         !defined('ELEMENTOR_VERSION')
@@ -816,7 +819,7 @@ final class LSE_Plugin
                     <label class="lse-check" id="lse-overwrite-option" hidden><input type="checkbox" id="lse-overwrite"> Allow replacing selected edited or published pages.</label>
                     <div class="lse-dialog-actions"><button type="button" class="button" id="lse-reset">Cancel</button><button type="button" class="button" id="lse-source-download">Download JSON</button><span id="lse-import-scope">New pages are saved as drafts.</span><button type="button" class="button button-primary" id="lse-import">Import</button></div>
                 </div>
-                <div id="lse-progress" hidden><progress id="lse-meter" max="100" value="0"></progress><p id="lse-current" role="status"></p><div id="lse-error-item" class="lse-notice is-error" hidden><strong id="lse-error-item-title"></strong><p id="lse-error-item-location"></p><pre id="lse-error-item-snippet" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><p id="lse-error-item-effect"></p></div><div class="lse-actions"><button class="button" type="button" id="lse-retry" hidden>Retry</button><button class="button" type="button" id="lse-check" hidden>Check progress</button><button class="button" type="button" id="lse-error-details" hidden>Error details</button><button class="button" type="button" id="lse-skip-item" hidden>Skip this item and continue</button><button class="button" type="button" id="lse-pause-import" hidden>Pause import</button><button class="button lse-danger" type="button" id="lse-cancel" hidden>Remove import</button></div></div>
+                <div id="lse-progress" hidden><button type="button" class="button" data-lse-background hidden>Run in background</button><progress id="lse-meter" max="100" value="0"></progress><p id="lse-current" role="status"></p><div id="lse-error-item" class="lse-notice is-error" hidden><strong id="lse-error-item-title"></strong><p id="lse-error-item-location"></p><pre id="lse-error-item-snippet" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><p id="lse-error-item-effect"></p></div><div class="lse-actions"><button class="button" type="button" id="lse-retry" hidden>Retry</button><button class="button" type="button" id="lse-check" hidden>Check progress</button><button class="button" type="button" id="lse-error-details" hidden>Error details</button><button class="button" type="button" id="lse-skip-item" hidden>Skip this item and continue</button><button class="button" type="button" id="lse-pause-import" hidden>Pause import</button><button class="button lse-danger" type="button" id="lse-cancel" hidden>Remove import</button></div></div>
             </div>
         </dialog>
         <dialog id="lse-capture-dialog" class="lse-dialog" aria-labelledby="lse-capture-title">
@@ -827,7 +830,7 @@ final class LSE_Plugin
                     <label class="lse-field">Website address<input id="lse-capture-url" type="url" placeholder="https://your-website.com" required maxlength="2048"></label>
                     <p id="lse-capture-status" class="lse-notice" role="status" aria-live="polite"></p>
                 </div>
-                <footer class="lse-dialog-actions"><button type="button" class="button" id="lse-capture-retry" hidden>Retry</button><button type="button" class="button" id="lse-capture-skip" hidden>Skip this page and continue</button><button type="submit" class="button button-primary" id="lse-capture-start">Review pages</button></footer>
+                <footer class="lse-dialog-actions"><button type="button" class="button" data-lse-background hidden>Run in background</button><button type="button" class="button" id="lse-capture-copy" hidden>Copy report</button><button type="button" class="button" id="lse-capture-retry" hidden>Retry</button><button type="button" class="button" id="lse-capture-skip" hidden>Skip this page and continue</button><button type="submit" class="button button-primary" id="lse-capture-start">Scan website</button></footer>
             </form>
         </dialog>
         <dialog id="lse-replace-dialog" class="lse-dialog lse-page-dialog" aria-labelledby="lse-replace-title" aria-describedby="lse-replace-description">
@@ -840,7 +843,7 @@ final class LSE_Plugin
         <dialog id="lse-remove-dialog" class="lse-dialog lse-page-dialog" aria-labelledby="lse-remove-title" aria-describedby="lse-remove-description">
             <form method="dialog">
                 <header class="lse-dialog-head"><h2 id="lse-remove-title">Remove this import?</h2></header>
-                <div class="lse-dialog-body"><p><strong id="lse-remove-name"></strong><br><span id="lse-remove-count" class="lse-small"></span></p><p id="lse-remove-description">Pages move to Trash. Images and other media stay.</p></div>
+                <div class="lse-dialog-body"><p><strong id="lse-remove-name"></strong><br><span id="lse-remove-count" class="lse-small"></span></p><p id="lse-remove-description">Pages and templates move to Trash. The imported menu is removed, and files used only by this import are permanently deleted.</p></div>
                 <footer class="lse-dialog-actions"><button type="submit" class="button" value="cancel" autofocus>Keep import</button><button type="submit" class="button lse-danger" value="remove">Remove import</button></footer>
             </form>
         </dialog>

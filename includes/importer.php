@@ -1162,57 +1162,78 @@ final class LSE_Importer
         $reused,
         $started,
     ) {
-        if (
-            $reused &&
-            get_post_meta($attachment, '_lse_sha256', true) === $hash &&
-            preg_match(
-                '/^(?:captured-)?[a-f0-9]{16,64}$/iD',
-                get_the_title($attachment),
-            ) &&
-            !preg_match(
-                '/^(?:captured-)?[a-f0-9]{16,64}$/iD',
-                pathinfo($file['name'], PATHINFO_FILENAME),
-            )
-        ) {
-            wp_update_post([
-                'ID' => $attachment,
-                'post_title' => self::asset_title($file['name']),
-            ]);
-        }
-        $source = (string) $input['url'];
-        $url = wp_get_attachment_url($attachment);
-        $saved = [
-            'source' => $source,
-            'url' => $url,
-            'id' => $attachment,
-            'reused' => $reused,
-            'name' => sanitize_file_name($file['name']),
-            'bytes' => (int) $file['size'],
-            'hash' => $hash,
-            'font' => $is_font,
-        ];
-        unset($job['skipped_assets'][$source]);
-        $job['assets'][] = $saved;
-        $job['map'][$source] = $url;
-        if ($is_font) {
-            $family = 'LSImport_' . substr($hash, 0, 16);
-            $families = $input['families'] ?? [$input['family'] ?? ''];
-            if (!is_array($families)) {
-                throw new RuntimeException('Invalid font families.');
-            }
-            foreach ($families as $source_family) {
-                $source_family = self::text($source_family, 100);
-                if ($source_family) {
-                    $job['font_map'][$source_family] = $family;
-                }
-            }
-            $job['fonts'][] = ['family' => $family, 'url' => $url];
-        }
-        self::store($job);
-        $saved['processing_ms'] = (int) round(
-            (microtime(true) - $started) * 1000,
+        $asset_lock = LSE_Locks::acquire(
+            '_lse_attachment_' . (int) $attachment,
         );
-        return $saved;
+        try {
+            if (get_post_type($attachment) !== 'attachment') {
+                throw new RuntimeException(
+                    'This upload changed while being reused. Retry the file.',
+                );
+            }
+            if (
+                $reused &&
+                get_post_meta($attachment, '_lse_sha256', true) === $hash &&
+                preg_match(
+                    '/^(?:captured-)?[a-f0-9]{16,64}$/iD',
+                    get_the_title($attachment),
+                ) &&
+                !preg_match(
+                    '/^(?:captured-)?[a-f0-9]{16,64}$/iD',
+                    pathinfo($file['name'], PATHINFO_FILENAME),
+                )
+            ) {
+                wp_update_post([
+                    'ID' => $attachment,
+                    'post_title' => self::asset_title($file['name']),
+                ]);
+            }
+            $source = (string) $input['url'];
+            $url = wp_get_attachment_url($attachment);
+            $saved = [
+                'source' => $source,
+                'url' => $url,
+                'id' => $attachment,
+                'reused' => $reused,
+                'name' => sanitize_file_name($file['name']),
+                'bytes' => (int) $file['size'],
+                'hash' => $hash,
+                'font' => $is_font,
+            ];
+            unset($job['skipped_assets'][$source]);
+            $job['assets'][] = $saved;
+            $job['map'][$source] = $url;
+            if ($is_font) {
+                $family = 'LSImport_' . substr($hash, 0, 16);
+                $families = $input['families'] ?? [$input['family'] ?? ''];
+                if (!is_array($families)) {
+                    throw new RuntimeException('Invalid font families.');
+                }
+                foreach ($families as $source_family) {
+                    $source_family = self::text($source_family, 100);
+                    if ($source_family) {
+                        $job['font_map'][$source_family] = $family;
+                    }
+                }
+                $job['fonts'][] = ['family' => $family, 'url' => $url];
+            }
+            if (
+                !in_array(
+                    $job['id'],
+                    get_post_meta($attachment, '_lse_asset_job'),
+                    true,
+                )
+            ) {
+                add_post_meta($attachment, '_lse_asset_job', $job['id']);
+            }
+            self::store($job);
+            $saved['processing_ms'] = (int) round(
+                (microtime(true) - $started) * 1000,
+            );
+            return $saved;
+        } finally {
+            LSE_Locks::release($asset_lock);
+        }
     }
     private static function asset_title($name)
     {

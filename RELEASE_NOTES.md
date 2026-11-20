@@ -1,3 +1,7 @@
+## LS Elementor 0.12.8
+
+Use **Scan website** to fetch a source. If the source serves a maintenance page, the scan stops and explains the problem. **Run in background** keeps the task going in its current tab while you work in a separate WordPress tab. **Remove import** cleans up the pages, templates, menu and exclusive media created by that import.
+
 ## LS Elementor 0.12.7
 
 This release improves source capture, editable media, and import recovery. It preserves more lazy images, responsive images, PDF links, image captions, simple self-hosted video settings, and slider framing. Copied reports name the pages, count skipped items, and give clearer server request details.

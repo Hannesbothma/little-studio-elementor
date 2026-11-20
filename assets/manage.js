@@ -13,8 +13,12 @@
   let selectedKey = null;
   let currentTab = "pages";
   let inspectorOpen = false;
+  let backgroundDialog = null;
   let metadataContext = null;
   const flowDialog = $("#lse-flow-dialog");
+  const captureDialog = $("#lse-capture-dialog");
+  const backgroundTask = $("#lse-background-task");
+  const backgroundView = $("#lse-background-view");
   const pageDialog = $("#lse-page-dialog");
   const removeDialog = $("#lse-remove-dialog");
   const statusLabels = {
@@ -37,7 +41,7 @@
           "'": "&#39;",
         })[character],
     );
-  const locked = () => A.busy || loading;
+  const locked = () => A.busy || loading || !!window.LSECapture?.busy;
   const selectedPage = () =>
     current?.pages.find((page) => page.key === selectedKey);
 
@@ -84,6 +88,7 @@
     )) {
       element.disabled = disabled;
     }
+    $("#lse-progress [data-lse-background]").hidden = !A.busy;
     $("#lse-refresh-import").disabled =
       disabled ||
       (["importing", "finishing"].includes(current?.state) &&
@@ -110,11 +115,48 @@
           : target
             ? "Updating pages"
             : "Importing website";
-      if (!flowDialog.open) flowDialog.showModal();
+      if (backgroundDialog !== flowDialog && !flowDialog.open)
+        flowDialog.showModal();
     } else if (flowDialog.open) {
       flowDialog.close();
     }
   }
+
+  function renderBackground() {
+    backgroundTask.hidden = !backgroundDialog;
+    if (!backgroundDialog) return;
+    const capture = backgroundDialog === captureDialog;
+    const review = !capture && !$("#lse-review").hidden;
+    $("#lse-background-status").textContent = (
+      capture ? $("#lse-capture-status") : $("#lse-dialog-status")
+    ).textContent;
+    backgroundView.textContent = review ? "Review pages" : "View progress";
+  }
+  function clearBackground(dialog) {
+    if (backgroundDialog === dialog) backgroundDialog = null;
+    renderBackground();
+  }
+  const watchBackground = new MutationObserver(renderBackground);
+  for (const id of ["#lse-capture-status", "#lse-dialog-status", "#lse-review"])
+    watchBackground.observe($(id), {
+      childList: true,
+      subtree: true,
+      attributes: id === "#lse-review",
+      attributeFilter: id === "#lse-review" ? ["hidden"] : undefined,
+    });
+  for (const button of document.querySelectorAll("[data-lse-background]"))
+    button.addEventListener("click", () => {
+      backgroundDialog = button.closest("dialog");
+      backgroundDialog.close();
+      renderBackground();
+      backgroundView.focus();
+    });
+  backgroundView.addEventListener("click", () => {
+    const dialog = backgroundDialog;
+    if (!dialog) return;
+    clearBackground(dialog);
+    dialog.showModal();
+  });
 
   function renderSites() {
     // A saved import may be outside the first page of older import records.
@@ -456,10 +498,17 @@
       selectedKey = current?.pages[0]?.key || null;
       render();
       await list();
+      const deleted = result.cleanup?.assets_removed?.length || 0;
+      const retained = result.cleanup?.assets_kept?.length || 0;
       message(
         result.state === "removed"
-          ? "Import removed. Pages are in WordPress Trash; media files were kept."
-          : "Some pages could not be removed. Review the import and try again.",
+          ? "Import removed. " +
+              deleted +
+              " file(s) deleted." +
+              (retained
+                ? " " + retained + " shared or protected file(s) kept."
+                : "")
+          : "Some import items could not be removed. Review the import and try again.",
         result.state !== "removed",
       );
     } catch (error) {
@@ -771,6 +820,7 @@
   });
   window.addEventListener("lse:busy-changed", syncControls);
   window.addEventListener("lse:choose-reset", () => {
+    clearBackground(flowDialog);
     clearTarget();
     render();
     message("");
@@ -780,6 +830,7 @@
     render();
   });
   window.addEventListener("lse:import-saved", async (event) => {
+    clearBackground(flowDialog);
     const changedImport = event.detail.id !== current?.id;
     current = event.detail;
     if (changedImport) {
@@ -809,6 +860,15 @@
     },
     review,
     remove,
+    scanCompleted() {
+      if (backgroundDialog === captureDialog) {
+        backgroundDialog = flowDialog;
+        renderBackground();
+      }
+    },
+    scanClosed() {
+      clearBackground(captureDialog);
+    },
     clear: clearTarget,
     async reload() {
       await list();

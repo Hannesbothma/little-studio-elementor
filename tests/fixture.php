@@ -4,6 +4,8 @@ add_filter( 'pre_http_request', static function( $reply, $args, $url ) {
     if ( ! str_starts_with( $url, 'https://93.184.216.34/lse-capture/' ) ) { return $reply; }
     $path = wp_parse_url( $url, PHP_URL_PATH );
     $files = [
+        '/lse-capture/maintenance/' => ['text/html', '<title>Green Valley Lodge is under maintenance</title><h1>We will be back shortly</h1>'],
+        '/lse-capture/background/' => ['text/html', '<title>Background fixture</title><main><h1>Background fixture</h1></main>'],
         '/lse-capture/' => [ 'text/html; charset=UTF-8', '<!doctype html><html><head><title>Captured fixture</title><link rel="stylesheet" href="theme.css"><script src="app.js"></script></head><body class="capture-body"><nav><a href="./">Home</a><a href="about/">About</a></nav><main><div class="elementor elementor-17" data-elementor-type="wp-page" data-elementor-id="17"><div class="elementor-element elementor-element-sourceheading elementor-widget-heading" data-id="sourceheading" data-element_type="widget" data-widget_type="heading.default"><div class="elementor-widget-container" role="region" aria-label="Captured heading region"><h1>Captured native heading</h1></div></div></div><img src="pixel.png" alt="Captured pixel"><img src="pixel-copy.png" alt="Same pixel"><div class="elementor-element elementor-widget-gallery" data-id="foreigngallery" data-element_type="widget" data-widget_type="gallery.default" data-settings=\'{"columns":2,"columns_tablet":2,"columns_mobile":1,"gap":{"size":12},"aspect_ratio":"3:2"}\'><div class="elementor-gallery__container"><a href="IMG_9876.svg"><div class="e-gallery-image elementor-gallery-item__image" data-thumbnail="IMG_9876.svg" data-width="320" data-height="180" aria-label="Courtyard view"></div></a></div></div><div data-lse-interaction><button>Custom interaction</button></div><script>var elementorFrontendConfig={foreignSource:true};</script><script src="/wp-includes/js/jquery/jquery.min.js"></script></main><script type="module">window.moduleShouldNotRun=true;</script></body></html>' ],
         '/lse-capture/about/' => [ 'text/html', '<!doctype html><html><head><title>Captured About</title><link rel="stylesheet" href="../theme.css"></head><body><main style="padding:40px"><div class="elementor elementor-33" data-elementor-type="wp-page" data-elementor-id="33"><div class="elementor-element elementor-element-oldabout elementor-widget-heading" data-id="oldabout" data-element_type="widget" data-widget_type="heading.default"><div class="elementor-widget-container"><h1>Captured About</h1></div></div></div><a href="../">Home</a><div data-lse-interaction><button>About interaction</button></div><script>window.capturedEditorScriptShouldNotRun=true;</script></main></body></html>' ],
         '/lse-capture/theme.css' => [ 'text/css', '@import "extra.css"; body{color:#243442}.capture-body main{padding:40px;background-image:url(pixel.png)}' ],
@@ -46,6 +48,36 @@ add_action( 'wp_ajax_lse_test', static function() {
     $input = json_decode( wp_unslash( $_POST['payload'] ?? '{}' ), true ); $id = (int) ( $input['id'] ?? 0 );
     try {
         switch ( $input['operation'] ?? 'inspect' ) {
+            case 'external-gallery':
+                wp_send_json_success(wp_insert_post([
+                    'post_type' => 'page',
+                    'post_title' => 'Existing gallery',
+                    'post_status' => 'publish',
+                    'post_content' => '[gallery ids="' . $id . '"]',
+                ]));
+            case 'seed-cleanup-attachment':
+                LSE_Importer::status(['job' => $input['job']]);
+                $key = '_lse_job_' . $input['job'];
+                $job = get_option($key);
+                if (!$id) {
+                    $name = sanitize_file_name($input['name']);
+                    $uploads = wp_upload_dir();
+                    $path = trailingslashit($uploads['path']) . $name;
+                    file_put_contents($path, 'Disposable cleanup fixture');
+                    $id = wp_insert_attachment([
+                        'post_title' => $name,
+                        'post_status' => 'inherit',
+                        'post_mime_type' => str_ends_with($name, '.woff2') ? 'font/woff2' : 'image/svg+xml',
+                    ], $path);
+                    update_attached_file($id, $path);
+                    update_post_meta($id, '_lse_job', $job['id']);
+                }
+                add_post_meta($id, '_lse_asset_job', $job['id']);
+                $job['assets'][] = ['id' => $id, 'url' => wp_get_attachment_url($id), 'source' => 'https://example.test/fixture-' . $id];
+                update_option($key, $job, false);
+                wp_send_json_success(['id' => $id, 'font' => get_post_mime_type($id) === 'font/woff2']);
+            case 'attachment-exists':
+                wp_send_json_success(get_post_type($id) === 'attachment' && is_file(get_attached_file($id) ?: ''));
             case 'navigation':
                 LSE_Importer::status(['job'=>$input['job']]);
                 $job = get_option('_lse_job_' . $input['job']);

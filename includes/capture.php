@@ -254,6 +254,16 @@ final class LSE_Capture
             );
         }
     }
+    private const MAINTENANCE_MESSAGE = 'The source website is under maintenance. Try scanning again when its homepage is available.';
+
+    private static function maintenance_heading($heading)
+    {
+        return preg_match(
+            "/(?:briefly unavailable for scheduled maintenance|\\b(?:is|we are|we['’]re) (?:currently )?(?:under maintenance|down for maintenance)\\b|^(?:(?:site|website) (?:under )?)?(?:maintenance(?: mode| in progress)?|scheduled maintenance)(?:\\s*[|—–-].*)?$)/iu",
+            trim((string) $heading),
+        ) === 1;
+    }
+
     private static function discover(&$job, $body, $type, $url, $item)
     {
         if ($type === 'text/css') {
@@ -273,6 +283,12 @@ final class LSE_Capture
         } finally {
             libxml_clear_errors();
             libxml_use_internal_errors($old);
+        }
+        foreach (['title', 'h1'] as $tag) {
+            $heading = $dom->getElementsByTagName($tag)->item(0);
+            if ($heading && self::maintenance_heading($heading->textContent)) {
+                throw new RuntimeException(self::MAINTENANCE_MESSAGE);
+            }
         }
         $base = $url;
         $bases = $dom->getElementsByTagName('base');
@@ -538,6 +554,15 @@ final class LSE_Capture
                             'Unsupported or excessive redirects.',
                         );
                     }
+                }
+                if (
+                    $code === 503 &&
+                    $item['kind'] === 'page' &&
+                    self::maintenance_heading(
+                        wp_strip_all_tags(wp_remote_retrieve_body($response)),
+                    )
+                ) {
+                    throw new RuntimeException(self::MAINTENANCE_MESSAGE);
                 }
                 if ($code < 200 || $code >= 300) {
                     $transient_failure = in_array(

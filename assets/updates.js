@@ -30,9 +30,9 @@
   }
   async function request(update) {
     if (working) return;
-    if (update && LSEAdmin.busy) {
+    if (update && (LSEAdmin.busy || window.LSECapture?.busy)) {
       message.textContent =
-        "Finish or pause the current import before updating the plugin.";
+        "Finish or cancel the current scan or import before updating the plugin.";
       return;
     }
     working = true;

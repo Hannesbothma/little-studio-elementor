@@ -617,13 +617,15 @@
     sequence = 0,
     records = [],
     pending = false,
-    pageDecision = null;
+    pageDecision = null,
+    failureReport = "";
   const dialog = $("#lse-capture-dialog"),
     form = $("#lse-capture-form"),
     status = $("#lse-capture-status"),
     start = $("#lse-capture-start"),
     retry = $("#lse-capture-retry"),
-    skipPage = $("#lse-capture-skip");
+    skipPage = $("#lse-capture-skip"),
+    copy = $("#lse-capture-copy");
   async function decidePageFailure(detail) {
     status.textContent =
       "Could not convert " + detail + ". Retry or skip this page.";
@@ -642,6 +644,8 @@
   }
   const buttons = () => {
     start.disabled = busy;
+    form.querySelector("[data-lse-background]").hidden = !busy;
+    window.dispatchEvent(new Event("lse:busy-changed"));
     form.querySelectorAll("input,select").forEach((el) => (el.disabled = busy));
     $("#lse-capture-close").textContent = busy ? "Cancel capture" : "Close";
   };
@@ -661,6 +665,7 @@
     }
     busy = true;
     cancelled = false;
+    copy.hidden = true;
     retry.hidden = true;
     buttons();
     try {
@@ -724,6 +729,7 @@
             new URL(project.capture.source).hostname + ".elementor.json";
           dialog.close();
           $("#lse-reset").click();
+          window.LSEManage?.scanCompleted();
           await A.chooseProject(converted, filename);
           return;
         }
@@ -740,6 +746,22 @@
         status.textContent = "Capture cancelled.";
       } else {
         status.textContent = error.message;
+        failureReport = [
+          "LS Elementor scan report",
+          "Plugin " +
+            window.LSE_CONFIG.version +
+            " · " +
+            new Date().toISOString(),
+          window.LSEReports.describe({
+            ...error.lseDetails,
+            phase: "Scanning the source website",
+            item: { url: $("#lse-capture-url").value },
+            message: error.message,
+          }),
+        ].join("\n");
+        copy.hidden = false;
+        if (/source website is under maintenance/i.test(error.message))
+          await cleanup();
         if (!session) records = [];
         retry.hidden = !session;
       }
@@ -760,11 +782,14 @@
       cleanup();
       records = [];
       dialog.close();
+      window.LSEManage?.scanClosed();
     }
   }
   function open() {
     if (A.busy || window.LSEManage?.busy) return;
+    if (busy) return;
     status.textContent = "";
+    copy.hidden = true;
     retry.hidden = true;
     dialog.showModal();
     $("#lse-capture-url").focus();
@@ -772,6 +797,12 @@
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     run();
+  });
+  copy.addEventListener("click", () => A.copyReport(copy, failureReport));
+  window.addEventListener("beforeunload", (event) => {
+    if (!busy) return;
+    event.preventDefault();
+    event.returnValue = "";
   });
   retry.addEventListener("click", () => {
     if (pageDecision) pageDecision("retry");

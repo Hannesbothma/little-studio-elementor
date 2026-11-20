@@ -139,6 +139,7 @@ try {
     "upload-recovery",
     "capture-skip",
     "portable-content",
+    "workflow-cleanup",
     "maps-regression",
     "fidelity-regression",
     "audit-regression",

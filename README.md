@@ -11,9 +11,10 @@ Imports do not replace existing page content or publish the new drafts.
 ## Import from a website
 
 Open **Studio to Elementor → Import from website**, paste a public URL and click
-**Review pages**. Keep the tab open while the plugin captures the website and
-prepares the Elementor page trees. Select the pages you want and click **Import**
-to create drafts.
+**Scan website**. Select the pages you want after the scan, then click **Import**
+to create drafts. To work elsewhere while a scan or import runs, click **Run in
+background** and open **Keep working in WordPress**. Keep the task tab open and
+use **View progress** when you return.
 
 Use **Download JSON** on the review screen if you want a portable copy. The
 bundle includes each page's Elementor 0.4 template, supporting styles, shared

@@ -55,9 +55,16 @@ trait LSE_Management
                 }
             }
             $retained_templates = [];
+            $removed_templates = [];
+            $deleted_assets = [];
+            $kept_assets = [];
+            $failed_assets = [];
             if (!$kept) {
                 foreach ($job['templates'] ?? [] as $template) {
                     $id = (int) $template['id'];
+                    if (!get_post($id)) {
+                        continue;
+                    }
                     if (
                         get_post_meta($id, '_lse_job', true) !== $job['id'] ||
                         self::template_used_elsewhere(
@@ -75,26 +82,50 @@ trait LSE_Management
                         !wp_trash_post($id)
                     ) {
                         $retained_templates[] = $id;
+                    } else {
+                        $removed_templates[] = $id;
                     }
                 }
-                if (!empty($job['menu'])) {
+                if (
+                    !empty($job['menu']) &&
+                    !self::menu_used_elsewhere(
+                        (int) $job['menu'],
+                        array_merge(
+                            array_column($job['pages'], 'id'),
+                            $removed_templates,
+                        ),
+                    )
+                ) {
                     $result = wp_delete_nav_menu($job['menu']);
                     if (!is_wp_error($result) && $result) {
                         $job['menu'] = 0;
                     }
                 }
+                [
+                    $deleted_assets,
+                    $kept_assets,
+                    $failed_assets,
+                ] = self::remove_import_assets(
+                    $job,
+                    array_merge(
+                        array_column($job['pages'], 'id'),
+                        $removed_templates,
+                    ),
+                );
             }
-            $job['state'] = $kept ? 'partly-removed' : 'removed';
+            $job['state'] =
+                $kept || $failed_assets ? 'partly-removed' : 'removed';
             $job['cleanup'] = [
                 'removed' => $removed,
                 'kept' => $kept,
                 'templates_kept' => $retained_templates,
-                'media' =>
-                    'Media files are retained because they may be used elsewhere.',
+                'assets_removed' => $deleted_assets,
+                'assets_kept' => $kept_assets,
+                'assets_failed' => $failed_assets,
             ];
             self::store($job);
             if (
-                !$kept &&
+                $job['state'] === 'removed' &&
                 get_user_meta(get_current_user_id(), '_lse_last_job', true) ===
                     $job['id']
             ) {
@@ -105,12 +136,290 @@ trait LSE_Management
             self::unlock($lock);
         }
     }
+    private static function menu_used_elsewhere($id, $excluded)
+    {
+        global $wpdb;
+        if (
+            in_array($id, array_map('intval', get_nav_menu_locations()), true)
+        ) {
+            return true;
+        }
+        foreach ((array) get_option('widget_nav_menu', []) as $widget) {
+            if (is_array($widget) && (int) ($widget['nav_menu'] ?? 0) === $id) {
+                return true;
+            }
+        }
+        $exclude = implode(
+            ',',
+            array_map('intval', array_merge([0], $excluded)),
+        );
+        $data = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id NOT IN ($exclude) AND meta_key = '_elementor_data' AND meta_value LIKE %s",
+                '%' . $wpdb->esc_like('"menu"') . '%',
+            ),
+        );
+        if ($wpdb->last_error) {
+            return true;
+        }
+        foreach ($data as $value) {
+            if (preg_match('/"menu"\s*:\s*"?' . $id . '"?\s*[,}]/', $value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    private static function remove_import_assets($job, $excluded)
+    {
+        global $wpdb;
+        $owned = get_posts([
+            'post_type' => 'attachment',
+            'post_status' => ['inherit', 'publish', 'private', 'trash'],
+            'posts_per_page' => -1,
+            'fields' => 'ids',
+            'meta_key' => '_lse_job',
+            'meta_value' => $job['id'],
+        ]);
+        $ids = array_values(
+            array_unique(
+                array_map(
+                    'intval',
+                    array_merge(
+                        $owned,
+                        array_column($job['assets'] ?? [], 'id'),
+                    ),
+                ),
+            ),
+        );
+        if (!$ids) {
+            return [[], [], []];
+        }
+        // Older imports have asset IDs in their saved jobs instead of attachment metadata.
+        $shared = [];
+        $names = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s AND LENGTH(option_name) = 41",
+                $wpdb->esc_like('_lse_job_') . '%',
+            ),
+        );
+        foreach ($names as $name) {
+            if ($name === self::key($job['id'])) {
+                continue;
+            }
+            $other = get_option($name);
+            if (!is_array($other)) {
+                continue;
+            }
+            if (($other['state'] ?? '') === 'removed') {
+                foreach (
+                    array_merge(
+                        array_column($other['pages'] ?? [], 'id'),
+                        array_column($other['templates'] ?? [], 'id'),
+                    )
+                    as $document
+                ) {
+                    if (get_post_status($document) === 'trash') {
+                        $excluded[] = (int) $document;
+                    }
+                }
+                continue;
+            }
+            foreach ($other['assets'] ?? [] as $asset) {
+                $shared[(int) $asset['id']] = true;
+            }
+        }
+        $gallery_ids = self::gallery_attachment_ids($excluded);
+        if ($gallery_ids === null) {
+            return [[], [], $ids];
+        }
+        $deleted = [];
+        $kept = [];
+        $failed = [];
+        foreach ($ids as $id) {
+            if (get_post_type($id) !== 'attachment') {
+                continue;
+            }
+            try {
+                $asset_lock = LSE_Locks::acquire('_lse_attachment_' . $id);
+            } catch (RuntimeException $error) {
+                $failed[] = $id;
+                continue;
+            }
+            try {
+                $owner = get_post_meta($id, '_lse_job', true);
+                $can_remove = $owner === $job['id'];
+                if (
+                    !$can_remove &&
+                    is_string($owner) &&
+                    preg_match('/^[a-f0-9]{32}$/D', $owner)
+                ) {
+                    $original = get_option(self::key($owner));
+                    $can_remove = ($original['state'] ?? '') === 'removed';
+                }
+                if (
+                    !$can_remove ||
+                    isset($shared[$id]) ||
+                    isset($gallery_ids[$id]) ||
+                    !current_user_can('delete_post', $id) ||
+                    self::attachment_used_elsewhere($id, $job['id'], $excluded)
+                ) {
+                    $kept[] = $id;
+                } elseif (wp_delete_attachment($id, true)) {
+                    $deleted[] = $id;
+                } else {
+                    $failed[] = $id;
+                }
+            } finally {
+                LSE_Locks::release($asset_lock);
+            }
+        }
+        return [$deleted, $kept, $failed];
+    }
+    private static function attachment_used_elsewhere($id, $job_id, $excluded)
+    {
+        global $wpdb;
+        if (
+            $id === (int) get_option('site_icon') ||
+            $id === (int) get_theme_mod('custom_logo')
+        ) {
+            return true;
+        }
+        $parent = (int) wp_get_post_parent_id($id);
+        if (
+            $parent &&
+            !in_array($parent, $excluded, true) &&
+            get_post($parent)
+        ) {
+            return true;
+        }
+        foreach (get_post_meta($id, '_lse_asset_job') as $reference) {
+            if (
+                $reference === $job_id ||
+                !is_string($reference) ||
+                !preg_match('/^[a-f0-9]{32}$/D', $reference)
+            ) {
+                continue;
+            }
+            $other = get_option(self::key($reference));
+            if (is_array($other) && ($other['state'] ?? '') !== 'removed') {
+                return true;
+            }
+        }
+        // Check normal WordPress, block, and Elementor references, including resized URLs.
+        $file = (string) get_post_meta($id, '_wp_attached_file', true);
+        $needles = [
+            'wp-image-' . $id,
+            '"id":' . $id . ',',
+            '"id":' . $id . '}',
+            '"id":"' . $id . '"',
+            'attachment_id=' . $id,
+        ];
+        if ($file !== '') {
+            $metadata = (array) wp_get_attachment_metadata($id);
+            $variants = array_column($metadata['sizes'] ?? [], 'file');
+            if (!empty($metadata['original_image'])) {
+                $variants[] = $metadata['original_image'];
+            }
+            $files = array_merge(
+                [$file],
+                array_map(
+                    static fn($name) => trailingslashit(dirname($file)) . $name,
+                    $variants,
+                ),
+            );
+            foreach ($files as $path) {
+                $needles[] = $path;
+                $needles[] = str_replace('/', '\/', $path);
+            }
+            $needles = array_values(array_unique($needles));
+        }
+        $exclude = implode(
+            ',',
+            array_map('intval', array_merge([$id], $excluded)),
+        );
+        $where = static function ($column) use ($wpdb, $needles) {
+            return implode(
+                ' OR ',
+                array_map(
+                    static fn($needle) => $wpdb->prepare(
+                        "$column LIKE %s",
+                        '%' . $wpdb->esc_like($needle) . '%',
+                    ),
+                    $needles,
+                ),
+            );
+        };
+        $queries = [
+            "SELECT ID FROM {$wpdb->posts} WHERE ID NOT IN ($exclude) AND post_type <> 'revision' AND (" .
+            $where('post_content') .
+            ') LIMIT 1',
+            "SELECT post_id FROM {$wpdb->postmeta} WHERE post_id NOT IN ($exclude) AND meta_key NOT IN ('_lse_save_before', '_lse_refresh_backup', '_wp_attached_file', '_wp_attachment_metadata') AND (" .
+            $where('meta_value') .
+            ') LIMIT 1',
+            $wpdb->prepare(
+                "SELECT post_id FROM {$wpdb->postmeta} WHERE post_id NOT IN ($exclude) AND meta_key = '_thumbnail_id' AND meta_value = %s LIMIT 1",
+                (string) $id,
+            ),
+            "SELECT option_id FROM {$wpdb->options} WHERE (option_name LIKE 'widget_%' OR option_name LIKE 'theme_mods_%') AND (" .
+            $where('option_value') .
+            ') LIMIT 1',
+        ];
+        foreach ($queries as $query) {
+            if ($wpdb->get_var($query) || $wpdb->last_error) {
+                return true;
+            }
+        }
+        return false;
+    }
+    private static function gallery_attachment_ids($excluded)
+    {
+        global $wpdb;
+        $exclude = implode(
+            ',',
+            array_map('intval', array_merge([0], $excluded)),
+        );
+        $contents = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT post_content FROM {$wpdb->posts} WHERE ID NOT IN ($exclude) AND post_type <> 'revision' AND (post_content LIKE %s OR post_content LIKE %s)",
+                '%[gallery%',
+                '%"ids"%',
+            ),
+        );
+        if ($wpdb->last_error) {
+            return null;
+        }
+        $ids = [];
+        foreach ($contents as $content) {
+            preg_match_all(
+                '/(?:\[gallery[^\]]*\bids\s*=\s*["\']|"ids"\s*:\s*\[)([\d,\s]+)/i',
+                $content,
+                $matches,
+            );
+            foreach ($matches[1] as $list) {
+                foreach (explode(',', $list) as $id) {
+                    $ids[(int) $id] = true;
+                }
+            }
+        }
+        $galleries = $wpdb->get_col(
+            "SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id NOT IN ($exclude) AND meta_key = '_product_image_gallery'",
+        );
+        if ($wpdb->last_error) {
+            return null;
+        }
+        foreach ($galleries as $gallery) {
+            foreach (explode(',', $gallery) as $id) {
+                $ids[(int) $id] = true;
+            }
+        }
+        return $ids;
+    }
     private static function template_used_elsewhere($template, $imported_pages)
     {
         global $wpdb;
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT post_id, meta_value FROM {$wpdb->postmeta} WHERE meta_key = '_elementor_data' AND meta_value LIKE %s",
+                "SELECT post_id, meta_key, meta_value FROM {$wpdb->postmeta} WHERE meta_key IN ('_elementor_data', '_lse_source') AND meta_value LIKE %s",
                 '%' . $wpdb->esc_like((string) $template) . '%',
             ),
         );
@@ -134,7 +443,21 @@ trait LSE_Management
                     [false, 'trash'],
                     true,
                 ) &&
-                $contains(json_decode($row->meta_value, true))
+                ($row->meta_key === '_lse_source'
+                    ? in_array(
+                        $template,
+                        array_map(
+                            'intval',
+                            array_column(
+                                maybe_unserialize($row->meta_value)[
+                                    'site_parts'
+                                ] ?? [],
+                                'template_id',
+                            ),
+                        ),
+                        true,
+                    )
+                    : $contains(json_decode($row->meta_value, true)))
             ) {
                 return true;
             }

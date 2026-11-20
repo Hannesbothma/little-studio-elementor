@@ -711,7 +711,13 @@
     $("#lse-all").indeterminate = checked > 0 && checked < nodes.length;
   }
   async function choose(file, prepared = null) {
-    if (busy || window.LSEManage?.busy || !file) return;
+    if (
+      busy ||
+      window.LSEManage?.busy ||
+      (!prepared && window.LSECapture?.busy) ||
+      !file
+    )
+      return;
     setBusy(true);
     selectionStarted = true;
     operationId = crypto.randomUUID();
@@ -1420,37 +1426,36 @@
     status("Choose a JSON or HTML file.");
     window.dispatchEvent(new Event("lse:choose-reset"));
   });
-  for (const button of document.querySelectorAll("[data-lse-copy-report]")) {
-    button.addEventListener("click", async () => {
-      const report = journal.report(job, project, originalFile);
-      try {
-        await navigator.clipboard.writeText(report);
-      } catch {
-        const container = button.closest("dialog") || app;
-        let area = container.querySelector("textarea[data-lse-report-text]");
-        if (!area) {
-          area = document.createElement("textarea");
-          area.readOnly = true;
-          area.rows = 8;
-          area.className = "large-text";
-          area.dataset.lseReportText = "";
-          area.setAttribute("aria-label", "Import report");
-          button.after(area);
-        }
-        area.value = report;
-        area.focus();
-        area.select();
-        if (!document.execCommand("copy")) {
-          status("Select the report text and copy it.", true);
-          return;
-        }
-        area.remove();
+  async function copyReport(button, report) {
+    try {
+      await navigator.clipboard.writeText(report);
+    } catch {
+      const container = button.closest("dialog") || app;
+      let area = container.querySelector("textarea[data-lse-report-text]");
+      if (!area) {
+        area = document.createElement("textarea");
+        area.readOnly = true;
+        area.rows = 8;
+        area.className = "large-text";
+        area.dataset.lseReportText = "";
+        area.setAttribute("aria-label", "Import report");
+        button.after(area);
       }
-      button.textContent = "Copied";
-      setTimeout(() => {
-        button.textContent = "Copy report";
-      }, 1500);
-    });
+      area.value = report;
+      area.focus();
+      area.select();
+      if (!document.execCommand("copy")) return;
+      area.remove();
+    }
+    button.textContent = "Copied";
+    setTimeout(() => {
+      button.textContent = "Copy report";
+    }, 1500);
+  }
+  for (const button of document.querySelectorAll("[data-lse-copy-report]")) {
+    button.addEventListener("click", () =>
+      copyReport(button, journal.report(job, project, originalFile)),
+    );
   }
   $("#lse-download").addEventListener("click", () => {
     if (!job) return;
@@ -1576,6 +1581,7 @@
   }
   window.LSEAdmin = {
     request,
+    copyReport,
     choose,
     chooseProject(project, name) {
       return choose({ name }, project);

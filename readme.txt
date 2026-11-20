@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1.4
 Requires PHP: 8.0
-Stable tag: 0.12.7
+Stable tag: 0.12.8
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -61,9 +61,10 @@ Plugin updates closes when clicking outside or pressing Escape.
 * Stores source and SEO metadata; supplies basic SEO output without an SEO plugin.
 * Preserves interactive navigation, local calculators and enquiry controls.
 * Shows a short setup summary and supports retries of the current unfinished import.
-* Removes only unchanged imported drafts on request; keeps edited/published pages,
-  media and shared templates. Explicit site setup can restore earlier homepage/menu
-  assignments when those settings have not subsequently changed.
+* Removes an import after confirmation. Pages and owned templates go to Trash,
+  and plugin-created files used only by that import are deleted. Explicit site
+  setup can restore earlier homepage/menu assignments when those settings have
+  not subsequently changed.
 
 == Important limits ==
 
@@ -175,6 +176,11 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.12.8 =
+* Label the website capture action Scan website and stop on source maintenance pages.
+* Hide a running scan or import and keep working in another WordPress tab. Leave the task tab open and use View progress to return.
+* Remove files created for an import, keeping existing uploads and media still used elsewhere.
 
 = 0.12.7 =
 * Capture more lazy media and PDF links, handle redirects and broken URL escapes, and retain robots directives.
