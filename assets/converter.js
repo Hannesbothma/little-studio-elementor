@@ -2134,10 +2134,13 @@
         const builderWrapper = dom.matches(
           ".e-con-inner,.elementor-widget-wrap,.elementor-widget-container,.elementor-container",
         );
-        const singleWrapper =
-          children.length === 1 &&
+        const removableWrapper =
+          (builderWrapper || children.length === 1) &&
           !hasDesignControls(entry) &&
-          !dom.matches("[role],[tabindex],[aria-controls],[aria-expanded]");
+          !dom.matches("[role],[tabindex]") &&
+          ![...dom.attributes].some((attribute) =>
+            attribute.name.startsWith("aria-"),
+          );
         const shell =
           isLayout &&
           !kind &&
@@ -2145,8 +2148,7 @@
           !section &&
           (tag === "body" ||
             (!parent && dom.matches("main,[role=main]")) ||
-            (tag === "div" &&
-              (pageFrame || stack || builderWrapper || singleWrapper)));
+            (tag === "div" && (pageFrame || stack || removableWrapper)));
         if (shell) {
           const record = {
             id: node.id,
