@@ -1,0 +1,37 @@
+name: Publish LS Elementor 0.12.3
+on:
+  push:
+    branches: [publish/v0.12.3]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v0.12.3
+      SOURCE_SHA: 6e2236f2d264f24266315ab4ac126a1ba5021c21
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 6e2236f2d264f24266315ab4ac126a1ba5021c21
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: node scripts/package.mjs . dist
+      - name: Publish the tested ZIP and update manifest
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > /tmp/lse-release-state && [ "$(cat /tmp/lse-release-state)" = false ]; then
+            exit 0
+          fi
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > /tmp/lse-tag.json; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$SOURCE_SHA" > /tmp/lse-tag.json
+          fi
+          test "$(jq -r .object.sha /tmp/lse-tag.json)" = "$SOURCE_SHA"
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --draft --verify-tag --title "Little Studio to Elementor $RELEASE_TAG" --notes-file RELEASE_NOTES.md
+          fi
+          gh release upload "$RELEASE_TAG" dist/little-studio-elementor-0.12.3.zip dist/update.json --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest
