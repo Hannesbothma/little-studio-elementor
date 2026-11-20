@@ -354,19 +354,40 @@
         !a.data.startsWith("data:" + a.type + ";base64,")
       )
         throw Error("An embedded asset is invalid or duplicated.");
-      const payload = a.data.slice(a.data.indexOf(",") + 1);
-      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(payload) || payload.length % 4 === 1)
+      const start = a.data.indexOf(",") + 1;
+      const payload = a.data.slice(start);
+      const padding = payload.endsWith("==")
+        ? 2
+        : payload.endsWith("=")
+          ? 1
+          : 0;
+      const length = payload.length - padding;
+      const remainder = length % 4;
+      if (
+        remainder === 1 ||
+        (padding && payload.length % 4 !== 0) ||
+        /[^A-Za-z0-9+/]/.test(padding ? payload.slice(0, length) : payload)
+      )
         throw Error("An asset has invalid base64 encoding.");
-      let raw;
-      try {
-        raw = atob(payload);
-      } catch {
-        throw Error("An asset could not be decoded.");
-      }
-      if (btoa(raw).replace(/=+$/, "") !== payload.replace(/=+$/, ""))
+      const alphabet =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+      const last = alphabet.indexOf(payload[length - 1]);
+      if ((remainder === 2 && last % 16) || (remainder === 3 && last % 4))
         throw Error("An asset has noncanonical base64 encoding.");
-      a.bytes = Uint8Array.from(raw, (c) => c.charCodeAt(0));
-      if (!a.bytes.length) throw Error("An asset is empty.");
+      const byteLength = Math.floor((length * 3) / 4);
+      if (!byteLength) throw Error("An asset is empty.");
+      // Decode only when a preview or upload actually needs the file.
+      Object.defineProperties(a, {
+        byteLength: { value: byteLength },
+        bytes: {
+          get() {
+            const encoded = a.data.slice(start);
+            return Uint8Array.fromBase64
+              ? Uint8Array.fromBase64(encoded)
+              : Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
+          },
+        },
+      });
       urls.add(a.url);
     }
     for (const f of p.fonts) {

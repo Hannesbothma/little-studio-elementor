@@ -710,6 +710,28 @@
     $("#lse-all").checked = checked === nodes.length;
     $("#lse-all").indeterminate = checked > 0 && checked < nodes.length;
   }
+  async function digest(value) {
+    return [
+      ...new Uint8Array(
+        await crypto.subtle.digest(
+          "SHA-256",
+          typeof value === "string" ? new TextEncoder().encode(value) : value,
+        ),
+      ),
+    ]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  }
+  async function capturedFingerprint(project) {
+    const { pages, assets, ...metadata } = project;
+    const sections = [
+      await digest(JSON.stringify([metadata, pages.length, assets.length])),
+    ];
+    for (const page of pages) sections.push(await digest(JSON.stringify(page)));
+    for (const asset of assets)
+      sections.push(await digest(JSON.stringify(asset)));
+    return digest(sections.join(""));
+  }
   async function choose(file, prepared = null) {
     if (
       busy ||
@@ -723,6 +745,11 @@
     operationId = crypto.randomUUID();
     journal.reset(operationId);
     originalFile = file.name || "";
+    if (!prepared)
+      window.LSEReports.checkpoint({
+        phase: "Reading the selected file",
+        title: originalFile,
+      });
     job = null;
     mediaPaused = false;
     scheduleMedia();
@@ -748,11 +775,12 @@
       if (!/\.(json|html?)$/i.test(file.name))
         throw Error("Choose one .json, .html or .htm file.");
       status("Reading and checking your website…");
-      const text = prepared
-        ? JSON.stringify(prepared, (key, value) =>
-            key === "bytes" ? undefined : value,
-          )
-        : await file.text();
+      if (!prepared)
+        window.LSEReports.checkpoint({
+          phase: "Reading and checking the selected file",
+          title: file.name,
+        });
+      const text = prepared ? "" : await file.text();
       project =
         prepared ||
         (/\.html?$/i.test(file.name)
@@ -762,13 +790,9 @@
         for (const p of project.pages)
           if (p.elementor) window.LSENative.requireWidgets(p.elementor);
       }
-      fingerprint = [
-        ...new Uint8Array(
-          await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
-        ),
-      ]
-        .map((v) => v.toString(16).padStart(2, "0"))
-        .join("");
+      fingerprint = prepared
+        ? await capturedFingerprint(project)
+        : await digest(text);
       originalFile = file.name;
       // Older native exports can omit navigation; recover known internal links, without inventing pages.
       if (!project.site.navigation.length) {
@@ -810,7 +834,7 @@
         project.assets.length + " packaged files",
         project.fonts.length + " fonts",
         (
-          project.assets.reduce((n, a) => n + a.bytes.length, 0) / 1048576
+          project.assets.reduce((n, a) => n + a.byteLength, 0) / 1048576
         ).toFixed(1) + " MB of assets",
       ]
         .map((x) => "<span>" + esc(x) + "</span>")
@@ -952,6 +976,12 @@
     let resources = null,
       currentItem = null;
     const progress = (n, message) => {
+      window.LSEReports.checkpoint({
+        phase: message,
+        title: source.title,
+        source: source.capture?.source,
+        job: job?.id,
+      });
       $("#lse-meter").value = n;
       $("#lse-current").textContent = message;
       status(message);
@@ -1076,21 +1106,6 @@
         (asset) => !knownURLs.has(asset.url) && !skipped.has(asset.url),
       );
       for (let offset = 0; offset < checks.length; offset += 128) {
-        const assets = await Promise.all(
-          checks.slice(offset, offset + 128).map(async (asset) => ({
-            url: asset.url,
-            type: asset.type,
-            name: uploadName(asset),
-            hash: [
-              ...new Uint8Array(
-                await crypto.subtle.digest("SHA-256", asset.bytes),
-              ),
-            ]
-              .map((n) => n.toString(16).padStart(2, "0"))
-              .join(""),
-            families: fontFamilies.get(asset.url) || [],
-          })),
-        );
         progress(
           4,
           "Checking existing files " +
@@ -1101,6 +1116,16 @@
             checks.length +
             "…",
         );
+        const assets = [];
+        for (const asset of checks.slice(offset, offset + 128)) {
+          assets.push({
+            url: asset.url,
+            type: asset.type,
+            name: uploadName(asset),
+            hash: await digest(asset.bytes),
+            families: fontFamilies.get(asset.url) || [],
+          });
+        }
         const reused = await request("asset_lookup", { job: job.id, assets });
         for (const saved of reused.assets) {
           job.map[saved.source] = saved.url;
@@ -1145,14 +1170,14 @@
             nextMetadata = metadata + metadataBytes.get(asset.url) + 1;
           if (
             group.length &&
-            (size + asset.bytes.length > batchLimit ||
+            (size + asset.byteLength > batchLimit ||
               (config.maxPost &&
-                size + asset.bytes.length + nextMetadata + 16384 >
+                size + asset.byteLength + nextMetadata + 16384 >
                   config.maxPost))
           )
             break;
           group.push(asset);
-          size += asset.bytes.length;
+          size += asset.byteLength;
           metadata = nextMetadata;
           i++;
           if (size > batchLimit) break;
@@ -1376,6 +1401,12 @@
         job: job?.id,
       };
       recordError(e, phase);
+      window.LSEReports.checkpoint({
+        phase: phase + " · " + e.message,
+        title: source.title,
+        source: source.capture?.source,
+        job: job?.id,
+      });
       $("#lse-skip-item").hidden = true;
       $("#lse-pause-import").hidden = true;
       $("#lse-retry").hidden = false;

@@ -830,7 +830,7 @@ final class LSE_Plugin
                     <label class="lse-field">Website address<input id="lse-capture-url" type="url" placeholder="https://your-website.com" required maxlength="2048"></label>
                     <p id="lse-capture-status" class="lse-notice" role="status" aria-live="polite"></p>
                 </div>
-                <footer class="lse-dialog-actions"><button type="button" class="button" data-lse-background hidden>Run in background</button><button type="button" class="button" id="lse-capture-copy" hidden>Copy report</button><button type="button" class="button" id="lse-capture-retry" hidden>Retry</button><button type="button" class="button" id="lse-capture-skip" hidden>Skip this page and continue</button><button type="submit" class="button button-primary" id="lse-capture-start">Scan website</button></footer>
+                <footer class="lse-dialog-actions"><button type="button" class="button" data-lse-background hidden>Run in background</button><button type="button" class="button" id="lse-capture-copy" hidden>Copy report</button><button type="button" class="button" id="lse-capture-retry" hidden>Retry</button><button type="button" class="button" id="lse-capture-skip" hidden>Skip this page and continue</button><button type="button" class="button" id="lse-capture-resume" hidden>Resume scan</button><button type="submit" class="button button-primary" id="lse-capture-start">Scan website</button></footer>
             </form>
         </dialog>
         <dialog id="lse-replace-dialog" class="lse-dialog lse-page-dialog" aria-labelledby="lse-replace-title" aria-describedby="lse-replace-description">

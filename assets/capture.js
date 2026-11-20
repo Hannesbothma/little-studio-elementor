@@ -537,13 +537,21 @@
       },
     });
   }
-  const serializable = (project, indent) =>
-    JSON.stringify(
-      project,
-      (key, value) =>
-        key === "bytes" && value instanceof Uint8Array ? undefined : value,
-      indent,
-    );
+  function websiteDownload(project) {
+    const { pages, assets, ...metadata } = project;
+    const parts = [JSON.stringify(metadata).slice(0, -1), ',"pages":['];
+    for (const [index, page] of pages.entries()) {
+      if (index) parts.push(",");
+      parts.push(JSON.stringify(page));
+    }
+    parts.push('],"assets":[');
+    for (const [index, asset] of assets.entries()) {
+      if (index) parts.push(",");
+      parts.push(JSON.stringify(asset));
+    }
+    parts.push("]}");
+    return new Blob(parts, { type: "application/json" });
+  }
   async function convertWebsite(project, onPage, onFailure, isCancelled) {
     const resources = M.resourceSession(project);
     const pages = [];
@@ -611,6 +619,75 @@
       resources.dispose();
     }
   }
+  // Store browser delivery checkpoints before acknowledging the next server batch.
+  const checkpointKey = "lse-scan:" + LSE_CONFIG.ajax + ":" + LSE_CONFIG.userId;
+  const scanLifetime = 60 * 60 * 1000;
+  let checkpointDB;
+  function scanState(state) {
+    try {
+      if (state === null) localStorage.removeItem(checkpointKey);
+      if (state) localStorage.setItem(checkpointKey, JSON.stringify(state));
+      const saved = JSON.parse(localStorage.getItem(checkpointKey) || "null");
+      return saved?.expires > Date.now() ? saved : null;
+    } catch {
+      return null;
+    }
+  }
+  function scanStorage(mode, work) {
+    if (!checkpointDB) {
+      checkpointDB = new Promise((resolve, reject) => {
+        const open = indexedDB.open(checkpointKey, 1);
+        open.onupgradeneeded = () => {
+          open.result
+            .createObjectStore("batches")
+            .createIndex("storedAt", "storedAt");
+        };
+        open.onsuccess = () => resolve(open.result);
+        open.onerror = () => reject(open.error);
+      });
+    }
+    return checkpointDB.then(
+      (db) =>
+        new Promise((resolve, reject) => {
+          const transaction = db.transaction("batches", mode);
+          const result = work(transaction.objectStore("batches"));
+          transaction.oncomplete = () => resolve(result.result);
+          transaction.onabort = () => reject(transaction.error);
+          transaction.onerror = () => reject(transaction.error);
+        }),
+    );
+  }
+  const scanRange = (id) =>
+    IDBKeyRange.bound([id, 0], [id, Number.MAX_SAFE_INTEGER]);
+  const savedBatches = (id) =>
+    scanStorage("readonly", (store) => store.getAll(scanRange(id)));
+  async function saveBatch(id, from, step) {
+    return scanStorage("readwrite", (store) =>
+      store.put({ ...step, storedAt: Date.now() }, [id, from]),
+    );
+  }
+  function pruneScans() {
+    return scanStorage("readwrite", (store) => {
+      const expired = IDBKeyRange.upperBound(Date.now() - 2 * scanLifetime);
+      const request = store.index("storedAt").openKeyCursor(expired);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        store.delete(cursor.primaryKey);
+        cursor.continue();
+      };
+      return request;
+    }).catch(() => {});
+  }
+  function finalMetadata({ done, failed_resources, truncated, warnings }) {
+    return { done, failed_resources, truncated, warnings };
+  }
+  async function discardScan(id) {
+    if (scanState()?.capture === id) scanState(null);
+    try {
+      await scanStorage("readwrite", (store) => store.delete(scanRange(id)));
+    } catch {}
+  }
   let busy = false,
     cancelled = false,
     session = null,
@@ -618,14 +695,26 @@
     records = [],
     pending = false,
     pageDecision = null,
-    failureReport = "";
+    failureReport = "",
+    capturedCount = 0,
+    capturedBytes = 0,
+    durable = false,
+    finalBatch = null;
+  const scanSummary = (phase) =>
+    window.LSEReports.checkpoint({
+      phase,
+      source: $("#lse-capture-url").value,
+      records: capturedCount,
+      bytes: capturedBytes,
+    });
   const dialog = $("#lse-capture-dialog"),
     form = $("#lse-capture-form"),
     status = $("#lse-capture-status"),
     start = $("#lse-capture-start"),
     retry = $("#lse-capture-retry"),
     skipPage = $("#lse-capture-skip"),
-    copy = $("#lse-capture-copy");
+    copy = $("#lse-capture-copy"),
+    resumeScan = $("#lse-capture-resume");
   async function decidePageFailure(detail) {
     status.textContent =
       "Could not convert " + detail + ". Retry or skip this page.";
@@ -652,63 +741,149 @@
   const cleanup = async () => {
     const old = session;
     session = null;
-    if (old)
+    records = [];
+    finalBatch = null;
+    if (old) {
+      await discardScan(old);
       try {
         await A.request("capture_cancel", { capture: old });
       } catch {}
+    }
   };
   async function run(resume = false) {
     if (busy || A.busy || window.LSEManage?.busy) return;
     if (!window.LSE_CONFIG?.elementor) {
-      status.textContent = "Activate Elementor before converting a website.";
+      status.textContent = "Activate Elementor before scanning a website.";
       return;
     }
     busy = true;
     cancelled = false;
     copy.hidden = true;
+    resumeScan.hidden = true;
     retry.hidden = true;
     buttons();
     try {
+      if (resume && !session) {
+        const saved = scanState();
+        if (!saved)
+          throw Error("The scan checkpoint expired. Scan the website again.");
+        session = saved.capture;
+        sequence = saved.seq;
+        capturedCount = saved.count;
+        capturedBytes = saved.bytes;
+        durable = true;
+        if (saved.done) {
+          const stored = await scanStorage("readonly", (store) =>
+            store.get([session, saved.last]),
+          );
+          if (!stored)
+            throw Error(
+              "The saved scan files expired. Scan the website again.",
+            );
+          finalBatch = finalMetadata(stored);
+        }
+      }
       if (!resume) {
         await cleanup();
-        records = [];
-        sequence = 0;
-        status.textContent = "Starting website capture…";
+        void pruneScans();
+        sequence = capturedBytes = capturedCount = 0;
+        finalBatch = null;
+        durable = true;
+        status.textContent = "Starting website scan…";
+        scanSummary(status.textContent);
         const job = await A.request("capture_start", {
           url: $("#lse-capture-url").value,
         });
         session = job.capture;
+        scanState({
+          capture: session,
+          url: $("#lse-capture-url").value,
+          seq: 0,
+          count: 0,
+          bytes: 0,
+          expires: Date.now() + scanLifetime,
+        });
       }
       while (!cancelled) {
         pending = true;
-        const step = await A.request("capture_batch", {
-          capture: session,
-          seq: sequence,
-        });
+        scanSummary(
+          finalBatch
+            ? "Preparing captured files"
+            : "Waiting for scan batch after record " + sequence,
+        );
+        const step =
+          finalBatch ||
+          (await A.request("capture_batch", {
+            capture: session,
+            seq: sequence,
+          }));
         pending = false;
         if (cancelled) break;
-        records.push(...step.records);
-        sequence = step.seq;
+        if (!finalBatch) {
+          const from = sequence;
+          const batchRecords = step.records;
+          if (durable) {
+            try {
+              await saveBatch(session, sequence, step);
+            } catch {
+              records = (await savedBatches(session).catch(() => [])).flatMap(
+                (batch) => batch.records,
+              );
+              if (records.length !== capturedCount)
+                throw Error(
+                  "The browser could not read the saved scan files. Scan the website again.",
+                );
+              durable = false;
+              await discardScan(session);
+            }
+          }
+          if (!durable) records.push(...batchRecords);
+          capturedCount += batchRecords.length;
+          capturedBytes += batchRecords.reduce(
+            (sum, record) => sum + record.data.length,
+            0,
+          );
+          sequence = step.seq;
+          if (durable)
+            scanState({
+              last: from,
+              capture: session,
+              url: $("#lse-capture-url").value,
+              seq: sequence,
+              count: capturedCount,
+              bytes: capturedBytes,
+              done: step.done,
+              expires: Date.now() + scanLifetime,
+            });
+        }
         if (step.done) {
-          await cleanup();
+          finalBatch = finalMetadata(step);
           if (cancelled) break;
           status.textContent = "Preparing your website for import…";
+          scanSummary(status.textContent);
           const notes = Object.values(step.warnings || {});
           if (step.truncated)
             notes.push(
               "The capture reached a page, depth, or resource limit. Some linked content was not included.",
             );
+          const raw = durable
+            ? (await savedBatches(session)).flatMap((batch) => batch.records)
+            : records;
+          if (raw.length !== capturedCount)
+            throw Error(
+              "Some browser scan files are missing. Scan the website again.",
+            );
           const project = await packageWebsite(
             $("#lse-capture-url").value,
-            records,
+            raw,
             notes,
           );
+          if (durable) raw.length = 0;
           project.capture.failed_resources = step.failed_resources || [];
           project.capture.complete =
             project.capture.complete !== false &&
             !step.truncated &&
             !project.capture.failed_resources.length;
-          records = [];
           if (cancelled) break;
           const converted = await convertWebsite(
             project,
@@ -720,6 +895,7 @@
                 total +
                 " · " +
                 page.title;
+              scanSummary(status.textContent);
             },
             decidePageFailure,
             () => cancelled,
@@ -730,22 +906,29 @@
           dialog.close();
           $("#lse-reset").click();
           window.LSEManage?.scanCompleted();
+          scanSummary("Checking the captured pages for review");
           await A.chooseProject(converted, filename);
+          if (A.project === converted) {
+            scanSummary("Scan complete. Pages are ready for review.");
+            await cleanup();
+          }
           return;
         }
         status.textContent = step.message;
+        scanSummary(status.textContent);
       }
       await cleanup();
-      status.textContent =
-        "Capture cancelled. No WordPress pages were created.";
+      status.textContent = "Scan cancelled. No WordPress pages were created.";
+      scanSummary(status.textContent);
     } catch (error) {
       pending = false;
       if (cancelled) {
         await cleanup();
-        records = [];
         status.textContent = "Capture cancelled.";
+        scanSummary(status.textContent);
       } else {
         status.textContent = error.message;
+        scanSummary(error.message);
         failureReport = [
           "LS Elementor scan report",
           "Plugin " +
@@ -760,7 +943,11 @@
           }),
         ].join("\n");
         copy.hidden = false;
-        if (/source website is under maintenance/i.test(error.message))
+        if (
+          /source website is under maintenance|capture (?:session )?(?:has )?expired|capture (?:cache )?is unavailable|saved scan files expired|capture sequence changed|invalid capture session|scan files are missing|could not read the saved scan files/i.test(
+            error.message,
+          )
+        )
           await cleanup();
         if (!session) records = [];
         retry.hidden = !session;
@@ -780,7 +967,6 @@
         : "Cancelling…";
     } else {
       cleanup();
-      records = [];
       dialog.close();
       window.LSEManage?.scanClosed();
     }
@@ -791,12 +977,22 @@
     status.textContent = "";
     copy.hidden = true;
     retry.hidden = true;
+    resumeScan.hidden = !scanState();
     dialog.showModal();
     $("#lse-capture-url").focus();
   }
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     run();
+  });
+  resumeScan.addEventListener("click", () => {
+    const saved = scanState();
+    if (!saved) {
+      resumeScan.hidden = true;
+      return;
+    }
+    $("#lse-capture-url").value = saved.url;
+    run(true);
   });
   copy.addEventListener("click", () => A.copyReport(copy, failureReport));
   window.addEventListener("beforeunload", (event) => {
@@ -820,9 +1016,7 @@
   if (new URLSearchParams(location.search).get("export") === "1") open();
   $("#lse-source-download").addEventListener("click", () => {
     if (!A.project) return;
-    const url = URL.createObjectURL(
-        new Blob([serializable(A.project)], { type: "application/json" }),
-      ),
+    const url = URL.createObjectURL(websiteDownload(A.project)),
       link = document.createElement("a");
     link.href = url;
     link.download = "website.website.json";

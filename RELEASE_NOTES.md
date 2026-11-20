@@ -1,3 +1,7 @@
+## LS Elementor 0.12.9
+
+If a scan is interrupted, reopening LS Elementor lets you copy its last recorded stage and resume from the last stored scan batch. Media is decoded as needed to reduce browser memory use on larger scans and imports.
+
 ## LS Elementor 0.12.8
 
 Use **Scan website** to fetch a source. If the source serves a maintenance page, the scan stops and explains the problem. **Run in background** keeps the task going in its current tab while you work in a separate WordPress tab. **Remove import** cleans up the pages, templates, menu and exclusive media created by that import.

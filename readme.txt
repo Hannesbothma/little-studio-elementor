@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1.4
 Requires PHP: 8.0
-Stable tag: 0.12.8
+Stable tag: 0.12.9
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -176,6 +176,11 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.12.9 =
+* Keep a browser checkpoint in the copied report when a scan or import is interrupted.
+* Resume a recent unfinished website scan from its last stored batch.
+* Decode media as needed and check file hashes one at a time to reduce memory use on large imports.
 
 = 0.12.8 =
 * Label the website capture action Scan website and stop on source maintenance pages.

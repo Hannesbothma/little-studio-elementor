@@ -156,6 +156,27 @@
       .map(plain)
       .join(" · ");
   }
+  function checkpoint(value) {
+    const config = window.LSE_CONFIG;
+    const key = "lse-progress:" + config.ajax + ":" + config.userId;
+    try {
+      if (value) {
+        localStorage.setItem(
+          key,
+          JSON.stringify({
+            ...value,
+            phase: plain(value.phase).slice(0, 1500),
+            title: plain(value.title).slice(0, 500),
+            source: plain(value.source),
+            at: new Date().toISOString(),
+          }),
+        );
+      }
+      return JSON.parse(localStorage.getItem(key) || "null");
+    } catch {
+      return null;
+    }
+  }
   function journal(config, send) {
     const prefix = "lse-report:" + config.ajax + ":" + config.userId + ":";
     const read = (key) => {
@@ -228,6 +249,16 @@
       const pages = job?.pages || [];
       const skippedPages = pages.filter((page) => page.skipped).length;
       const skippedFiles = Object.values(job?.skipped_assets || {});
+      const saved = checkpoint();
+      const latest =
+        saved &&
+        (job
+          ? saved.job === job.id
+          : !project ||
+            saved.title === project.title ||
+            (saved.source && saved.source === plain(project.capture?.source)))
+          ? saved
+          : null;
       const lines = [
         "LS Elementor import report",
         "Generated " + new Date().toISOString(),
@@ -245,7 +276,14 @@
         "Site " + location.host,
         "Import " + (job?.id || "before draft creation"),
         "Project " +
-          plain(job?.title || project?.title || filename || "(unselected)"),
+          plain(
+            job?.title ||
+              project?.title ||
+              filename ||
+              latest?.title ||
+              latest?.source ||
+              "(unselected)",
+          ),
         "State " +
           (job?.state || "preparation") +
           " | " +
@@ -262,6 +300,22 @@
                 " page(s) | " +
                 skippedFiles.length +
                 " file(s)",
+            ]
+          : []),
+        ...(latest
+          ? [
+              "",
+              "Last browser checkpoint (UTC)",
+              latest.at + " · " + latest.phase,
+              ...(latest.source ? ["Source " + latest.source] : []),
+              ...(Number.isFinite(latest.records)
+                ? [
+                    latest.records +
+                      " capture records · " +
+                      latest.bytes +
+                      " encoded bytes",
+                  ]
+                : []),
             ]
           : []),
         "",
@@ -326,6 +380,7 @@
   }
   window.LSEReports = {
     describe,
+    checkpoint,
     journal,
     groups,
     render,

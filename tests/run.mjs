@@ -138,6 +138,7 @@ try {
     "import-regression",
     "upload-recovery",
     "capture-skip",
+    "capture-recovery",
     "portable-content",
     "workflow-cleanup",
     "maps-regression",
