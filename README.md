@@ -188,9 +188,10 @@ node scripts/package.mjs . dist
 
 The package builder emits the WordPress ZIP and `update.json` together. It includes
 only plugin files, never test fixtures, website projects or credentials.
-A plugin version change on main or a version tag triggers validation and the release workflow. The tag, plugin header and
-version constant must agree. Release assets are attached to a draft before it is
-published, so an unfinished package is not offered to WordPress.
+A plugin version change on main or a version tag triggers the release workflow.
+It builds the ZIP and update manifest, attaches both to a draft, and publishes the
+release for the WordPress updater. The tag, plugin header and version constant
+must agree. The compatibility checks run in their own workflow.
 
 ## Licence
 
