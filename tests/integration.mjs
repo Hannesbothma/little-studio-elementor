@@ -145,7 +145,7 @@ try {
   await page.goto(origin + "/wp-admin/admin.php?page=little-studio-elementor");
   await page.waitForFunction(() => window.LSEAdmin && window.LSEManage);
   const versions = await rpc("test", { operation: "versions" });
-  // Exercise real URL capture, packaging, download and native Elementor import.
+  // Exercise direct URL import and the optional JSON download.
   await page.waitForFunction(() => window.LSECapture);
   await assert.rejects(
     () => rpc("capture_start", { url: "http://127.0.0.1/" }),
@@ -263,10 +263,19 @@ try {
     fullPage: true,
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
-  const downloadEvent = page.waitForEvent("download", { timeout: 120000 });
+  const downloads = [];
+  const trackDownload = (file) => downloads.push(file);
+  page.on("download", trackDownload);
   await page.locator("#lse-capture-start").click();
+  await page.locator("#lse-flow-dialog[open] #lse-import").waitFor({
+    timeout: 120000,
+  });
+  assert.equal(downloads.length, 0, "Capturing a URL started a download");
+  const downloadEvent = page.waitForEvent("download", { timeout: 120000 });
+  await page.locator("#lse-source-download").click();
   const file = await downloadEvent;
-  assert.equal(file.suggestedFilename(), "93.184.216.34.elementor.json");
+  page.off("download", trackDownload);
+  assert.equal(file.suggestedFilename(), "website.website.json");
   const captured = JSON.parse(await readFile(await file.path(), "utf8"));
   for (const p of captured.pages) {
     assert.equal(p.elementor.version, "0.4");
@@ -339,9 +348,6 @@ try {
       .find((a) => a.type === "image/png")
       .data.startsWith("data:image/png;base64,"),
   );
-  await page.locator("#lse-capture-close").click();
-  await page.locator("#lse-new-import").click();
-  await choose(captured, file.suggestedFilename());
   assert.match(
     await page.locator("#lse-findings").innerText(),
     /JavaScript modules/,

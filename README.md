@@ -8,18 +8,17 @@ Headings, text, images, buttons and supported layouts become native Elementor
 elements. Complex regions are reported and may use small editable HTML widgets.
 Imports do not replace existing page content or publish the new drafts.
 
-## Website to Elementor JSON
+## Import from a website
 
-Open **Studio to Elementor → Website to Elementor JSON**, paste a public URL
-and click **Convert to JSON**. Keep the tab open until the `.elementor.json`
-file downloads. The tool follows public links on the source site and prepares
-the Elementor page trees before downloading the file.
+Open **Studio to Elementor → Import from website**, paste a public URL and click
+**Review pages**. Keep the tab open while the plugin captures the website and
+prepares the Elementor page trees. Select the pages you want and click **Import**
+to create drafts.
 
-Use **New import → Choose file** in LS Elementor to install the bundle on a
-destination with Elementor and LS Elementor active. Each page has an Elementor
-0.4 template plus the supporting styles. The bundle also carries shared media
-and internal link information. Elementor's own JSON uploader accepts individual
-templates. LS Elementor reads the site-wide bundle and installs its assets.
+Use **Download JSON** on the review screen if you want a portable copy. The
+bundle includes each page's Elementor 0.4 template, supporting styles, shared
+media and internal links. Upload it to LS Elementor on another WordPress site
+using **New import → Choose file**.
 
 Main sections appear as separate top-level blocks in Elementor's Structure
 panel. The converter keeps layout groups that use grid, flex, or other
@@ -30,7 +29,7 @@ Edit them with **Edit site header** and **Edit site footer** next to the importe
 website name. Matching pages display the shared pair while their Elementor
 Structure panels contain the individual page blocks.
 
-Exporting creates no WordPress posts or media. The host needs PHP DOM and
+The plugin creates WordPress posts and media after you click Import. The host needs PHP DOM and
 outbound HTTP/HTTPS. The results show if the crawl missed resources or the
 converter retained HTML widgets. Review captured custom JavaScript before
 enabling **Keep website interactions** during import. Checkout, login, and form

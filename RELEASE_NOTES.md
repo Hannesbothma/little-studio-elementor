@@ -1,3 +1,7 @@
+## LS Elementor 0.12.3
+
+Paste a website link and review the captured pages in WordPress. Click **Import** to create editable Elementor drafts. **Download JSON** is available on the review screen for a portable copy.
+
 ## LS Elementor 0.12.2
 
 When a media batch is refused, LS Elementor checks saved progress and retries files individually. Choose **Skip this file and continue** to finish the remaining uploads. Individual page conversion failures can also be skipped. Use **Copy report** during an import or reopen the import afterward to copy its errors, skipped items and saved progress. If the WordPress session expires, sign back in to resume.

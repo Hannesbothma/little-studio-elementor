@@ -733,7 +733,7 @@ final class LSE_Plugin
             <div class="lse-layout">
                 <aside class="lse-sidebar" aria-labelledby="lse-sidebar-title">
                     <button type="button" class="button button-primary" id="lse-new-import"><span aria-hidden="true">+</span> New import</button>
-                    <button type="button" class="button" data-export-open>Website to Elementor JSON</button>
+                    <button type="button" class="button" data-export-open>Import from website</button>
                     <label for="lse-import-list" class="screen-reader-text">Imported website</label>
                     <select id="lse-import-list"><option value="">New import</option></select>
                     <h2 id="lse-sidebar-title">Imported websites</h2>
@@ -821,14 +821,13 @@ final class LSE_Plugin
         </dialog>
         <dialog id="lse-capture-dialog" class="lse-dialog" aria-labelledby="lse-capture-title">
             <form id="lse-capture-form">
-                <header class="lse-dialog-head"><h2 id="lse-capture-title">Website to Elementor JSON</h2><button type="button" class="button" id="lse-capture-close">Close</button></header>
+                <header class="lse-dialog-head"><h2 id="lse-capture-title">Import from website</h2><button type="button" class="button" id="lse-capture-close">Close</button></header>
                 <div class="lse-dialog-body">
-                    <p>Enter a public website address. Download one file with the converted pages and their media.</p>
+                    <p>Enter a public website address to prepare its pages and media for import.</p>
                     <label class="lse-field">Website address<input id="lse-capture-url" type="url" placeholder="https://your-website.com" required maxlength="2048"></label>
                     <p id="lse-capture-status" class="lse-notice" role="status" aria-live="polite"></p>
-                    <p id="lse-capture-feedback" class="lse-notice" hidden></p>
                 </div>
-                <footer class="lse-dialog-actions"><a class="button" id="lse-capture-download" hidden>Download JSON</a><button type="button" class="button" id="lse-capture-retry" hidden>Retry</button><button type="submit" class="button button-primary" id="lse-capture-start">Convert to JSON</button></footer>
+                <footer class="lse-dialog-actions"><button type="button" class="button" id="lse-capture-retry" hidden>Retry</button><button type="submit" class="button button-primary" id="lse-capture-start">Review pages</button></footer>
             </form>
         </dialog>
         <dialog id="lse-replace-dialog" class="lse-dialog lse-page-dialog" aria-labelledby="lse-replace-title" aria-describedby="lse-replace-description">

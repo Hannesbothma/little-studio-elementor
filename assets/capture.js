@@ -564,58 +564,12 @@
     session = null,
     sequence = 0,
     records = [],
-    pending = false,
-    downloadUrl = "";
+    pending = false;
   const dialog = $("#lse-capture-dialog"),
     form = $("#lse-capture-form"),
     status = $("#lse-capture-status"),
     start = $("#lse-capture-start"),
-    retry = $("#lse-capture-retry"),
-    download = $("#lse-capture-download"),
-    feedback = $("#lse-capture-feedback");
-  function clearDownload() {
-    if (downloadUrl) URL.revokeObjectURL(downloadUrl);
-    downloadUrl = "";
-    download.hidden = true;
-    download.removeAttribute("href");
-    feedback.hidden = true;
-    feedback.replaceChildren();
-  }
-  function showExport(project) {
-    const count = project.pages.length;
-    const htmlPages = project.pages.filter(
-      (page) => M.inspect(page).fallbacks,
-    ).length;
-    const notes = [
-      ...(project.capture.complete
-        ? []
-        : [
-            "Some source files or pages could not be captured. See the capture report in the JSON.",
-          ]),
-      ...(htmlPages
-        ? [
-            htmlPages +
-              " of " +
-              count +
-              " pages contain HTML widgets for content that needs code editing.",
-          ]
-        : []),
-    ];
-    feedback.textContent = notes.join(" ");
-    feedback.hidden = !notes.length;
-    status.textContent =
-      count +
-      (count === 1 ? " Elementor page is" : " Elementor pages are") +
-      " ready to download.";
-    downloadUrl = URL.createObjectURL(
-      new Blob([serializable(project)], { type: "application/json" }),
-    );
-    download.download =
-      new URL(project.capture.source).hostname + ".elementor.json";
-    download.href = downloadUrl;
-    download.hidden = false;
-    download.click();
-  }
+    retry = $("#lse-capture-retry");
   const buttons = () => {
     start.disabled = busy;
     form.querySelectorAll("input,select").forEach((el) => (el.disabled = busy));
@@ -642,7 +596,6 @@
     try {
       if (!resume) {
         await cleanup();
-        clearDownload();
         records = [];
         sequence = 0;
         status.textContent = "Starting website capture…";
@@ -664,7 +617,7 @@
         if (step.done) {
           await cleanup();
           if (cancelled) break;
-          status.textContent = "Packaging your website JSON…";
+          status.textContent = "Preparing your website for import…";
           const notes = Object.values(step.warnings || {});
           if (step.truncated)
             notes.push(
@@ -695,8 +648,12 @@
             },
             () => cancelled,
           );
-          if (!converted) break;
-          if (!cancelled) showExport(converted);
+          if (!converted || cancelled) break;
+          const filename =
+            new URL(project.capture.source).hostname + ".elementor.json";
+          dialog.close();
+          $("#lse-reset").click();
+          await A.chooseProject(converted, filename);
           return;
         }
         status.textContent = step.message;
@@ -730,13 +687,11 @@
     } else {
       cleanup();
       records = [];
-      clearDownload();
       dialog.close();
     }
   }
   function open() {
     if (A.busy || window.LSEManage?.busy) return;
-    clearDownload();
     status.textContent = "";
     retry.hidden = true;
     dialog.showModal();
