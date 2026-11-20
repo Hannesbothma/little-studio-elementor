@@ -1576,7 +1576,11 @@ final class LSE_Importer
             }
             $type = $item['elType'] ?? '';
             $widget = $item['widgetType'] ?? '';
-            $carousel = in_array($widget, ['media-carousel', 'reviews'], true);
+            $carousel = in_array(
+                $widget,
+                ['media-carousel', 'reviews', 'slides'],
+                true,
+            );
             if ($native || $carousel) {
                 LSE_Native::element($item);
             }
@@ -1597,6 +1601,7 @@ final class LSE_Importer
                             'google_maps',
                             'media-carousel',
                             'reviews',
+                            'slides',
                         ],
                         true,
                     ))
@@ -1629,6 +1634,22 @@ final class LSE_Importer
                     $skip_css,
                     $skipped,
                 );
+            }
+            if ($widget === 'slides' && is_array($settings['slides'] ?? null)) {
+                foreach ($settings['slides'] as &$slide) {
+                    if (!is_array($slide)) {
+                        throw new RuntimeException('Invalid slide settings.');
+                    }
+                    foreach (
+                        ['heading', 'description', 'button_text']
+                        as $field
+                    ) {
+                        if (isset($slide[$field])) {
+                            $slide[$field] = self::html($slide[$field], false);
+                        }
+                    }
+                }
+                unset($slide);
             }
             foreach (['title', 'editor', 'html'] as $field) {
                 if (isset($settings[$field])) {

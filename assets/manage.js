@@ -797,11 +797,6 @@
       message(error.message, true);
     }
   });
-  window.addEventListener("lse:resume-progress", () => {
-    view("progress");
-    syncControls();
-  });
-
   window.LSEManage = {
     get busy() {
       return loading;

@@ -1583,7 +1583,12 @@
   if (config.lastJob)
     request("status", { job: config.lastJob })
       .then((data) => {
-        if (selectionStarted || busy) return;
+        if (
+          selectionStarted ||
+          busy ||
+          ["importing", "finishing"].includes(data.state)
+        )
+          return;
         if (data.engine !== config.conversionVersion) {
           result(data);
           status(
@@ -1592,16 +1597,6 @@
           return;
         }
         if (["ready", "interrupted"].includes(data.state)) result(data);
-        else if (["importing", "finishing"].includes(data.state)) {
-          job = data;
-          journal.attach(data);
-          $("#lse-progress").hidden = false;
-          $("#lse-cancel").hidden = false;
-          status(
-            "An earlier import is unfinished. Choose the same JSON and options to continue it, or remove its unedited drafts.",
-          );
-          window.dispatchEvent(new Event("lse:resume-progress"));
-        }
       })
       .catch(() => {});
 })();

@@ -115,8 +115,40 @@ try {
     await tab.evaluate(() => LSEAdmin.job.pages.filter((p) => p.done).length),
     2,
   );
+  const unfinished = await tab.evaluate(() =>
+    LSEAdmin.request("start", {
+      fingerprint: crypto.randomUUID().replaceAll("-", "").repeat(2),
+      site_id: "refresh-test",
+      title: "Saved unfinished import",
+      pages: [
+        { key: "home", title: "Unfinished draft", slug: "unfinished-draft" },
+      ],
+      site: { home_key: "home", navigation: [] },
+      layout: "elementor_canvas",
+    }),
+  );
+  const checkedSavedImport = tab.waitForResponse((res) =>
+    res.request().postData()?.includes("\r\n\r\nlse_status\r\n"),
+  );
+  await tab.reload();
+  await checkedSavedImport;
+  const savedImport = tab.locator('[data-import-id="' + unfinished.id + '"]');
+  await savedImport.waitFor();
+  assert.equal(
+    await tab.locator("#lse-flow-dialog").evaluate((d) => d.open),
+    false,
+  );
+  await savedImport.click();
+  await tab
+    .locator("#lse-project-title")
+    .getByText("Saved unfinished import")
+    .waitFor();
+  assert.equal(
+    await tab.locator("#lse-flow-dialog").evaluate((d) => d.open),
+    false,
+  );
   console.log(
-    "Verified URL conversion skip, source 404 reporting and two saved drafts.",
+    "Verified URL conversion skip, source 404 reporting, saved drafts and no reminder on refresh.",
   );
 } finally {
   await browser.close();

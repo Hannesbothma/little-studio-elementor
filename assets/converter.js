@@ -983,6 +983,176 @@
       root.setAttribute("data-lse-source-content", "");
     return inner ? clone.innerHTML : clone.outerHTML;
   }
+  function slidesSettings(node, w) {
+    const wrapper = node.querySelector(".elementor-slides-wrapper");
+    const items = wrapper?.querySelectorAll(
+      ".swiper-wrapper > .swiper-slide:not(.swiper-slide-duplicate)",
+    );
+    if (!items?.length) return null;
+    const slides = [];
+    const seen = new Set();
+    for (const [index, item] of items.entries()) {
+      const key =
+        [...item.classList]
+          .find((name) => /^elementor-repeater-item-[a-f0-9]{7,8}$/.test(name))
+          ?.split("-")
+          .pop() || (index + 1).toString(16).padStart(7, "0");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const bg = item.querySelector(".swiper-slide-bg");
+      const inner = item.querySelector(".swiper-slide-inner");
+      if (!bg || !inner) return null;
+      const heading = item.querySelector(".elementor-slide-heading");
+      const description = item.querySelector(".elementor-slide-description");
+      const button = item.querySelector(".elementor-slide-button");
+      const link = inner.matches("a[href]")
+        ? inner
+        : button?.closest("a[href]");
+      const style = w.getComputedStyle(bg);
+      const image = style.backgroundImage.match(
+        /^url\(["']?(.*?)["']?\)$/,
+      )?.[1];
+      const overlay = item.querySelector(".elementor-background-overlay");
+      slides.push({
+        _id: key,
+        heading: heading ? sourceHTML(heading, true) : "",
+        description: description ? sourceHTML(description, true) : "",
+        button_text: button?.textContent.trim() || "",
+        link: {
+          url: link?.getAttribute("href") || "",
+          is_external: link?.target === "_blank" ? "on" : "",
+          nofollow: link?.relList.contains("nofollow") ? "on" : "",
+        },
+        link_click: link === inner ? "slide" : "button",
+        background_image: { url: image || "", id: 0 },
+        background_color: style.backgroundColor,
+        background_size: ["cover", "contain", "auto"].includes(
+          style.backgroundSize,
+        )
+          ? style.backgroundSize
+          : "cover",
+        background_ken_burns: bg.classList.contains("elementor-ken-burns")
+          ? "yes"
+          : "",
+        zoom_direction: bg.classList.contains("elementor-ken-burns--out")
+          ? "out"
+          : "in",
+        background_overlay: overlay ? "yes" : "",
+        ...(overlay
+          ? {
+              background_overlay_color:
+                w.getComputedStyle(overlay).backgroundColor,
+            }
+          : {}),
+      });
+    }
+    const settings = { slides };
+    for (const [key, value] of Object.entries(backgroundSettings(node) || {}))
+      if (
+        /^(?:navigation|autoplay|autoplay_speed|transition|transition_speed|infinite|pause_on_hover|pause_on_interaction)$/.test(
+          key,
+        )
+      )
+        settings[key] = value;
+    const sample = items[0];
+    const heading = sample.querySelector(".elementor-slide-heading");
+    const description = sample.querySelector(".elementor-slide-description");
+    const button = sample.querySelector(".elementor-slide-button");
+    settings.slides_name = wrapper.getAttribute("aria-label") || "Slides";
+    settings.content_animation = wrapper.getAttribute("data-animation") || "";
+    settings.slides_horizontal_position =
+      node.className.match(/elementor--h-position-(left|center|right)/)?.[1] ||
+      "center";
+    settings.slides_vertical_position =
+      node.className.match(/elementor--v-position-(top|middle|bottom)/)?.[1] ||
+      "middle";
+    settings.button_size =
+      button?.className.match(/elementor-size-(xs|sm|md|lg|xl)/)?.[1] || "sm";
+    for (const [type, element] of [
+      ["heading", heading],
+      ["description", description],
+    ])
+      if (element && /^(?:h[1-6]|div|span|p)$/i.test(element.tagName))
+        settings["slides_" + (type === "heading" ? "title" : type) + "_tag"] =
+          element.tagName.toLowerCase();
+    return settings;
+  }
+  function slideAppearance(node, w) {
+    const slide = node.querySelector(".swiper-wrapper > .swiper-slide");
+    const inner = slide.querySelector(".swiper-slide-inner");
+    const content = slide.querySelector(".swiper-slide-contents");
+    const parts = {};
+    for (const [name, selector] of [
+      ["heading", ".elementor-slide-heading"],
+      ["description", ".elementor-slide-description"],
+      ["button", ".elementor-slide-button"],
+    ]) {
+      const part = slide.querySelector(selector);
+      if (!part) continue;
+      const style = w.getComputedStyle(part);
+      parts[name] = {
+        color: style.color,
+        font: style.fontFamily,
+        size: style.fontSize,
+        weight: style.fontWeight,
+        lineHeight: style.lineHeight,
+        spacing: style.marginBottom,
+        background: style.backgroundColor,
+        border: style.borderTopWidth,
+        borderColor: style.borderTopColor,
+        radius: style.borderTopLeftRadius,
+      };
+    }
+    const innerStyle = w.getComputedStyle(inner);
+    const contentStyle = content ? w.getComputedStyle(content) : innerStyle;
+    const height = slide.computedStyleMap?.().get("height")?.toString();
+    return {
+      height:
+        height && height !== "auto" ? height : w.getComputedStyle(slide).height,
+      width: contentStyle.maxWidth,
+      align: innerStyle.textAlign,
+      padding: dim(innerStyle, "padding"),
+      parts,
+      overlay: {
+        "background-color": contentStyle.backgroundColor,
+        width: content?.computedStyleMap?.().get("width")?.toString() || "",
+        "padding-top": contentStyle.paddingTop,
+        "padding-right": contentStyle.paddingRight,
+        "padding-bottom": contentStyle.paddingBottom,
+        "padding-left": contentStyle.paddingLeft,
+      },
+    };
+  }
+  function applySlideAppearance(settings, appearance, suffix) {
+    settings["slides_height" + suffix] = sourceSize(appearance.height);
+    if (appearance.width !== "none")
+      settings["content_max_width" + suffix] = sourceSize(appearance.width);
+    settings["slides_padding" + suffix] = appearance.padding;
+    if (!suffix) settings.slides_text_align = appearance.align;
+    for (const [part, style] of Object.entries(appearance.parts)) {
+      const typography = part + "_typography_";
+      settings[typography + "font_size" + suffix] = sourceSize(style.size);
+      if (style.lineHeight !== "normal")
+        settings[typography + "line_height" + suffix] = sourceSize(
+          style.lineHeight,
+        );
+      if (suffix) continue;
+      settings[typography + "typography"] = "custom";
+      settings[typography + "font_family"] = fontStack(style.font).family;
+      settings[typography + "font_weight"] = style.weight;
+      if (part === "button") {
+        settings.button_text_color = style.color;
+        settings.button_border_width = sourceSize(style.border);
+        settings.button_border_color = style.borderColor;
+        settings.button_border_radius = sourceSize(style.radius);
+        settings.button_background_background = "classic";
+        settings.button_background_color = style.background;
+      } else {
+        settings[part + "_color"] = style.color;
+        settings[part + "_spacing"] = sourceSize(style.spacing);
+      }
+    }
+  }
   // Recover editable slide records from Elementor's public carousel markup.
   function carouselSettings(node) {
     const type = node.getAttribute("data-widget_type")?.split(".")[0];
@@ -1632,8 +1802,15 @@
         if (nativeInteractions.has(node))
           settings.lse_attributes["data-lse-interactive"] = "";
         const interactive = islands.has(node);
+        const slides =
+          node.getAttribute("data-widget_type")?.startsWith("slides.") &&
+          root.LSE_CONFIG?.widgets?.includes("slides") &&
+          slidesSettings(node, w);
         const carousel = carouselSettings(node);
-        if (carousel) {
+        if (slides) {
+          widget = "slides";
+          Object.assign(settings, slides);
+        } else if (carousel) {
           widget = carousel.type;
           Object.assign(settings, carousel.settings);
         } else if (interactive) {
@@ -1871,6 +2048,8 @@
                 ? content
                 : s
             ).getPropertyValue(p);
+          if (entry.widget === "slides")
+            props.slides = slideAppearance(entry.node, w);
           const parent = entry.node.parentElement;
           if (parent) {
             if (!parents.has(parent)) {
@@ -2229,6 +2408,35 @@
         const { element, widget } = entry;
         if (layoutNodes.has(element.id)) continue;
         const all = snapshots.get(element.id);
+        if (widget === "slides") {
+          for (const [width, suffix] of [
+            [1440, ""],
+            [1024, "_tablet"],
+            [390, "_mobile"],
+          ])
+            applySlideAppearance(element.settings, all[width].slides, suffix);
+          if (options.preserveCSS) {
+            let previous = "";
+            for (const width of widths) {
+              const declarations = Object.entries(all[width].slides.overlay)
+                .filter(([, value]) => value && safeValue(value))
+                .map(([key, value]) => key + ":" + value)
+                .join(";");
+              if (declarations === previous) continue;
+              previous = declarations;
+              const rule =
+                "__LSE_SCOPE__ .elementor-element-" +
+                element.id +
+                " .swiper-slide-contents{" +
+                declarations +
+                "}";
+              css +=
+                width === 1440
+                  ? rule
+                  : "@media(max-width:" + width + "px){" + rule + "}";
+            }
+          }
+        }
         if (widget === "image")
           css +=
             ":where(__LSE_SCOPE__ .elementor-element-" +

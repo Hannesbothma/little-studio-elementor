@@ -1,3 +1,7 @@
+## LS Elementor 0.12.6
+
+Captured Elementor Pro sliders use native Slides widgets with their source height, photos, captions and booking buttons. Refreshing the importer opens the dashboard directly, including when an earlier import is unfinished.
+
 ## LS Elementor 0.12.5
 
 A page that fails conversion after URL capture can now be retried or skipped while the remaining pages continue to import review. The copied report identifies unavailable source pages and pages skipped after conversion errors.
