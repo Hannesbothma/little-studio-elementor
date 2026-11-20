@@ -1,3 +1,7 @@
+## LS Elementor 0.12.5
+
+A page that fails conversion after URL capture can now be retried or skipped while the remaining pages continue to import review. The copied report identifies unavailable source pages and pages skipped after conversion errors.
+
 ## LS Elementor 0.12.4
 
 Existing sitewide headers and footers no longer stop page imports. LS Elementor keeps conflicting templates separate and uses them on the imported pages. Page-specific save errors now offer **Skip this page and continue**.

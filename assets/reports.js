@@ -258,7 +258,9 @@
       for (const warning of capture?.warnings || []) addFinding(warning);
       for (const item of capture?.failed_resources || [])
         addFinding(
-          "Capture · " +
+          (item.kind === "page"
+            ? "Skipped unavailable source page · "
+            : "Capture · ") +
             item.url +
             " · " +
             (item.error || item.status || "failed"),

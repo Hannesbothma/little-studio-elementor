@@ -137,6 +137,7 @@ try {
     "media-regression",
     "import-regression",
     "upload-recovery",
+    "capture-skip",
     "maps-regression",
     "fidelity-regression",
     "audit-regression",

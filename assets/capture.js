@@ -521,40 +521,69 @@
         key === "bytes" && value instanceof Uint8Array ? undefined : value,
       indent,
     );
-  async function convertWebsite(project, onPage, isCancelled) {
+  async function convertWebsite(project, onPage, onFailure, isCancelled) {
     const resources = M.resourceSession(project);
     const pages = [];
     try {
-      for (const page of project.pages) {
-        if (isCancelled()) return null;
-        onPage(page, pages.length + 1, project.pages.length);
-        try {
-          const result = await M.convert(project, page, {
-            layout: "elementor_canvas",
-            preserveCSS: true,
-            resources,
-          });
-          const { elements, css, warnings, regions, structure, source } =
-            result;
-          const elementor = window.LSENative.validateTemplate({
-            version: "0.4",
-            type: "page",
-            title: page.title,
-            page_settings: { template: "elementor_canvas" },
-            content: elements,
-          });
-          window.LSENative.requireWidgets(elementor);
-          pages.push({
-            ...page,
-            js: source.js.trim(),
-            elementor,
-            conversion: { version: 1, css, warnings, regions, structure },
-          });
-        } catch (error) {
-          throw Error("Could not convert " + page.url + ". " + error.message);
+      for (const [index, page] of project.pages.entries()) {
+        while (!isCancelled()) {
+          onPage(page, index + 1, project.pages.length);
+          try {
+            const { elements, css, warnings, regions, structure, source } =
+              await M.convert(project, page, {
+                layout: "elementor_canvas",
+                preserveCSS: true,
+                resources,
+              });
+            const elementor = window.LSENative.validateTemplate({
+              version: "0.4",
+              type: "page",
+              title: page.title,
+              page_settings: { template: "elementor_canvas" },
+              content: elements,
+            });
+            window.LSENative.requireWidgets(elementor);
+            pages.push({
+              ...page,
+              js: source.js.trim(),
+              elementor,
+              conversion: { version: 1, css, warnings, regions, structure },
+            });
+            break;
+          } catch (error) {
+            if (isCancelled()) return null;
+            const detail =
+              page.title + " (" + page.url + ") · " + error.message;
+            project.capture.warnings.push("Page conversion failed · " + detail);
+            const decision = await onFailure(detail);
+            if (decision === "cancel") return null;
+            if (decision === "skip") {
+              project.capture.complete = false;
+              project.capture.warnings.push("Skipped page · " + detail);
+              break;
+            }
+          }
         }
+        if (isCancelled()) return null;
       }
-      return isCancelled() ? null : { ...project, pages };
+      if (!pages.length)
+        throw Error(
+          "Every captured page was skipped. Enter a link to try again.",
+        );
+      const included = new Set(pages.map((page) => page.key));
+      for (const page of pages) {
+        if (!included.has(page.parent_key)) page.parent_key = "";
+      }
+      const site = {
+        ...project.site,
+        home_key: included.has(project.site.home_key)
+          ? project.site.home_key
+          : "",
+        navigation: project.site.navigation.filter(({ key }) =>
+          included.has(key),
+        ),
+      };
+      return { ...project, pages, site };
     } finally {
       resources.dispose();
     }
@@ -564,12 +593,30 @@
     session = null,
     sequence = 0,
     records = [],
-    pending = false;
+    pending = false,
+    pageDecision = null;
   const dialog = $("#lse-capture-dialog"),
     form = $("#lse-capture-form"),
     status = $("#lse-capture-status"),
     start = $("#lse-capture-start"),
-    retry = $("#lse-capture-retry");
+    retry = $("#lse-capture-retry"),
+    skipPage = $("#lse-capture-skip");
+  async function decidePageFailure(detail) {
+    status.textContent =
+      "Could not convert " + detail + ". Retry or skip this page.";
+    retry.hidden = false;
+    skipPage.hidden = false;
+    retry.focus();
+    try {
+      return await new Promise((resolve) => {
+        pageDecision = resolve;
+      });
+    } finally {
+      pageDecision = null;
+      retry.hidden = true;
+      skipPage.hidden = true;
+    }
+  }
   const buttons = () => {
     start.disabled = busy;
     form.querySelectorAll("input,select").forEach((el) => (el.disabled = busy));
@@ -646,6 +693,7 @@
                 " · " +
                 page.title;
             },
+            decidePageFailure,
             () => cancelled,
           );
           if (!converted || cancelled) break;
@@ -681,6 +729,7 @@
   function close() {
     if (busy) {
       cancelled = true;
+      pageDecision?.("cancel");
       status.textContent = pending
         ? "Cancelling after the current request…"
         : "Cancelling…";
@@ -701,7 +750,11 @@
     e.preventDefault();
     run();
   });
-  retry.addEventListener("click", () => run(true));
+  retry.addEventListener("click", () => {
+    if (pageDecision) pageDecision("retry");
+    else run(true);
+  });
+  skipPage.addEventListener("click", () => pageDecision?.("skip"));
   $("#lse-capture-close").addEventListener("click", close);
   dialog.addEventListener("cancel", (e) => {
     e.preventDefault();
