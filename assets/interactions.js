@@ -88,6 +88,7 @@
     toggle.setAttribute("aria-expanded", String(open));
     toggle.classList.toggle("lse-source-elementor-active", open);
     panel.hidden = !open;
+    panel.toggleAttribute("data-lse-menu-open", open);
     if (open) {
       if (!menuStyles.has(panel))
         menuStyles.set(

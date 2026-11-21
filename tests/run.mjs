@@ -153,6 +153,7 @@ try {
     "background-work",
     ...(proZip ? ["theme-builder-work"] : []),
     "portable-content",
+    "editable-sections",
     "workflow-cleanup",
     "maps-regression",
     "fidelity-regression",

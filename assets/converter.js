@@ -186,6 +186,91 @@
     );
   }
 
+  function* iconSources(doc, externalSymbol) {
+    // Resolve local sprite references before extracting each visible icon.
+    for (const svg of doc.querySelectorAll("svg")) {
+      if (
+        svg.hasAttribute("data-lse-icon-asset") ||
+        svg.closest("symbol,defs") ||
+        svg.querySelector("symbol") ||
+        svg.parentElement?.closest("svg")
+      )
+        continue;
+      const copy = svg.cloneNode(true);
+      let complete = true;
+      for (const use of copy.querySelectorAll("use")) {
+        const ref =
+          use.getAttribute("href") || use.getAttribute("xlink:href") || "";
+        const symbol = ref.startsWith("#")
+          ? doc.getElementById(ref.slice(1))
+          : externalSymbol?.(ref);
+        if (
+          !symbol ||
+          symbol.localName !== "symbol" ||
+          symbol.querySelector("use")
+        ) {
+          complete = false;
+          break;
+        }
+        const viewport = doc.createElementNS(svg.namespaceURI, "svg");
+        if (use.classList.contains("sqs-use--mask"))
+          viewport.setAttribute("fill", "transparent");
+        for (const prop of [
+          "width",
+          "height",
+          "x",
+          "y",
+          "transform",
+          "class",
+          "fill",
+          "stroke",
+        ]) {
+          if (use.hasAttribute(prop))
+            viewport.setAttribute(prop, use.getAttribute(prop));
+        }
+        if (symbol.hasAttribute("viewBox"))
+          viewport.setAttribute("viewBox", symbol.getAttribute("viewBox"));
+        viewport.append(
+          ...Array.from(symbol.childNodes, (child) => child.cloneNode(true)),
+        );
+        use.replaceWith(viewport);
+      }
+      // Complex vectors need the source renderer, including gradients and clip paths.
+      if (
+        !complete ||
+        copy.querySelector(
+          "*:not(svg,g,path,circle,ellipse,rect,line,polyline,polygon,title,desc)",
+        ) ||
+        !copy.querySelector("path,circle,ellipse,rect,line,polyline,polygon")
+      )
+        continue;
+      copy.removeAttribute("class");
+      copy.removeAttribute("id");
+      const data = new XMLSerializer().serializeToString(copy);
+      // A larger HTML widget can also contain this icon. Keep its drawing after removing the sprite.
+      if (svg.querySelector("use"))
+        svg.replaceChildren(
+          ...Array.from(copy.childNodes, (child) => child.cloneNode(true)),
+        );
+      yield { svg, data };
+    }
+    for (const sprite of doc.querySelectorAll("svg[style]")) {
+      if (sprite.style.display !== "none" || !sprite.querySelector("symbol"))
+        continue;
+      const ids = new Set(
+        Array.from(sprite.querySelectorAll("symbol[id]"), (s) => "#" + s.id),
+      );
+      if (
+        ![...doc.querySelectorAll("use")].some(
+          (use) =>
+            !use.closest("[data-lse-icon-asset]") &&
+            ids.has(use.getAttribute("href") || use.getAttribute("xlink:href")),
+        )
+      )
+        sprite.remove();
+    }
+  }
+
   function* validateProject(input) {
     if (root.LSENative?.isTemplate(input))
       return root.LSENative.fromTemplates([
@@ -332,6 +417,24 @@
       };
     for (const page of p.pages) {
       yield;
+      if (
+        !page.elementor &&
+        /<svg[\s>]/i.test(page.html) &&
+        !page.html.includes("data-lse-icon-asset")
+      ) {
+        const doc = new DOMParser().parseFromString(page.html, "text/html");
+        for (const { svg, data } of iconSources(doc)) {
+          const bytes = new TextEncoder().encode(data);
+          const encoded = bytes.toBase64
+            ? bytes.toBase64()
+            : btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""));
+          svg.setAttribute(
+            "data-lse-icon-asset",
+            "data:image/svg+xml;base64," + encoded,
+          );
+        }
+        page.html = doc.documentElement.outerHTML;
+      }
       for (const field of ["html", "css", "js"])
         for (const m of page[field].matchAll(
           /data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)/gi,
@@ -500,7 +603,9 @@
         "Inline event handlers are removed; move reviewed behaviour into page JavaScript.",
       );
     const externalForms = [...d.querySelectorAll("form")].filter(
-      (n) => !n.matches("[data-fr-cost],[data-lse-local-form]"),
+      (n) =>
+        !n.matches("[data-fr-cost],[data-lse-local-form]") &&
+        !contactForm(n)?.submit_actions.length,
     );
     if (externalForms.length)
       warnings.push(
@@ -516,7 +621,9 @@
       );
     if (
       count("canvas,object,embed") ||
-      [...d.querySelectorAll("iframe")].some((node) => !mapSettings(node))
+      [...d.querySelectorAll("iframe")].some(
+        (node) => !mapSettings(node) && !embeddedVideo(node),
+      )
     )
       warnings.push(
         "Embedded applications or canvas output require manual rebuilding.",
@@ -778,6 +885,7 @@
   function sourceScriptKind({ id = "", src = "", type = "", code = "" }) {
     type = type.trim().toLowerCase();
     if (
+      /\/jquery(?:-[\d.]+)?(?:\.min)?\.js(?:[?#]|$)/i.test(src) ||
       /^wp-emoji(?:-|$)/i.test(id) ||
       code.includes("script#wp-emoji-settings") ||
       /\/(?:wp-includes\/js\/(?:jquery|dist)|wp-content\/plugins\/elementor(?:-pro)?)\//i.test(
@@ -981,6 +1089,44 @@
       return null;
     }
   }
+  function embeddedVideo(node) {
+    try {
+      const url = new URL(
+        node.getAttribute("src") || node.getAttribute("data-src"),
+      );
+      if (url.protocol !== "https:" || url.port || url.username || url.password)
+        return null;
+      const vimeo =
+        url.hostname === "player.vimeo.com" &&
+        url.pathname.match(/^\/video\/(\d+)\/?$/);
+      const youtube =
+        ["www.youtube.com", "www.youtube-nocookie.com"].includes(
+          url.hostname,
+        ) && url.pathname.match(/^\/embed\/([\w-]{11})\/?$/);
+      if (!vimeo && !youtube) return null;
+      const bg = url.searchParams.get("background") === "1";
+      return {
+        video_type: vimeo ? "vimeo" : "youtube",
+        ...(vimeo
+          ? {
+              vimeo_url:
+                "https://vimeo.com/" +
+                vimeo[1] +
+                (url.searchParams.get("h")
+                  ? "/" + encodeURIComponent(url.searchParams.get("h"))
+                  : ""),
+            }
+          : { youtube_url: "https://www.youtube.com/watch?v=" + youtube[1] }),
+        autoplay: bg || url.searchParams.get("autoplay") === "1" ? "yes" : "",
+        mute: bg || url.searchParams.get("muted") === "1" ? "yes" : "",
+        loop: bg || url.searchParams.get("loop") === "1" ? "yes" : "",
+        controls: bg || url.searchParams.get("controls") === "0" ? "" : "yes",
+        _title: node.title || (vimeo ? "Vimeo video" : "YouTube video"),
+      };
+    } catch {
+      return null;
+    }
+  }
   function stickySettings(node) {
     const source = backgroundSettings(node);
     let existing;
@@ -1051,10 +1197,49 @@
       ".elementor-slides-wrapper .swiper-wrapper > .swiper-slide:not(.swiper-slide-duplicate)",
     );
   }
+  function headerMenu(nav, base) {
+    if (!nav || !nav.matches("header nav.header-nav-list")) return null;
+    const link = (a) => {
+      if (!a || !a.textContent.trim()) return null;
+      try {
+        const url = new URL(a.getAttribute("href"), base);
+        return ["http:", "https:", "tel:", "mailto:"].includes(url.protocol)
+          ? { label: a.textContent.trim().slice(0, 150), url: url.href }
+          : null;
+      } catch {
+        return null;
+      }
+    };
+    const items = [];
+    for (const row of nav.children) {
+      const folder = row.querySelector(
+        ":scope > button.header-nav-folder-title",
+      );
+      if (folder) {
+        const links = Array.from(
+          row.querySelectorAll(".header-nav-folder-content a[href]"),
+          link,
+        );
+        if (!links.length || links.includes(null)) return null;
+        items.push({
+          label: folder.textContent.trim().slice(0, 150),
+          url: "#",
+          children: links,
+        });
+      } else {
+        const item = link(row.querySelector(":scope > a[href]"));
+        if (!item) return null;
+        items.push(item);
+      }
+    }
+    return items.length ? items : null;
+  }
   function contactForm(node) {
     if (
       !root.LSE_CONFIG?.widgets?.includes("form") ||
-      !node.matches('.elementor-form,[data-widget_type^="form."]')
+      !node.matches(
+        '.elementor-form,[data-widget_type^="form."],form.newsletter-form',
+      )
     )
       return null;
     const form = node.matches("form") ? node : node.querySelector("form");
@@ -1064,6 +1249,7 @@
       form.closest("[data-lse-interaction]")
     )
       return null;
+    const newsletter = form.matches(".newsletter-form");
     const fields = [];
     const seen = new Set();
     for (const field of form.querySelectorAll("input,textarea,select")) {
@@ -1109,22 +1295,26 @@
     }
     if (
       !fields.some((field) => field.field_type === "email") ||
-      !fields.some((field) => field.field_type === "textarea")
+      (!newsletter && !fields.some((field) => field.field_type === "textarea"))
     )
       return null;
     const button = form.querySelector(
       'button[type="submit"],input[type="submit"]',
     );
+    const label = newsletter ? "Newsletter signup" : "Contact form";
     return {
-      _title: "Contact form",
-      form_name: (form.getAttribute("name") || "Contact form").slice(0, 150),
+      _title: label,
+      form_name: (form.getAttribute("name") || label).slice(0, 150),
       form_fields: fields,
       button_text: (
         button?.textContent?.trim() ||
         button?.value ||
         "Send"
       ).slice(0, 100),
-      submit_actions: [],
+      submit_actions: root.LSE_CONFIG.collectSubmissions
+        ? ["save-to-database"]
+        : [],
+      submissions_metadata: [],
     };
   }
   function slidesSettings(node, w) {
@@ -1473,6 +1663,32 @@
   function prepareSource(doc) {
     prepareLazyMedia(doc);
     const warnings = [];
+    for (const form of doc.querySelectorAll("form.newsletter-form")) {
+      if (!contactForm(form)) continue;
+      for (const intro of form.querySelectorAll(".newsletter-form-header"))
+        form.before(intro);
+      for (const foot of form.querySelectorAll(".newsletter-form-footnote"))
+        form.after(foot);
+    }
+    if (doc.body.matches(".tweak-global-animations-enabled")) {
+      doc.body.setAttribute("data-animation-state", "booted");
+      // The source runtime normally reveals these landmarks after its intro.
+      for (const landmark of doc.querySelectorAll(
+        "header.header[data-controller],footer.sections",
+      )) {
+        landmark.style.setProperty("opacity", "1", "important");
+      }
+    }
+    for (const container of doc.querySelectorAll(
+      ".sqsrte-scaled-text-container",
+    )) {
+      container.classList.add("loaded");
+      const text = container.querySelector(":scope > .sqsrte-scaled-text");
+      if (text) {
+        text.style.setProperty("position", "relative", "important");
+        text.style.setProperty("left", "auto", "important");
+      }
+    }
     let galleryIndex = 0;
     let menuIndex = 0;
     for (const menu of doc.querySelectorAll(".elementor-widget-nav-menu")) {
@@ -1763,8 +1979,20 @@
       },
     };
   }
+  async function readCapturePage(page) {
+    if (!(page.capturePayload instanceof Blob)) return page;
+    const { capturePayload, captureScripts, ...record } = page;
+    const { css, js, convertedCSS } = JSON.parse(await capturePayload.text());
+    return {
+      ...record,
+      css,
+      js,
+      conversion: { ...record.conversion, css: convertedCSS },
+    };
+  }
   async function convert(project, page, options = {}) {
     if (page.conversion) {
+      page = await readCapturePage(page);
       const template = root.LSENative.validateTemplate(page.elementor);
       root.LSENative.requireWidgets(template);
       const { warnings, nodes, fallbacks } = inspect(page);
@@ -1832,6 +2060,62 @@
             : value;
     const doc = new DOMParser().parseFromString(source, "text/html");
     warnings.push(...prepareSource(doc));
+    // Only bind recognized menus whose links match the imported WordPress menu.
+    if (
+      root.LSE_CONFIG?.widgets?.includes("nav-menu") &&
+      project.site.navigation.length
+    ) {
+      const signature = (items) =>
+        JSON.stringify(
+          items.map((item) => [
+            item.label,
+            item.url || project.pages.find((p) => p.key === item.key)?.url,
+            signature(item.children || []),
+          ]),
+        );
+      const expected = signature(project.site.navigation);
+      for (const header of doc.querySelectorAll("header")) {
+        const navs = Array.from(header.querySelectorAll("nav.header-nav-list"));
+        if (
+          !navs.length ||
+          !navs.every(
+            (nav) => signature(headerMenu(nav, page.url) || []) === expected,
+          )
+        )
+          continue;
+        for (const nav of navs)
+          nav.setAttribute("data-lse-wp-menu", "horizontal");
+        const panel = header.querySelector(".header-menu");
+        const rootFolder = panel?.querySelector('[data-folder="root"]');
+        const list = rootFolder?.querySelector(".header-menu-nav-wrapper");
+        if (list && panel.querySelector(".header-menu-nav-list")) {
+          const destinations = new Set(
+            Array.from(navs[0].querySelectorAll("a[href]"), (a) =>
+              a.getAttribute("href"),
+            ),
+          );
+          const extras = Array.from(list.querySelectorAll("a[href]")).filter(
+            (a) =>
+              !a.matches("[data-folder-id],[data-action=back]") &&
+              !destinations.has(a.getAttribute("href")),
+          );
+          // Account and social actions outside the list keep their source controls.
+          if (!extras.length) {
+            list.setAttribute("data-lse-wp-menu", "vertical");
+            for (const folder of list.querySelectorAll("[data-folder]"))
+              folder.remove();
+          }
+          if (!panel.id) panel.id = "lse-mobile-navigation";
+          panel.setAttribute("data-lse-mobile-panel", "");
+          for (const button of header.querySelectorAll(".header-burger-btn")) {
+            button.setAttribute("data-lse-menu-toggle", panel.id);
+            button.setAttribute("aria-controls", panel.id);
+            button.setAttribute("aria-expanded", "false");
+            button.setAttribute("aria-label", "Menu");
+          }
+        }
+      }
+    }
     const inlineScripts = [...doc.querySelectorAll("script:not([src])")]
       .filter(
         (node) =>
@@ -1845,8 +2129,12 @@
       .join("\n");
     for (const node of doc.querySelectorAll("iframe")) {
       const map = mapSettings(node);
-      if (map) {
-        node.setAttribute("data-lse-map", JSON.stringify(map));
+      const video = embeddedVideo(node);
+      if (map || video) {
+        node.setAttribute(
+          map ? "data-lse-map" : "data-lse-video",
+          JSON.stringify(map || video),
+        );
         // Measure the original iframe's CSS without running the remote document.
         node.removeAttribute("src");
         node.removeAttribute("srcdoc");
@@ -1944,6 +2232,44 @@
           ]),
         ),
       );
+      const fitted = new Set(
+        d.querySelectorAll(
+          ".sqsrte-scaled-text-container > .sqsrte-scaled-text > :is(h1,h2,h3,h4,h5,h6)",
+        ),
+      );
+      // Source fit-text measures the widest authored line after fonts load.
+      // Sample that size at each breakpoint so the destination heading remains editable.
+      const measure = fitted.size && d.createElement("canvas").getContext("2d");
+      function fitHeadings() {
+        for (const heading of fitted) {
+          const container = heading.parentElement.parentElement;
+          const available = container.clientWidth;
+          if (!measure || !available) continue;
+          const style = w.getComputedStyle(heading);
+          measure.font =
+            style.fontStyle +
+            " " +
+            style.fontWeight +
+            " 100px " +
+            style.fontFamily;
+          const clone = heading.cloneNode(true);
+          for (const br of clone.querySelectorAll("br")) br.replaceWith("\n");
+          const lines = clone.textContent
+            .trim()
+            .split(/\n/)
+            .map((t) => t.trim())
+            .filter(Boolean);
+          const widest = Math.max(
+            ...lines.map((t) => measure.measureText(t).width),
+          );
+          if (Number.isFinite(widest) && widest > 0)
+            heading.style.setProperty(
+              "font-size",
+              ((available * 99) / widest).toFixed(2) + "px",
+              "important",
+            );
+        }
+      }
       const snapshots = new Map(),
         widths = [1440, 1280, 1024, 768, 767, 390];
       // Source breakpoints need not coincide with Elementor's three devices.
@@ -1997,6 +2323,11 @@
       ))
         islands.add(n);
       for (const n of d.querySelectorAll("button[aria-controls]")) {
+        if (
+          n.closest("[data-lse-wp-menu]") ||
+          (n.hasAttribute("data-lse-menu-toggle") && n.closest("header"))
+        )
+          continue;
         const target = d.getElementById(n.getAttribute("aria-controls"));
         if (target) {
           let parent = n.parentElement;
@@ -2100,13 +2431,54 @@
           root.LSE_CONFIG?.widgets?.includes("slides") &&
           slidesSettings(node, w);
         const carousel = carouselSettings(node);
-        const video = tag === "video" && hostedVideo(node, restoreRefs);
+        const video =
+          tag === "iframe" && node.hasAttribute("data-lse-video")
+            ? JSON.parse(node.getAttribute("data-lse-video"))
+            : tag === "video" && hostedVideo(node, restoreRefs);
         const figureImage =
           tag === "figure" &&
           node.children.length === 2 &&
           node.querySelector(":scope > img") &&
           node.querySelector(":scope > figcaption");
-        if (formWidgets.has(node)) {
+        if (
+          node.hasAttribute("data-lse-wp-menu") &&
+          root.LSE_CONFIG?.widgets?.includes("nav-menu") &&
+          project.site.navigation.length
+        ) {
+          widget = "nav-menu";
+          const sample = node.querySelector("a");
+          const style = w.getComputedStyle(sample || node);
+          Object.assign(settings, {
+            _title: "Navigation",
+            lse_imported_menu: "yes",
+            layout:
+              node.getAttribute("data-lse-wp-menu") === "vertical"
+                ? "vertical"
+                : "horizontal",
+            dropdown: "none",
+            pointer: "none",
+            color_menu_item: style.color,
+            menu_typography_typography: "custom",
+            menu_typography_font_family: fontStack(style.fontFamily).family,
+            menu_typography_font_size: px(style.fontSize),
+            menu_typography_font_weight: style.fontWeight,
+          });
+        } else if (tag === "svg" && node.hasAttribute("data-lse-icon-asset")) {
+          widget = "icon";
+          settings.selected_icon = {
+            library: "svg",
+            value: {
+              url: restoreRefs(node.getAttribute("data-lse-icon-asset")),
+              id: 0,
+            },
+          };
+          settings._title =
+            node.getAttribute("aria-label") ||
+            node.querySelector("title")?.textContent ||
+            node.closest("a[aria-label]")?.getAttribute("aria-label") ||
+            "Icon";
+          delete settings.lse_attributes["data-lse-icon-asset"];
+        } else if (formWidgets.has(node)) {
           widget = "form";
           Object.assign(settings, formWidgets.get(node));
         } else if (slides) {
@@ -2140,12 +2512,12 @@
             "ol",
             "blockquote",
             "pre",
-            "figcaption",
             "label",
             "small",
             "strong",
             "em",
           ].includes(tag) ||
+          (tag === "figcaption" && !node.querySelector(".image-card")) ||
           (tag === "span" && !node.querySelector("div,p,h1,h2,img"))
         ) {
           widget = "text-editor";
@@ -2320,6 +2692,7 @@
       for (const width of widths) {
         frame.style.width = width + "px";
         await new Promise((r) => setTimeout(r, 25));
+        fitHeadings();
         const parents = new WeakMap(),
           inlineBoxes = new WeakMap();
         const atomicInline = (node) => {
@@ -2353,6 +2726,16 @@
                 ? content
                 : s
             ).getPropertyValue(p);
+          if (!entry.widget && !entry.element.elements.length) {
+            const rect = entry.node.getBoundingClientRect();
+            props.hasBox = rect.width > 0 && rect.height > 0;
+            props.generatedContent = ["::before", "::after"].some(
+              (pseudo) =>
+                !["none", "normal"].includes(
+                  w.getComputedStyle(entry.node, pseudo).content,
+                ),
+            );
+          }
           if (entry.widget === "slides")
             props.slides = slideAppearance(entry.node, w);
           const parent = entry.node.parentElement;
@@ -2379,6 +2762,7 @@
           }
           props.actualWidth = String(entry.node.getBoundingClientRect().width);
           props.typography = typography.read(entry.styleNode, content);
+          if (fitted.has(entry.styleNode)) props.typography.fontSize = "";
           props.textMaxWidth =
             entry.styleNode.computedStyleMap?.().get("max-width")?.toString() ||
             content.maxWidth;
@@ -2598,7 +2982,22 @@
         const entry = byId.get(node.id);
         const { tag, node: dom } = entry;
         const children = node.elements;
-        if (!children.length) return [node];
+        if (entry.widget) return [node];
+        const decorative = !children.length;
+        if (
+          decorative &&
+          !dom.id &&
+          !dom.matches(
+            "a,button,[role],[tabindex],[aria-controls],[aria-label]",
+          ) &&
+          !widths.some((width) => {
+            const s = snapshots.get(node.id)[width];
+            return s.hasBox || s.generatedContent;
+          }) &&
+          !dom.closest("nav,button,[data-lse-interaction]") &&
+          !dom.matches("[aria-live],[data-controller],[data-animation]")
+        )
+          return [];
         const section = dom.matches(sectionSelector);
         const kind = regionKind(entry);
         const isLayout =
@@ -2625,19 +3024,36 @@
           ![...dom.attributes].some((attribute) =>
             attribute.name.startsWith("aria-"),
           );
+        const sectionFrame =
+          !parent &&
+          dom.matches("section,article") &&
+          children.length &&
+          children.every((child) =>
+            byId.get(child.id).node.matches("section,article"),
+          );
+        const sourceScaffold =
+          dom.matches(
+            ".sqs-block,.sqs-block-content,.content-wrapper,.content,.sqs-layout,.sqs-row,.image-block-outer-wrapper,.fluid-image-animation-wrapper,.fluid-image-container,.fluid-image-component-root,.js-content-mode-element-wrapper,.js-content-mode-element,.header-menu-nav-folder-content,.header-menu-nav-wrapper,.header-menu-nav-item-content,.header-announcement-bar-wrapper",
+          ) && !!dom.closest("#siteWrapper,.sqs-layout,.fluid-engine");
         const shell =
           isLayout &&
           !kind &&
-          !keepBlock &&
-          !section &&
-          (tag === "body" ||
-            (!parent && dom.matches("main,[role=main]")) ||
-            (tag === "div" && (pageFrame || stack || removableWrapper)));
+          !decorative &&
+          (sectionFrame ||
+            ((!keepBlock || pageFrame) &&
+              !section &&
+              (tag === "body" ||
+                (!parent && dom.matches("main,[role=main]")) ||
+                (tag === "div" &&
+                  (pageFrame ||
+                    stack ||
+                    removableWrapper ||
+                    sourceScaffold)))));
         if (shell) {
           const record = {
             id: node.id,
             parent,
-            tag: tag === "main" ? "main" : "div",
+            tag: ["main", "section", "article"].includes(tag) ? tag : "div",
             classes: node.settings.css_classes || "",
             anchor: node.settings._element_id || "",
             attributes: node.settings.lse_attributes || {},
@@ -2646,7 +3062,7 @@
           structure.push(record);
           layoutNodes.add(node.id);
           const promoted = children.flatMap((child) =>
-            pageBlocks(child, parent, stack),
+            pageBlocks(child, parent, stack && !sectionFrame && !pageFrame),
           );
           record.members = promoted.map((child) => child.id);
           return promoted;
@@ -2657,9 +3073,26 @@
           kind ||
           dom.getAttribute("aria-label") ||
           heading?.textContent.trim() ||
-          dom.id ||
-          [...dom.classList].find((c) => !/^(?:e-|elementor)/.test(c)) ||
-          (section ? "Section" : "");
+          (dom.matches("nav")
+            ? "Navigation"
+            : dom.querySelector("img[alt]")?.getAttribute("alt")) ||
+          (dom.matches("button,a") ? dom.textContent.trim() : "") ||
+          (dom.matches(".header-menu,.header-menu-nav-folder")
+            ? "Mobile navigation"
+            : dom.matches(".section-background,.header-menu-bg")
+              ? "Background"
+              : dom.matches(".section-border,.header-border")
+                ? "Border"
+                : dom.matches(".header-dropshadow")
+                  ? "Header shadow"
+                  : "") ||
+          (section
+            ? "Section"
+            : decorative
+              ? "Decoration"
+              : node.elements.length > 1
+                ? "Content group"
+                : "Layout");
         if (label && !node.settings._title)
           node.settings._title = (
             label[0].toUpperCase() + label.slice(1)
@@ -2764,6 +3197,19 @@
             }
           }
         }
+        if (
+          widget === "heading" &&
+          entry.node.closest(".sqs-html-content,.image-card")
+        )
+          css +=
+            "@media(max-width:767px){__LSE_SCOPE__ .elementor-element-" +
+            element.id +
+            " .elementor-heading-title{overflow-wrap:anywhere}}\n";
+        if (entry.node.hasAttribute("data-lse-mobile-panel"))
+          css +=
+            "__LSE_SCOPE__ .elementor-element-" +
+            element.id +
+            ":not([data-lse-menu-open]){display:none!important}\n";
         if (widget === "image")
           css +=
             ":where(__LSE_SCOPE__ .elementor-element-" +
@@ -3118,6 +3564,9 @@
                 const font = fontStack(s["font-family"]);
                 target[prefix + "_font_family"] = font.family;
                 if (font.fallbacks) target.lse_font_fallbacks = font.fallbacks;
+                else if (fitted.has(entry.styleNode))
+                  // Match the measuring browser's default when a named webfont is unavailable.
+                  target.lse_font_fallbacks = "serif";
                 target[prefix + "_font_weight"] = s["font-weight"];
               } else {
                 if (s["font-family"] !== all[1440]["font-family"])
@@ -3788,8 +4237,20 @@
           });
         }
       }
+      const excluded = new Set(regions.map((region) => region.id));
+      const hasBody = (node) => {
+        if (excluded.has(node.id)) return false;
+        if (node.widgetType) return true;
+        if (node.elements.some(hasBody)) return true;
+        const settings = node.settings;
+        return Boolean(
+          settings.background_image?.url ||
+            settings.background_slideshow_gallery?.length,
+        );
+      };
       return {
         elements: restore(blocks),
+        emptyBody: !blocks.some(hasBody),
         css: restoreRefs(css),
         warnings: [...new Set(warnings)],
         fallbacks,
@@ -3883,6 +4344,9 @@
     browserTimeSlice,
     resolveLinks,
     prepareSource,
+    readCapturePage,
+    headerMenu,
+    iconSources,
     cssReferences,
     replaceCSSReferences,
     importConditions,

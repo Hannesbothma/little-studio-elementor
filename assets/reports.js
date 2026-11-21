@@ -348,13 +348,23 @@
       const failedURLs = new Set(failures.map((item) => item.url));
       for (const warning of capture?.warnings || []) {
         const omitted = /^Could not package (https?:\/\/\S+): /i.exec(warning);
+        if (
+          warning.startsWith("Skipped page with no editable body · ") &&
+          failures.some(
+            (item) =>
+              item.role === "body" && warning.endsWith(" · " + item.url),
+          )
+        )
+          continue;
         if (!omitted || !failedURLs.has(omitted[1])) addFinding(warning);
       }
       for (const item of failures)
         addFinding(
-          (item.kind === "page"
-            ? "Skipped unavailable source page · "
-            : "Capture · ") +
+          (item.role === "body"
+            ? "Skipped page with no editable body · "
+            : item.kind === "page"
+              ? "Skipped unavailable source page · "
+              : "Capture · ") +
             item.url +
             " · " +
             (item.error || (item.status ? "HTTP " + item.status : "failed")),

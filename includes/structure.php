@@ -31,6 +31,35 @@ final class LSE_Structure
                 },
             );
         }
+        // Elementor caches the rendered tree, including the choice of inline site parts.
+        foreach (
+            ['added_post_meta', 'updated_post_meta', 'deleted_post_meta']
+            as $event
+        ) {
+            add_action(
+                $event,
+                static function ($meta_id, $post_id, $key) {
+                    if ($key === '_elementor_conditions') {
+                        self::clear_site_part_pages($post_id);
+                    }
+                },
+                10,
+                3,
+            );
+        }
+        add_action(
+            'transition_post_status',
+            static function ($next, $previous, $post) {
+                if (
+                    $next !== $previous &&
+                    $post->post_type === 'elementor_library'
+                ) {
+                    self::clear_site_part_pages($post->ID);
+                }
+            },
+            10,
+            3,
+        );
         // Block themes render template-part blocks instead of calling get_header()/get_footer().
         add_filter('pre_render_block', [self::class, 'theme_block'], 10, 2);
         add_action(
@@ -59,6 +88,30 @@ final class LSE_Structure
             10,
             2,
         );
+    }
+
+    private static function clear_site_part_pages($template_id)
+    {
+        if (!get_post_meta($template_id, '_lse_site_part', true)) {
+            return;
+        }
+        $job = get_post_meta($template_id, '_lse_job', true);
+        if (!$job) {
+            return;
+        }
+        foreach (
+            get_posts([
+                'post_type' => 'page',
+                'post_status' => 'any',
+                'numberposts' => -1,
+                'fields' => 'ids',
+                'meta_key' => '_lse_job',
+                'meta_value' => $job,
+            ])
+            as $page_id
+        ) {
+            delete_post_meta($page_id, '_elementor_element_cache');
+        }
     }
 
     public static function theme_block($output, $block)
@@ -116,7 +169,11 @@ final class LSE_Structure
                 !preg_match('/^[a-f0-9]{8}$/D', $id) ||
                 array_key_exists($id, $parents) ||
                 isset($clean[$id]) ||
-                !in_array($shell['tag'] ?? '', ['div', 'main'], true) ||
+                !in_array(
+                    $shell['tag'] ?? '',
+                    ['div', 'main', 'section', 'article'],
+                    true,
+                ) ||
                 !is_array($shell['members'] ?? null)
             ) {
                 throw new RuntimeException('Invalid source layout container.');

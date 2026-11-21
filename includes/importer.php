@@ -1706,6 +1706,8 @@ final class LSE_Importer
                             'html',
                             'video',
                             'google_maps',
+                            'nav-menu',
+                            'icon',
                             'form',
                             'media-carousel',
                             'reviews',
@@ -1725,7 +1727,7 @@ final class LSE_Importer
                 );
             }
             if (!$native && $widget === 'form') {
-                // Recreate the public fields. Delivery must be configured in the destination editor.
+                // Only enable local collection. Source email and third-party actions are never copied.
                 $fields = [];
                 foreach ((array) ($settings['form_fields'] ?? []) as $field) {
                     if (
@@ -1780,7 +1782,10 @@ final class LSE_Importer
                     $settings['button_text'] ?? 'Send',
                     400,
                 );
-                $settings['submit_actions'] = [];
+                $settings['submit_actions'] = LSE_Plugin::collect_submissions()
+                    ? ['save-to-database']
+                    : [];
+                $settings['submissions_metadata'] = [];
             }
             if (is_array($settings['lse_attributes'] ?? null)) {
                 $settings['lse_attributes'] = array_filter(
@@ -1792,7 +1797,11 @@ final class LSE_Importer
                     ARRAY_FILTER_USE_KEY,
                 );
             }
-            if ($native || $carousel) {
+            if (
+                $native ||
+                $carousel ||
+                in_array($widget, ['icon', 'nav-menu'], true)
+            ) {
                 $settings = LSE_Native::settings(
                     $settings,
                     $job,
@@ -1947,10 +1956,7 @@ final class LSE_Importer
             $count = 0;
             $skipped = [];
             $native = ($input['native_elementor'] ?? false) === true;
-            if (
-                $native &&
-                LSE_Native::uses_imported_menu($input['elements'] ?? [])
-            ) {
+            if (LSE_Native::uses_imported_menu($input['elements'] ?? [])) {
                 $menu_id = LSE_Navigation::ensure($job, static function (
                     $state,
                 ) {

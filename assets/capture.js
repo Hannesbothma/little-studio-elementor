@@ -86,7 +86,7 @@
       byHash = new Map(),
       notes = new Set(warnings);
     for (const r of records) {
-      resources.set(r.url, r);
+      if (r.kind !== "redirect") resources.set(r.url, r);
       resources.set(r.requested, r);
     }
     const startPage = resources.get(source)?.url || source;
@@ -225,9 +225,77 @@
       byHash.set(type + digest, packaged);
       return packaged + fragment;
     };
+    const spriteSheets = new Map();
+    async function packageIcons(doc, base) {
+      const externalSymbol = (ref) => {
+        const url = absolute(ref, base);
+        const record = resources.get(url);
+        if (
+          !ref.includes("#") ||
+          !record ||
+          mediaType(record, url) !== "image/svg+xml"
+        )
+          return null;
+        if (!spriteSheets.has(url)) {
+          const xml = text(record);
+          spriteSheets.set(
+            url,
+            /<!DOCTYPE|<!ENTITY/i.test(xml)
+              ? null
+              : new DOMParser().parseFromString(xml, "image/svg+xml"),
+          );
+        }
+        return spriteSheets
+          .get(url)
+          ?.getElementById(new URL(ref, base).hash.slice(1));
+      };
+      for (const { svg, data } of M.iconSources(doc, externalSymbol)) {
+        const encoded = encoder.encode(data);
+        const digest = await hash(encoded);
+        const url =
+          "https://little-studio-assets.invalid/icons/" + digest + ".svg";
+        if (!resources.has(url))
+          resources.set(url, {
+            type: "image/svg+xml",
+            data: await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result.split(",")[1]);
+              reader.onerror = () => reject(reader.error);
+              reader.readAsDataURL(new Blob([encoded]));
+            }),
+          });
+        svg.setAttribute(
+          "data-lse-icon-asset",
+          await asset(url, base, svg.getAttribute("aria-label") || "Icon"),
+        );
+      }
+    }
     const css = async (input, base, stack = []) => {
       // Yield before recursive imports; valid deep acyclic stylesheets have no arbitrary cutoff.
       await Promise.resolve();
+      input = input.replace(/@font-face\s*\{[^{}]*\}/gi, (face) => {
+        const sources = M.cssReferences(face);
+        if (
+          !sources.some((token) => {
+            const url = absolute(token.value, base),
+              record = resources.get(url);
+            return record && mediaType(record, url)?.startsWith("font/");
+          })
+        )
+          return face;
+        return face.replace(
+          /(\bsrc\s*:)\s*([^;}]+)/gi,
+          (decl, prop, values) => {
+            const entries = values
+              .split(/,(?=\s*(?:url|local)\()/i)
+              .filter((value) => {
+                const url = M.cssReferences(value)[0]?.value;
+                return !url || !/\.(?:eot|svg)(?:[?#]|$)/i.test(url);
+              });
+            return entries.length ? prop + entries.join(",") : "";
+          },
+        );
+      });
       return M.replaceCSSReferences(input, async (token) => {
         if (token.kind === "url")
           return "url(" + JSON.stringify(await asset(token.value, base)) + ")";
@@ -269,6 +337,7 @@
           doc.querySelector("base[href]")?.getAttribute("href") || record.url,
           record.url,
         ) || record.url;
+      await packageIcons(doc, base);
       if (index === 0) home = { doc, base };
       const key =
         "page-" + (await hash(encoder.encode(record.url))).slice(0, 20);
@@ -451,6 +520,15 @@
             }
             if (url) {
               const original = resources.get(url)?.url || url;
+              if (
+                el.tagName === "A" &&
+                !resources.has(url) &&
+                new URL(url).origin === new URL(base).origin
+              ) {
+                notes.add(
+                  "Link kept on source site (no captured destination): " + url,
+                );
+              }
               let fragment = "";
               try {
                 fragment = new URL(value, base).hash;
@@ -539,6 +617,22 @@
         seen.add(target.key);
       }
     }
+    const menu = M.headerMenu(
+      doc.querySelector("header nav.header-nav-list"),
+      base,
+    );
+    if (menu) {
+      const mapItems = (items) =>
+        items.map((item) => {
+          const target = output.find((p) => p.url === item.url);
+          return {
+            ...item,
+            ...(target && { key: target.key }),
+            ...(item.children && { children: mapItems(item.children) }),
+          };
+        });
+      navigation.splice(0, navigation.length, ...mapItems(menu));
+    }
     if (output.some((p) => p.js.trim()))
       notes.add(
         "Captured scripts will run on imported pages when Keep website interactions is enabled. Use a source you trust.",
@@ -580,12 +674,12 @@
       },
     });
   }
-  function websiteDownload(project) {
+  async function websiteDownload(project) {
     const { pages, assets, ...metadata } = project;
     const parts = [JSON.stringify(metadata).slice(0, -1), ',"pages":['];
     for (const [index, page] of pages.entries()) {
       if (index) parts.push(",");
-      parts.push(JSON.stringify(page));
+      parts.push(new Blob([JSON.stringify(await M.readCapturePage(page))]));
     }
     parts.push('],"assets":[');
     for (const [index, asset] of assets.entries()) {
@@ -597,18 +691,44 @@
   }
   async function convertWebsite(project, onPage, onFailure, isCancelled) {
     const resources = M.resourceSession(project);
+    const large =
+      project.pages.reduce((n, p) => n + p.css.length + p.js.length, 0) >
+      32 * 1024 * 1024;
     const pages = [];
     try {
       for (const [index, page] of project.pages.entries()) {
         while (!isCancelled()) {
           onPage(page, index + 1, project.pages.length);
           try {
-            const { elements, css, warnings, regions, structure, source } =
-              await M.convert(project, page, {
-                layout: "elementor_canvas",
-                preserveCSS: true,
-                resources,
+            const {
+              elements,
+              css,
+              warnings,
+              regions,
+              structure,
+              source,
+              emptyBody,
+            } = await M.convert(project, page, {
+              layout: "elementor_canvas",
+              preserveCSS: true,
+              resources,
+            });
+            if (emptyBody) {
+              project.capture.complete = false;
+              (project.capture.failed_resources ||= []).push({
+                url: page.url,
+                kind: "page",
+                role: "body",
+                error: "No editable body content was present in the source.",
               });
+              project.capture.warnings.push(
+                "Skipped page with no editable body · " +
+                  page.title +
+                  " · " +
+                  page.url,
+              );
+              break;
+            }
             const elementor = window.LSENative.validateTemplate({
               version: "0.4",
               type: "page",
@@ -617,12 +737,30 @@
               content: elements,
             });
             window.LSENative.requireWidgets(elementor);
-            pages.push({
+            const converted = {
               ...page,
               js: source.js.trim(),
               elementor,
               conversion: { version: 1, css, warnings, regions, structure },
-            });
+            };
+            if (large) {
+              // Keep the native controls available for review. Park the much larger
+              // source and rendered styles outside the JS heap until saving this page.
+              converted.capturePayload = new Blob(
+                [
+                  JSON.stringify({
+                    css: page.css,
+                    js: converted.js,
+                    convertedCSS: css,
+                  }),
+                ],
+                { type: "application/json" },
+              );
+              converted.captureScripts = Boolean(converted.js);
+              converted.css = converted.js = converted.conversion.css = "";
+              page.css = page.js = "";
+            }
+            pages.push(converted);
             break;
           } catch (error) {
             if (isCancelled()) return null;
@@ -642,7 +780,8 @@
       }
       if (!pages.length)
         throw Error(
-          "Every captured page was skipped. Enter a link to try again.",
+          "No captured page contained importable body content. " +
+            project.capture.warnings.at(-1),
         );
       const included = new Set(pages.map((page) => page.key));
       for (const page of pages) {
@@ -653,9 +792,12 @@
         home_key: included.has(project.site.home_key)
           ? project.site.home_key
           : "",
-        navigation: project.site.navigation.filter(({ key }) =>
-          included.has(key),
-        ),
+        navigation: project.site.navigation.flatMap(function keep(item) {
+          const children = (item.children || []).flatMap(keep);
+          if (included.has(item.key)) return [{ ...item, children }];
+          if (item.url) return [{ label: item.label, url: item.url, children }];
+          return children;
+        }),
       };
       return { ...project, pages, site };
     } finally {
@@ -1087,9 +1229,9 @@
     .querySelectorAll("[data-export-open]")
     .forEach((el) => el.addEventListener("click", open));
   if (new URLSearchParams(location.search).get("export") === "1") open();
-  $("#lse-source-download").addEventListener("click", () => {
+  $("#lse-source-download").addEventListener("click", async () => {
     if (!A.project) return;
-    const url = URL.createObjectURL(websiteDownload(A.project)),
+    const url = URL.createObjectURL(await websiteDownload(A.project)),
       link = document.createElement("a");
     link.href = url;
     link.download = "website.website.json";

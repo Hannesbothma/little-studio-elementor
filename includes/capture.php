@@ -541,9 +541,20 @@ final class LSE_Capture
                         $job['seq'] > 0 &&
                         self::origin($url) !== $job['origin']
                     ) {
-                        throw new RuntimeException(
-                            'A linked page redirected outside the captured website.',
-                        );
+                        // Keep the public navigation destination without crawling the external site.
+                        $record = [
+                            'url' => $url,
+                            'requested' => $item['url'],
+                            'kind' => 'redirect',
+                            'type' => '',
+                            'data' => '',
+                        ];
+                        $job['warnings'][$item['url']] =
+                            'External redirect kept as a link: ' .
+                            $item['url'] .
+                            ' → ' .
+                            $url;
+                        break;
                     }
                     $response = LSE_Fetch::get($url);
                     if (is_wp_error($response)) {
@@ -566,74 +577,94 @@ final class LSE_Capture
                         );
                     }
                 }
-                if (
-                    $code === 503 &&
-                    $item['kind'] === 'page' &&
-                    self::maintenance_heading(
-                        wp_strip_all_tags(wp_remote_retrieve_body($response)),
-                    )
-                ) {
-                    throw new RuntimeException(self::MAINTENANCE_MESSAGE);
-                }
-                if ($code < 200 || $code >= 300) {
-                    $transient_failure = in_array(
-                        $code,
-                        [408, 425, 429, 500, 502, 503, 504],
-                        true,
-                    );
-                    throw new RuntimeException('HTTP ' . $code);
-                }
-                $body = wp_remote_retrieve_body($response);
-                $size = strlen($body);
-                $header = wp_remote_retrieve_header($response, 'content-type');
-                $type = strtolower(trim(explode(';', $header)[0]));
-                if ($type === 'application/xhtml+xml') {
-                    $type = 'text/html';
-                }
-                if (!$type) {
-                    $type =
-                        $item['kind'] === 'page'
-                            ? 'text/html'
-                            : (wp_check_filetype(
-                                wp_parse_url($url, PHP_URL_PATH),
-                            )['type'] ?:
-                            'application/octet-stream');
-                }
-                if ($item['kind'] === 'page' && $type !== 'text/html') {
-                    throw new RuntimeException(
-                        'The linked address did not return an HTML page.',
-                    );
-                }
-                if ($item['kind'] === 'page' && $job['seq'] === 0) {
-                    $job['origin'] = self::origin($url);
-                }
-                preg_match(
-                    '/charset\s*=\s*["\']?([\w-]+)/i',
-                    $header,
-                    $charset,
-                );
-                $text =
-                    str_starts_with($type, 'text/') ||
-                    str_contains($type, 'javascript');
-                $utf8 =
-                    $text && function_exists('mb_convert_encoding')
-                        ? mb_convert_encoding(
-                            $body,
-                            'UTF-8',
-                            $charset[1] ?? 'UTF-8',
+                if (!$record) {
+                    if (
+                        $code === 503 &&
+                        $item['kind'] === 'page' &&
+                        self::maintenance_heading(
+                            wp_strip_all_tags(
+                                wp_remote_retrieve_body($response),
+                            ),
                         )
-                        : $body;
-                $job['seen'][$url] = true;
-                if ($text) {
-                    self::discover($job, $utf8, $type, $url, $item);
+                    ) {
+                        throw new RuntimeException(self::MAINTENANCE_MESSAGE);
+                    }
+                    if ($code < 200 || $code >= 300) {
+                        $transient_failure = in_array(
+                            $code,
+                            [408, 425, 429, 500, 502, 503, 504],
+                            true,
+                        );
+                        throw new RuntimeException('HTTP ' . $code);
+                    }
+                    $body = wp_remote_retrieve_body($response);
+                    $size = strlen($body);
+                    $header = wp_remote_retrieve_header(
+                        $response,
+                        'content-type',
+                    );
+                    $type = strtolower(trim(explode(';', $header)[0]));
+                    if ($type === 'application/xhtml+xml') {
+                        $type = 'text/html';
+                    }
+                    if (!$type) {
+                        $type =
+                            $item['kind'] === 'page'
+                                ? 'text/html'
+                                : (wp_check_filetype(
+                                    wp_parse_url($url, PHP_URL_PATH),
+                                )['type'] ?:
+                                'application/octet-stream');
+                    }
+                    if ($item['kind'] === 'page' && $type !== 'text/html') {
+                        throw new RuntimeException(
+                            'The linked address did not return an HTML page.',
+                        );
+                    }
+                    if ($item['kind'] === 'page' && $job['seq'] === 0) {
+                        $job['origin'] = self::origin($url);
+                    }
+                    preg_match(
+                        '/charset\s*=\s*["\']?([\w-]+)/i',
+                        $header,
+                        $charset,
+                    );
+                    if (
+                        $type === 'text/plain' ||
+                        $type === 'application/octet-stream'
+                    ) {
+                        $signature = substr($body, 0, 4);
+                        $type =
+                            [
+                                'wOFF' => 'font/woff',
+                                'wOF2' => 'font/woff2',
+                                'OTTO' => 'font/otf',
+                                "\x00\x01\x00\x00" => 'font/ttf',
+                            ][$signature] ?? $type;
+                    }
+                    $text =
+                        str_starts_with($type, 'text/') ||
+                        str_contains($type, 'javascript');
+                    $utf8 =
+                        $text && function_exists('mb_convert_encoding')
+                            ? mb_convert_encoding(
+                                $body,
+                                'UTF-8',
+                                $charset[1] ?? 'UTF-8',
+                            )
+                            : $body;
+                    $job['seen'][$url] = true;
+                    if ($text) {
+                        self::discover($job, $utf8, $type, $url, $item);
+                    }
+                    $record = [
+                        'url' => $url,
+                        'requested' => $item['url'],
+                        'kind' => $item['kind'],
+                        'type' => $type,
+                        'data' => base64_encode($text ? $utf8 : $body),
+                    ];
                 }
-                $record = [
-                    'url' => $url,
-                    'requested' => $item['url'],
-                    'kind' => $item['kind'],
-                    'type' => $type,
-                    'data' => base64_encode($text ? $utf8 : $body),
-                ];
             } catch (Throwable $e) {
                 $attempt = (int) ($item['attempt'] ?? 0);
                 if ($transient_failure && $attempt < 2) {

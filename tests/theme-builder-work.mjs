@@ -3,7 +3,8 @@ import { chromium } from "playwright";
 
 const browser = await chromium.launch();
 try {
-  const tab = await browser.newPage();
+  const context = await browser.newContext();
+  const tab = await context.newPage();
   await tab.goto(
     process.env.LSE_TEST_URL +
       "/wp-admin/admin.php?page=little-studio-elementor",
@@ -50,6 +51,8 @@ try {
   const conditions = (id) =>
     request("test", { operation: "theme-builder-conditions", id });
   const original = ["include/general", "exclude/singular/post/123"];
+  const preview = await tab.context().newPage();
+  await preview.goto(job.pages[0].preview_url);
   for (const [index, kind] of kinds.entries()) {
     const id = job.templates["site-" + kind].id;
     assert.equal((await conditions(id)).status, "draft");
@@ -64,6 +67,13 @@ try {
     await tab
       .getByRole("button", { name: "Restore previous " + kind })
       .waitFor();
+    await preview.reload();
+    assert.equal(
+      await preview
+        .getByRole("heading", { name: "Imported " + kind + " test" })
+        .count(),
+      1,
+    );
     assert.deepEqual(await conditions(id), {
       status: "publish",
       conditions: ["include/general"],

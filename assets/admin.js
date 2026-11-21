@@ -739,7 +739,9 @@
     for (const entry of [...pages, ...assets]) {
       const turn = pause();
       if (turn) await turn;
-      sections.push(await digest(JSON.stringify(entry)));
+      sections.push(
+        await digest(JSON.stringify(await M.readCapturePage(entry))),
+      );
     }
     return digest(sections.join(""));
   }
@@ -886,14 +888,17 @@
         );
       }
       $("#lse-pages").innerHTML = rows.join("");
-      if (project.pages.some((p) => p.js.trim()) && !config.canScripts)
+      if (
+        project.pages.some((p) => p.captureScripts || p.js.trim()) &&
+        !config.canScripts
+      )
         findings.add(
           "An administrator with script permission must import the interactive pages.",
         );
       $("#lse-setup").hidden = !findings.size;
       $("#lse-findings").innerHTML = window.LSEReports.render([...findings]);
       const hasScripts = project.pages.some(
-        (p) => p.js.trim() || /<script/i.test(p.html),
+        (p) => p.captureScripts || p.js.trim() || /<script/i.test(p.html),
       );
       const converted = project.pages.some((p) => p.conversion);
       $("#lse-scripts").checked = hasScripts && config.canScripts && !converted;
@@ -1357,7 +1362,14 @@
           preserveCSS,
           resources,
         }).then(
-          (value) => ({ value }),
+          (value) =>
+            value.emptyBody
+              ? {
+                  error: new Error(
+                    "The source contains no editable page body. Skip this page to continue the import.",
+                  ),
+                }
+              : { value },
           (error) => ({ error }),
         );
       let prepared = pendingPages.length ? prepare(pendingPages[0]) : null;

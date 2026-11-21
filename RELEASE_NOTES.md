@@ -1,3 +1,7 @@
+## LS Elementor 0.12.15
+
+Website captures promote nested source sections into the Elementor Structure panel. Separate header and footer templates share a WordPress menu for recognized Squarespace navigation. Supported SVG icons, hosted video embeds and newsletter forms become editable widgets. Squarespace hero headings retain their responsive fitted size, and social icons can use captured external SVG sprite sheets. Compatible Elementor Pro forms collect submissions locally. The import report identifies empty application pages and source links without local drafts. Large conversions store page styles outside the browser JavaScript heap until needed.
+
 ## LS Elementor 0.12.14
 
 Large completed imports release page metadata as their results are checked. The background worker can finish without loading every page's metadata into one PHP request.

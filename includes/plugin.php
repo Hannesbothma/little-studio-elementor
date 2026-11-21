@@ -710,6 +710,7 @@ final class LSE_Plugin
                         class_exists('\\Elementor\\Utils') &&
                         \Elementor\Utils::validate_html_tag('button') ===
                             'button',
+                    'collectSubmissions' => self::collect_submissions(),
                     'widgets' => class_exists('\\Elementor\\Plugin')
                         ? array_keys(LSE_Native::widgets())
                         : [],
@@ -1012,7 +1013,9 @@ final class LSE_Plugin
         wp_enqueue_script(
             'lse-interactions',
             plugins_url('assets/interactions.js', LSE_FILE),
-            [],
+            $js && get_post_meta($id, '_lse_scripts_enabled', true)
+                ? ['jquery']
+                : [],
             LSE_VERSION,
             true,
         );
@@ -1021,14 +1024,24 @@ final class LSE_Plugin
                 'lse-interactions',
                 'window.LSEInteractions.register(' .
                     wp_json_encode((string) $id) .
-                    ', function(){' .
+                    ', (function($){return function(){' .
                     "\n" .
                     $js .
                     "\n" .
-                    '});',
+                    '};})(window.jQuery));',
             );
         }
     }
+    public static function collect_submissions()
+    {
+        return class_exists(\ElementorPro\Modules\Forms\Module::class) &&
+            isset(
+                \ElementorPro\Modules\Forms\Module::instance()->actions_registrar->get()[
+                    'save-to-database'
+                ],
+            );
+    }
+
     public static function seo()
     {
         if (
