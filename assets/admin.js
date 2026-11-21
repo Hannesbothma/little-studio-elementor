@@ -735,9 +735,12 @@
     const sections = [
       await digest(JSON.stringify([metadata, pages.length, assets.length])),
     ];
-    for (const page of pages) sections.push(await digest(JSON.stringify(page)));
-    for (const asset of assets)
-      sections.push(await digest(JSON.stringify(asset)));
+    const pause = M.browserTimeSlice();
+    for (const entry of [...pages, ...assets]) {
+      const turn = pause();
+      if (turn) await turn;
+      sections.push(await digest(JSON.stringify(entry)));
+    }
     return digest(sections.join(""));
   }
   async function choose(file, prepared = null) {

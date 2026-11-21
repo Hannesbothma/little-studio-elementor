@@ -1,3 +1,7 @@
+## LS Elementor 0.12.13
+
+Give the browser time to respond while calculating the identity of a large captured website before showing page review.
+
 ## LS Elementor 0.12.12
 
 Large website captures package and validate media in smaller steps, reuse one URL lookup, and release the preview media after each page. Query URLs that return the exact same HTML as their base page share one draft. The report shows packaging, media rewriting and validation as separate stages.
