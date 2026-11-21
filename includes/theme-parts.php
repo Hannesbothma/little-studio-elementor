@@ -94,6 +94,76 @@ trait LSE_Theme_Parts
         }
     }
 
+    private static function scope_site_parts(&$job)
+    {
+        if (
+            !str_starts_with(
+                $job['site_parts_draft_reason'] ?? '',
+                'Theme Builder already has an Entire Site ',
+            ) ||
+            !class_exists(\ElementorPro\Modules\ThemeBuilder\Module::class) ||
+            !current_user_can('edit_theme_options') ||
+            !current_user_can('publish_posts')
+        ) {
+            return;
+        }
+        $rules = [];
+        foreach ($job['pages'] as $page) {
+            if (
+                !empty($page['done']) &&
+                get_post_meta($page['id'], '_lse_job', true) === $job['id']
+            ) {
+                $rules[] = 'include/singular/page/' . $page['id'];
+            }
+        }
+        if (!$rules) {
+            return;
+        }
+        $lease = LSE_Locks::acquire('_lse_theme_builder_import');
+        try {
+            $manager = self::theme_part_manager();
+            foreach (['header', 'footer'] as $kind) {
+                $id = (int) ($job['templates']['site-' . $kind]['id'] ?? 0);
+                if (
+                    !$id ||
+                    get_post_meta($id, '_lse_job', true) !== $job['id'] ||
+                    get_post_meta($id, '_elementor_template_type', true) !==
+                        $kind ||
+                    !current_user_can('edit_post', $id)
+                ) {
+                    continue;
+                }
+                $before = self::theme_part_state($id);
+                if (
+                    !in_array($before['status'], ['draft', 'publish'], true) ||
+                    ($before['conditions'] &&
+                        $before['conditions'] !==
+                            ($job['site_part_scopes'][$kind] ?? $rules))
+                ) {
+                    continue;
+                }
+                $after = ['conditions' => $rules, 'status' => 'publish'];
+                if ($before !== $after) {
+                    self::apply_theme_part_changes(
+                        [compact('id', 'before', 'after')],
+                        $manager,
+                        false,
+                    );
+                }
+                $job['site_part_scopes'][$kind] = $rules;
+            }
+        } finally {
+            LSE_Locks::release($lease);
+        }
+    }
+
+    private static function can_expand_site_part($job, $kind, $id)
+    {
+        $conditions = self::theme_part_state($id)['conditions'];
+        return !$conditions ||
+            $conditions === ($job['site_part_scopes'][$kind] ?? []);
+    }
+
     public static function theme_part($input)
     {
         if (($input['consent'] ?? null) !== true) {
@@ -132,7 +202,7 @@ trait LSE_Theme_Parts
                 $before = self::theme_part_state($id);
                 if (
                     !in_array($before['status'], ['draft', 'publish'], true) ||
-                    $before['conditions']
+                    !self::can_expand_site_part($job, $kind, $id)
                 ) {
                     throw new RuntimeException(
                         'This template already has display conditions. Review them in Theme Builder.',

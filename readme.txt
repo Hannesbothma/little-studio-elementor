@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1.4
 Requires PHP: 8.0
-Stable tag: 0.12.17
+Stable tag: 0.12.18
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -182,6 +182,12 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.12.18 =
+* Start an all-pages import directly from the URL. Scan website remains available for page selection.
+* Assign imported headers and footers to imported pages through Theme Builder when a sitewide template already exists.
+* Offer permanent import cleanup while protecting shared resources.
+* Omit more empty decoration containers that have no visible styling.
 
 = 0.12.17 =
 * Pair a local Chromium renderer to convert an entire URL import after closing the admin tab. Convert supported gallery wrappers, flat section dividers, WooCommerce carts and destination newsletter forms. Identify additional HTTP 403 causes in the report.

@@ -11,17 +11,16 @@ Imports do not replace existing page content or publish the new drafts.
 ## Import from a website
 
 Open **Studio to Elementor → Import from website**, paste a public URL and click
-**Scan website**. Select the pages you want after the scan, then click **Import**
-to create drafts. To work elsewhere while a scan or import runs, click **Run in
-background** and open **Keep working in WordPress**. Keep the task tab open and
-use **View progress** when you return.
+**Import website** to save all captured pages as drafts. Close the tab once
+WordPress reports that the import is queued. Choose **Scan website** to pick
+individual pages, change import options, or download a portable JSON.
 
-To close the tab during conversion, pair the optional Chromium worker on your
-computer. In this repository run `npm ci`, then `npx playwright install chromium`.
+A paired Chromium worker can also run the conversion while the WordPress tab
+is closed. In this repository, run `npm ci` and `npx playwright install chromium`.
 Run `node scripts/local-renderer.mjs https://your-wordpress-site.example --login`
-and sign in with **Remember Me** selected. Start the same command without `--login` and leave it running.
-Choose **Import all pages on my computer** in the URL importer. You can close
-the WordPress tab as soon as the import is queued.
+and sign in with **Remember Me** selected. Start the same command without
+`--login` and leave it running. Choose **Import all pages on my computer**
+in the URL importer. You can close the tab as soon as the request is queued.
 
 Use **Download JSON** on the review screen if you want a portable copy. The
 bundle includes each page's Elementor 0.4 template, supporting styles, shared
@@ -51,7 +50,7 @@ Use **Update from file** to update selected existing pages. Their WordPress IDs,
 
 A single HTML file can be imported as a new page or targeted at a selected existing page. Include inline CSS/JavaScript and embedded assets; external dependencies are not fetched during analysis. This does not accept arbitrary file types.
 
-**Remove import** moves every page in the selected import to WordPress Trash, including edited and published pages, after one confirmation. It removes the import from the list, removes its own menu, and moves its own unused shared sections to Trash. Media files and shared sections referenced elsewhere are kept. A changed page stops removal before any pages are touched. Restore pages later through WordPress Trash.
+**Remove import** moves every page in the selected import to WordPress Trash, including edited and published pages, after one confirmation. It removes the import from the list, removes its own menu, and moves its own unused shared sections to Trash. Media files and shared sections referenced elsewhere are kept. A changed page stops removal before any pages are touched. Restore pages later through WordPress Trash, or choose the permanent delete option when removing an import.
 
 A recoverable copy is kept before refreshing each page. **Restore before last update** in the page inspector is available until the page is edited again. It restores the previous page data and supporting metadata while keeping the current publication status. Existing WordPress revisions are also retained. The bulk remove-unedited-drafts action cannot delete pages as an undo of a refresh.
 
@@ -196,10 +195,10 @@ node scripts/package.mjs . dist
 
 The package builder emits the WordPress ZIP and `update.json` together. It includes
 only plugin files, never test fixtures, website projects or credentials.
-A plugin version change on main or a version tag triggers the release workflow.
-It builds the ZIP and update manifest, attaches both to a draft, and publishes the
-release for the WordPress updater. The tag, plugin header and version constant
-must agree. The compatibility checks run in their own workflow.
+Publish a GitHub release for the corresponding version tag and attach the
+locally built ZIP and `update.json`. The tag, plugin header and version
+constant must agree. The release workflow is available as a manual fallback.
+The compatibility checks run in their own workflow.
 
 ## Licence
 

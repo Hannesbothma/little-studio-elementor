@@ -55,7 +55,11 @@ try {
   await preview.goto(job.pages[0].preview_url);
   for (const [index, kind] of kinds.entries()) {
     const id = job.templates["site-" + kind].id;
-    assert.equal((await conditions(id)).status, "draft");
+    assert.deepEqual(await conditions(id), {
+      status: "publish",
+      type: kind,
+      conditions: ["include/singular/page/" + job.pages[0].id],
+    });
     await assert.rejects(
       request("theme_part", { job: job.id, kind, operation: "assign" }),
       /Confirm/,
@@ -87,7 +91,11 @@ try {
     await tab
       .getByRole("button", { name: "Use " + kind + " sitewide" })
       .waitFor();
-    assert.equal((await conditions(id)).status, "draft");
+    assert.deepEqual(await conditions(id), {
+      status: "publish",
+      type: kind,
+      conditions: ["include/singular/page/" + job.pages[0].id],
+    });
     assert.deepEqual((await conditions(originals[index])).conditions, original);
   }
   await tab.goto(job.pages[0].preview_url);

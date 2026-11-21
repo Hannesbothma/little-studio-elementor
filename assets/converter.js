@@ -1067,7 +1067,7 @@
   const sourceClass = (name) =>
     name === "elementor-invisible"
       ? ""
-      : /^(?:elementor(?:-|$)|e-con(?:-|$)|e-(?:parent|child|flex|grid|gallery)(?:-|$))/.test(
+      : /^(?:elementor(?:-|$)|e-con(?:-|$)|e-(?:parent|child|flex|grid|gallery|atomic|flexbox|default|[a-f0-9]{7,8})(?:-|$))/.test(
             name,
           )
         ? "lse-source-" + name
@@ -1083,8 +1083,8 @@
       /(--[\w-]+)(?=\s*:)|\bvar\(\s*(--[\w-]+)/g,
       (match, declaration, reference) =>
         declaration
-          ? "--lse-source-" + declaration.slice(2)
-          : "var(--lse-source-" + reference.slice(2),
+          ? "--lse-captured-" + declaration.slice(2)
+          : "var(--lse-captured-" + reference.slice(2),
     );
   }
   function backgroundSettings(node) {
@@ -2895,13 +2895,16 @@
             const rect = entry.node.getBoundingClientRect();
             props.hasBox = rect.width > 0 && rect.height > 0;
             if (
-              entry.node.matches(".section-background,.section-border") &&
-              s.position === "absolute" &&
+              entry.node.matches(
+                ".section-background,.section-border,.fluidImageOverlay,.elementor-background-overlay",
+              ) &&
+              ["absolute", "fixed"].includes(s.position) &&
               s.backgroundImage === "none" &&
               s.backgroundColor === "rgba(0, 0, 0, 0)" &&
               s.boxShadow === "none" &&
               s.outlineStyle === "none" &&
               s.filter === "none" &&
+              (!s.maskImage || s.maskImage === "none") &&
               (!s.backdropFilter || s.backdropFilter === "none") &&
               ["Top", "Right", "Bottom", "Left"].every(
                 (side) => parseFloat(s["border" + side + "Width"]) === 0,
@@ -4286,7 +4289,7 @@
               stateSelectors = [];
             for (let selector of selectors(rule.selectorText)) {
               selector = selector.replace(
-                /\.((?:elementor(?:-[\w-]+)?|e-con(?:-[\w-]+)?|e-(?:parent|child|flex|grid|gallery)(?:-[\w-]+)?))\b/g,
+                /\.([\w-]+)/g,
                 (_, name) => "." + (sourceClass(name) || "lse-source-entrance"),
               );
               selector = selector.replace(

@@ -115,7 +115,7 @@ try {
   const template = Object.values(ready.templates)[0];
   assert.match(
     (await rpc("test", { id: template.id })).css,
-    /--lse-source-ink/,
+    /--lse-captured-ink/,
   );
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });

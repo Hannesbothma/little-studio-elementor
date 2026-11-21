@@ -575,6 +575,8 @@
         latest.pages.length +
         (latest.pages.length === 1 ? " page" : " pages") +
         (published ? " · " + published + " published" : "");
+      const permanent = $("#lse-permanent-remove");
+      permanent.checked = false;
       removeDialog.returnValue = "cancel";
       const confirmed = new Promise((resolve) =>
         removeDialog.addEventListener(
@@ -591,6 +593,7 @@
           latest.pages.map((page) => [page.key, page.current_stamp]),
         ),
         consent: true,
+        permanent: permanent.checked,
       });
       clearTarget();
       void window.LSERecovery.remove(latest.id);

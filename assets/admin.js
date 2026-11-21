@@ -333,22 +333,24 @@
           res.headers.get("x-little-studio-output-cleaned") === "1",
       };
       return responseData(res, await res.text(), details);
-    } catch (e) {
-      if (!e.lseDetails) {
-        e.lseDetails = {
-          ...details,
-          durationMs: Math.round(performance.now() - requestStarted),
-        };
-        if (e.name === "AbortError")
-          e.message =
-            (actionNames[action] || "WordPress request") +
-            ": confirmation timed out. Check saved import progress before retrying.";
-        else if (e instanceof TypeError)
-          e.message =
-            (actionNames[action] || "WordPress request") +
-            ": the connection to WordPress failed. Reload the page and check your connection and WordPress address.";
-      }
-      throw e;
+    } catch (cause) {
+      if (cause.lseDetails) throw cause;
+      const label = actionNames[action] || "WordPress request";
+      let message = cause.message;
+      if (cause.name === "AbortError")
+        message =
+          label +
+          ": confirmation timed out. Check saved import progress before retrying.";
+      else if (cause instanceof TypeError)
+        message =
+          label +
+          ": the connection to WordPress failed. Reload the page and check your connection and WordPress address.";
+      const error = new Error(message, { cause });
+      error.lseDetails = {
+        ...details,
+        durationMs: Math.round(performance.now() - requestStarted),
+      };
+      throw error;
     } finally {
       clearTimeout(timer);
     }
@@ -766,7 +768,7 @@
     }
     return digest(sections.join(""));
   }
-  async function choose(file, prepared = null) {
+  async function choose(file, prepared = null, { showReview = true } = {}) {
     if (
       busy ||
       window.LSEManage?.busy ||
@@ -934,7 +936,7 @@
       step(1);
       refreshSelect();
       status("Website checked. Review the pages before continuing.");
-      window.dispatchEvent(new Event("lse:file-selected"));
+      if (showReview) window.dispatchEvent(new Event("lse:file-selected"));
     } catch (e) {
       project = null;
       $("#lse-file").value = "";
@@ -1736,8 +1738,8 @@
     copyReport,
     importReport: () => journal.report(job, project, originalFile),
     choose,
-    chooseProject(project, name) {
-      return choose({ name }, project);
+    chooseProject(project, name, options) {
+      return choose({ name }, project, options);
     },
     run,
     setJob(data) {

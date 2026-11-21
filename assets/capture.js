@@ -923,11 +923,13 @@
     form = $("#lse-capture-form"),
     status = $("#lse-capture-status"),
     start = $("#lse-capture-start"),
+    importWebsite = $("#lse-capture-import"),
     startBackground = $("#lse-capture-background"),
     retry = $("#lse-capture-retry"),
     skipPage = $("#lse-capture-skip"),
     copy = $("#lse-capture-copy"),
     resumeScan = $("#lse-capture-resume");
+  let importAfterScan = false;
   async function decidePageFailure(detail) {
     status.textContent =
       "Could not convert " + detail + ". Retry or skip this page.";
@@ -945,7 +947,7 @@
     }
   }
   const buttons = () => {
-    start.disabled = startBackground.disabled = busy;
+    start.disabled = startBackground.disabled = importWebsite.disabled = busy;
     form.querySelector("[data-lse-background]").hidden = !busy;
     window.dispatchEvent(new Event("lse:busy-changed"));
     form.querySelectorAll("input,select").forEach((el) => (el.disabled = busy));
@@ -963,12 +965,13 @@
       } catch {}
     }
   };
-  async function run(resume = false, startOnServer = false) {
+  async function run(resume = false, startOnServer = false, importNow = false) {
     if (busy || A.busy || window.LSEManage?.busy) return;
     if (!window.LSE_CONFIG?.elementor) {
       status.textContent = "Activate Elementor before scanning a website.";
       return;
     }
+    if (!resume) importAfterScan = importNow;
     busy = true;
     cancelled = false;
     copy.hidden = true;
@@ -987,6 +990,7 @@
         capturedBytes = saved.bytes ?? 0;
         background = saved.background ?? saved.seq === undefined;
         durable = true;
+        importAfterScan = saved.importAfterScan === true;
         if (saved.done) {
           const stored = await scanStorage("readonly", (store) =>
             store.get([session, saved.last]),
@@ -1015,6 +1019,7 @@
         scanState({
           capture: session,
           background,
+          importAfterScan,
           url: $("#lse-capture-url").value,
           seq: 0,
           count: 0,
@@ -1071,6 +1076,7 @@
           sequence = step.seq;
           if (durable)
             scanState({
+              importAfterScan,
               last: from,
               capture: session,
               background,
@@ -1134,11 +1140,18 @@
           dialog.close();
           $("#lse-reset").click();
           window.LSEManage?.scanCompleted();
-          scanSummary("Checking the captured pages for review");
-          await A.chooseProject(converted, filename);
+          scanSummary("Checking captured pages");
+          await A.chooseProject(converted, filename, {
+            showReview: !importAfterScan,
+          });
           if (A.project === converted) {
-            scanSummary("Scan complete. Pages are ready for review.");
             await cleanup();
+            if (importAfterScan) {
+              $("#lse-scripts").checked = false;
+              await A.run({ background: true });
+            } else {
+              scanSummary("Choose the pages to import.");
+            }
           }
           return;
         }
@@ -1211,6 +1224,7 @@
       !result.online ||
       (["working", "waiting", "queued"].includes(renderTask?.state) &&
         Date.now() / 1000 - renderTask.updated < 120);
+    importWebsite.hidden = result.online;
     rendererStatus.hidden = !renderTask?.id || renderTask.state === "submitted";
     rendererStatus.querySelector("span").textContent =
       renderTask?.message || "";
@@ -1298,6 +1312,9 @@
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     run();
+  });
+  importWebsite.addEventListener("click", () => {
+    if (form.reportValidity()) run(false, true, true);
   });
   startBackground.addEventListener("click", () => {
     if (form.reportValidity()) run(false, true);

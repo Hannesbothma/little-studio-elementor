@@ -2642,7 +2642,8 @@ final class LSE_Importer
             get_post_meta($id, '_lse_scripts_enabled', true),
         ]);
         $provider = LSE_SEO::snapshot($id);
-        $parts = LSE_Structure::site_parts($id);
+        // Scope changes made at finish do not change the imported page itself.
+        $parts = LSE_Structure::site_parts($id, false);
         return hash(
             'sha256',
             $native .
@@ -2990,6 +2991,7 @@ final class LSE_Importer
             LSE_Navigation::ensure($job, static function ($state) {
                 self::store($state);
             });
+            self::scope_site_parts($job);
             $job['state'] = 'ready';
             self::store($job);
             LSE_Media::release(array_column($job['assets'], 'id'));
@@ -3026,7 +3028,7 @@ final class LSE_Importer
                             '_elementor_template_type',
                             true,
                         ) === $kind &&
-                        !self::theme_part_state($part['id'])['conditions'],
+                        self::can_expand_site_part($job, $kind, $part['id']),
                     'restore' =>
                         $job['state'] === 'ready' &&
                         current_user_can('edit_theme_options') &&

@@ -105,11 +105,12 @@ try {
   assert(font.font);
   const gallery = await put(a, "external-gallery.svg");
   await rpc("test", { operation: "external-gallery", id: gallery.id });
-  const remove = async (job) => {
+  const remove = async (job, permanent = false) => {
     const fresh = await rpc("status", { job: job.id });
     return rpc("remove_import", {
       job: job.id,
       consent: true,
+      permanent,
       expected_stamps: Object.fromEntries(
         fresh.pages.map((page) => [page.key, page.current_stamp]),
       ),
@@ -119,6 +120,7 @@ try {
     rpc("test", { operation: "attachment-exists", id: asset.id });
   const gone = await remove(a);
   assert.equal(gone.state, "removed");
+  assert.equal(gone.pages[0].post_status, "trash");
   assert.deepEqual(
     new Set(gone.cleanup.assets_removed),
     new Set([exclusive.id, font.id]),
@@ -131,7 +133,9 @@ try {
   assert(!(await fileExists(font)));
   assert(await fileExists(shared));
   assert(await fileExists(gallery));
-  const last = await remove(b);
+  const last = await remove(b, true);
+  assert.equal(last.state, "removed");
+  assert.equal(last.pages[0].post_status, "missing");
   assert.deepEqual(last.cleanup.assets_removed, [shared.id]);
   assert(!(await fileExists(shared)));
   assert(await fileExists(gallery));

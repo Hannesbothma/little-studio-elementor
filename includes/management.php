@@ -17,7 +17,8 @@ trait LSE_Management
                     'Confirm removing this whole import first.',
                 );
             }
-            if (!EMPTY_TRASH_DAYS) {
+            $permanent = ($input['permanent'] ?? false) === true;
+            if (!$permanent && !EMPTY_TRASH_DAYS) {
                 throw new RuntimeException(
                     'WordPress Trash is disabled. No imported content was removed.',
                 );
@@ -54,11 +55,14 @@ trait LSE_Management
             foreach ($job['pages'] as $page) {
                 if (
                     !get_post($page['id']) ||
-                    get_post_status($page['id']) === 'trash'
+                    (!$permanent && get_post_status($page['id']) === 'trash')
                 ) {
                     continue;
                 }
-                if (wp_trash_post($page['id'])) {
+                $deleted = $permanent
+                    ? wp_delete_post($page['id'], true)
+                    : wp_trash_post($page['id']);
+                if ($deleted) {
                     $removed[] = $page['id'];
                 } else {
                     $kept[] = $page['id'];
@@ -66,6 +70,7 @@ trait LSE_Management
             }
             $retained_templates = [];
             $removed_templates = [];
+            $failed_templates = [];
             $deleted_assets = [];
             $kept_assets = [];
             $failed_assets = [];
@@ -86,12 +91,13 @@ trait LSE_Management
                         $retained_templates[] = $id;
                         continue;
                     }
-                    if (
-                        get_post_status($id) !== 'trash' &&
-                        get_post($id) &&
-                        !wp_trash_post($id)
-                    ) {
+                    $deleted = $permanent
+                        ? wp_delete_post($id, true)
+                        : get_post_status($id) === 'trash' ||
+                            wp_trash_post($id);
+                    if (!$deleted) {
                         $retained_templates[] = $id;
+                        $failed_templates[] = $id;
                     } else {
                         $removed_templates[] = $id;
                     }
@@ -124,11 +130,14 @@ trait LSE_Management
                 );
             }
             $job['state'] =
-                $kept || $failed_assets ? 'partly-removed' : 'removed';
+                $kept || $failed_assets || $failed_templates
+                    ? 'partly-removed'
+                    : 'removed';
             $job['cleanup'] = [
                 'removed' => $removed,
                 'kept' => $kept,
                 'templates_kept' => $retained_templates,
+                'templates_failed' => $failed_templates,
                 'assets_removed' => $deleted_assets,
                 'assets_kept' => $kept_assets,
                 'assets_failed' => $failed_assets,

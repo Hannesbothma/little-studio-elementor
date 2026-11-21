@@ -1,20 +1,15 @@
 name: Publish plugin release
 on:
-  push:
-    tags: ['v*']
-    branches: [main]
-    paths: ['little-studio-elementor.php', 'assets/**', 'includes/**', 'scripts/package.mjs', 'readme.txt', 'LICENSE.txt', 'RELEASE_NOTES.md', '.github/workflows/release.yml']
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag, for example v0.4.0
+        description: Existing version tag, for example v0.12.18
         required: true
         type: string
 permissions:
   contents: write
 concurrency:
   group: plugin-release
-  cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 jobs:
   release:
     runs-on: ubuntu-latest

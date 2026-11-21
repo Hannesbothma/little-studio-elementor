@@ -1,3 +1,12 @@
+## LS Elementor 0.12.18
+
+- **Import website** starts an all-pages draft import directly from a URL. **Scan website** lets you choose pages and options.
+- When Theme Builder already has a sitewide template, WordPress applies the incoming header and footer to the imported pages. You can expand either template to the entire site and undo the change.
+- **Remove import** can permanently delete its pages and unused templates. Shared media stays available to other pages and imports.
+- The converter drops more invisible overlays from the Elementor Structure panel.
+
+- If WordPress takes too long to confirm a request, the copied report retains the timeout and saved progress.
+
 ## LS Elementor 0.12.17
 
 Use a paired local Chromium worker to prepare URL imports after closing the WordPress tab. Squarespace gallery scaffolding stays out of the editor tree. Supported flat dividers and cart pages use editable widgets. Newsletter forms can use the destination’s configured Mailchimp audience with double opt-in. Repeated report findings now name the affected pages once. Import reports distinguish a WordPress session refusal, an identified hosting challenge and an unidentified HTTP refusal.

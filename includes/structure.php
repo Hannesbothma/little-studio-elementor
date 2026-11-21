@@ -20,6 +20,9 @@ final class LSE_Structure
             add_action(
                 "elementor/page_templates/canvas/{$position}_content",
                 static function () use ($kind) {
+                    if (self::in_editor()) {
+                        return;
+                    }
                     $part =
                         self::site_parts(get_queried_object_id())[$kind] ?? [];
                     if (
@@ -238,24 +241,27 @@ final class LSE_Structure
         ] ?? [];
     }
 
-    public static function site_parts($post_id)
+    public static function site_parts($post_id, $include_page_conditions = true)
     {
         $parts =
             get_post_meta($post_id, '_lse_source', true)['site_parts'] ?? [];
         if (class_exists(\ElementorPro\Modules\ThemeBuilder\Module::class)) {
             foreach ($parts as &$part) {
                 $id = $part['template_id'];
+                $conditions = (array) get_post_meta(
+                    $id,
+                    '_elementor_conditions',
+                    true,
+                );
                 $part['theme_builder'] =
                     get_post_status($id) === 'publish' &&
-                    in_array(
-                        'include/general',
-                        (array) get_post_meta(
-                            $id,
-                            '_elementor_conditions',
-                            true,
-                        ),
-                        true,
-                    );
+                    (in_array('include/general', $conditions, true) ||
+                        ($include_page_conditions &&
+                            in_array(
+                                'include/singular/page/' . $post_id,
+                                $conditions,
+                                true,
+                            )));
             }
             unset($part);
         }
