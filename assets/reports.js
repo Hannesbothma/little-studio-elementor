@@ -145,6 +145,7 @@
       error.fileCount
         ? error.fileCount + " file(s), " + error.fileBytes + " bytes"
         : "",
+      error.refusal,
       error.requestId && "request ID " + error.requestId,
       error.httpStatus
         ? error.converterHandler
@@ -374,9 +375,26 @@
       const pageTitles = new Map(
         pages.map((page) => [page.key, page.current_title || page.title]),
       );
-      for (const [key, r] of Object.entries(job?.reports || {}))
-        for (const warning of r.warnings || [])
-          addFinding((pageTitles.get(key) || key) + " · " + warning);
+      const affectedPages = new Map();
+      for (const [key, result] of Object.entries(job?.reports || {})) {
+        for (const warning of new Set(result.warnings || [])) {
+          if (!affectedPages.has(warning)) affectedPages.set(warning, []);
+          affectedPages.get(warning).push(key);
+        }
+      }
+      for (const [warning, keys] of affectedPages) {
+        const labels = keys.map((key) => pageTitles.get(key) || key);
+        if (keys.length === 1) addFinding(labels[0] + " · " + warning);
+        else if (
+          keys.length === pages.length &&
+          keys.every((key) => pageTitles.has(key))
+        )
+          addFinding("All " + keys.length + " pages · " + warning);
+        else
+          addFinding(
+            keys.length + " pages · " + warning + "\n  " + labels.join(" | "),
+          );
+      }
       for (const issue of [
         ...(job?.media?.errors || []),
         ...(job?.media?.skipped || []),

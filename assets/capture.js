@@ -368,6 +368,17 @@
         node.remove();
       }
       for (const script of [...doc.querySelectorAll("script")]) {
+        if (
+          /^https?:\/\/use\.typekit\.net\//i.test(
+            absolute(script.getAttribute("src"), base) || "",
+          )
+        ) {
+          notes.add(
+            "The source loads Adobe Fonts through JavaScript. Configure its licensed font families on the destination to match line breaks and spacing.",
+          );
+          script.remove();
+          continue;
+        }
         const kind = M.sourceScriptKind({
           id: script.id,
           src: absolute(script.getAttribute("src"), base),
@@ -714,6 +725,9 @@
               resources,
             });
             if (emptyBody) {
+              for (const warning of warnings)
+                if (!project.capture.warnings.includes(warning))
+                  project.capture.warnings.push(warning);
               project.capture.complete = false;
               (project.capture.failed_resources ||= []).push({
                 url: page.url,
@@ -1185,6 +1199,85 @@
       window.LSEManage?.scanClosed();
     }
   }
+  const rendererButton = $("#lse-render-submit"),
+    rendererStatus = $("#lse-render-task");
+  let renderTask,
+    pollTimer,
+    rendererBusy = false;
+  function showRenderer(result) {
+    const previousState = renderTask?.state;
+    renderTask = result.task;
+    rendererButton.hidden =
+      !result.online ||
+      (["working", "waiting", "queued"].includes(renderTask?.state) &&
+        Date.now() / 1000 - renderTask.updated < 120);
+    rendererStatus.hidden = !renderTask?.id || renderTask.state === "submitted";
+    rendererStatus.querySelector("span").textContent =
+      renderTask?.message || "";
+    rendererStatus.querySelector("[data-render-copy]").hidden =
+      !renderTask?.report;
+    for (const button of rendererStatus.querySelectorAll(
+      "[data-render-choice]",
+    ))
+      button.hidden =
+        renderTask?.state !== "waiting" ||
+        !renderTask.choices.includes(button.dataset.renderChoice);
+    clearTimeout(pollTimer);
+    if (["working", "waiting", "queued"].includes(renderTask?.state))
+      pollTimer = setTimeout(refreshRenderer, 5000);
+    if (
+      renderTask?.state === "submitted" &&
+      previousState &&
+      previousState !== "submitted"
+    )
+      window.LSEManage?.reload().catch(() => {});
+  }
+  async function refreshRenderer() {
+    if (
+      rendererBusy ||
+      new URLSearchParams(location.search).has("lse-renderer")
+    )
+      return;
+    try {
+      showRenderer(await A.request("renderer", { operation: "status" }));
+    } catch {}
+  }
+  rendererButton.addEventListener("click", async () => {
+    if (!form.reportValidity() || rendererBusy) return;
+    rendererBusy = true;
+    rendererButton.disabled = true;
+    try {
+      showRenderer(
+        await A.request("renderer", {
+          operation: "submit",
+          url: $("#lse-capture-url").value,
+        }),
+      );
+      dialog.close();
+    } catch (e) {
+      status.textContent = e.message;
+    } finally {
+      rendererBusy = false;
+      rendererButton.disabled = false;
+    }
+  });
+  rendererStatus.addEventListener("click", async (e) => {
+    if (e.target.matches("[data-render-copy]"))
+      return A.copyReport(e.target, renderTask.report);
+    if (!e.target.dataset.renderChoice) return;
+    try {
+      await A.request("renderer", {
+        operation: "decide",
+        id: renderTask.id,
+        issue: renderTask.issue,
+        choice: e.target.dataset.renderChoice,
+      });
+      e.target.hidden = true;
+    } catch (err) {
+      rendererStatus.querySelector("span").textContent = err.message;
+    }
+  });
+  void refreshRenderer();
   function open() {
     if (A.busy || window.LSEManage?.busy) return;
     if (busy) return;
@@ -1199,6 +1292,7 @@
         })
         .catch(() => {});
     dialog.showModal();
+    refreshRenderer();
     $("#lse-capture-url").focus();
   }
   form.addEventListener("submit", (e) => {
@@ -1240,6 +1334,9 @@
   });
   window.LSECapture = {
     packageWebsite,
+    hasCheckpoint(url) {
+      return scanState()?.url === url;
+    },
     get busy() {
       return busy;
     },

@@ -602,6 +602,14 @@
       warnings.push(
         "Inline event handlers are removed; move reviewed behaviour into page JavaScript.",
       );
+    if (d.querySelector("#sqs-cart-root") && !root.LSE_CONFIG?.wooCart)
+      warnings.push(
+        "This source cart needs WooCommerce on the destination. Rescan after activating WooCommerce to create an editable cart page.",
+      );
+    if (d.querySelector("form.newsletter-form"))
+      warnings.push(
+        "Newsletter delivery uses the destination mailing list. Choose a configured Mailchimp audience in Import options, or set the Form widget’s actions in Elementor.",
+      );
     const externalForms = [...d.querySelectorAll("form")].filter(
       (n) =>
         !n.matches("[data-fr-cost],[data-lse-local-form]") &&
@@ -919,13 +927,20 @@
       changes = [];
     let sequence = 0;
     const project = (style, owner) => {
-      for (const property of ["font-size", "line-height", "letter-spacing"]) {
+      for (const property of [
+        "font-size",
+        "line-height",
+        "letter-spacing",
+        "height",
+        "min-height",
+      ]) {
         // A font shorthand containing var() has pending-substitution longhands
         // in CSSOM. It still resets earlier font-size/line-height declarations.
         // Clear their projections instead of reviving an overridden fluid h2.
         const longhand = style.getPropertyValue(property);
         const resetsFont =
-          property !== "letter-spacing" && style.getPropertyValue("font");
+          ["font-size", "line-height"].includes(property) &&
+          style.getPropertyValue("font");
         const value = longhand || (resetsFont ? "initial" : "");
         if (!value) continue;
         const id = String(++sequence);
@@ -960,6 +975,24 @@
     for (const node of doc.querySelectorAll("[style]"))
       project(node.style, node);
     return {
+      viewportSize(node, computed, property) {
+        const value = computed.getPropertyValue(prefix + property).trim();
+        if (
+          !/\b[\d.]+(?:[dsl]?v[whib]|vmin|vmax)\b/i.test(value) ||
+          !doc.defaultView.CSS.supports(property, value)
+        )
+          return "";
+        const owner = owners.get(
+          computed.getPropertyValue(prefix + property + "-owner").trim(),
+        );
+        if (owner === node) return value;
+        if (typeof owner === "string") {
+          try {
+            if (node.matches(owner)) return value;
+          } catch {}
+        }
+        return "";
+      },
       read(node, computed) {
         const value = computed.getPropertyValue(prefix + "font-size").trim();
         const owner = owners.get(
@@ -1118,9 +1151,29 @@
             }
           : { youtube_url: "https://www.youtube.com/watch?v=" + youtube[1] }),
         autoplay: bg || url.searchParams.get("autoplay") === "1" ? "yes" : "",
-        mute: bg || url.searchParams.get("muted") === "1" ? "yes" : "",
+        mute:
+          bg ||
+          url.searchParams.get("muted") === "1" ||
+          url.searchParams.get("mute") === "1"
+            ? "yes"
+            : "",
         loop: bg || url.searchParams.get("loop") === "1" ? "yes" : "",
         controls: bg || url.searchParams.get("controls") === "0" ? "" : "yes",
+        ...(youtube &&
+          /^\d+$/.test(url.searchParams.get("start")) && {
+            start: Number(url.searchParams.get("start")),
+          }),
+        ...(youtube &&
+          /^\d+$/.test(url.searchParams.get("end")) && {
+            end: Number(url.searchParams.get("end")),
+          }),
+        ...(url.hostname === "www.youtube-nocookie.com" ||
+        url.searchParams.get("dnt") === "1"
+          ? { yt_privacy: "yes" }
+          : {}),
+        ...(bg || url.searchParams.get("playsinline") === "1"
+          ? { play_on_mobile: "yes" }
+          : {}),
         _title: node.title || (vimeo ? "Vimeo video" : "YouTube video"),
       };
     } catch {
@@ -1304,6 +1357,7 @@
     const label = newsletter ? "Newsletter signup" : "Contact form";
     return {
       _title: label,
+      ...(newsletter && { lse_newsletter: "yes" }),
       form_name: (form.getAttribute("name") || label).slice(0, 150),
       form_fields: fields,
       button_text: (
@@ -1663,6 +1717,42 @@
   function prepareSource(doc) {
     prepareLazyMedia(doc);
     const warnings = [];
+    for (const divider of doc.querySelectorAll(".section-divider-display")) {
+      const section = divider.closest("section[data-current-context]");
+      let config;
+      try {
+        config = JSON.parse(section?.dataset.currentContext || "{}").divider;
+      } catch {
+        continue;
+      }
+      if (!config || config.type !== "none") continue;
+      const clip = divider.querySelector("svg.section-divider-svg-clip");
+      const stroke = divider.querySelector("svg.section-divider-svg-stroke");
+      if (
+        !clip ||
+        !stroke ||
+        [...divider.querySelectorAll("path")].some(
+          (p) => !/^M0[ ,]+0$/i.test(p.getAttribute("d")?.trim()),
+        )
+      )
+        continue;
+      const clipId = clip.querySelector("clipPath[id]")?.id;
+      for (const border of section.querySelectorAll(".section-border[style]"))
+        if (clipId && border.style.clipPath.includes("#" + clipId))
+          border.style.removeProperty("clip-path");
+      clip.remove();
+      if (
+        config.enabled &&
+        config.stroke?.style !== "none" &&
+        config.stroke?.thickness?.value > 0
+      ) {
+        const line = doc.createElement("hr");
+        line.setAttribute("aria-label", "Section divider");
+        line.style.cssText =
+          "margin:0;width:100%;border:0;border-top:var(--stroke-thickness,1px) solid var(--section-divider-stroke-color,currentColor)";
+        stroke.replaceWith(line);
+      } else stroke.remove();
+    }
     for (const form of doc.querySelectorAll("form.newsletter-form")) {
       if (!contactForm(form)) continue;
       for (const intro of form.querySelectorAll(".newsletter-form-header"))
@@ -1687,6 +1777,38 @@
       if (text) {
         text.style.setProperty("position", "relative", "important");
         text.style.setProperty("left", "auto", "important");
+      }
+    }
+    // The product lightbox repeats every image solely for the source overlay.
+    // Build its native equivalent only when the full image sequence matches.
+    for (const gallery of doc.querySelectorAll(".product-gallery")) {
+      const overlay = gallery.querySelector(".gallery-lightbox");
+      if (!overlay || overlay.querySelector("video,iframe,figcaption"))
+        continue;
+      const slides = [
+        ...gallery.querySelectorAll("img.product-gallery-slides-item-image"),
+      ];
+      const enlarged = [
+        ...overlay.querySelectorAll(".gallery-lightbox-item img"),
+      ];
+      const url = (img) =>
+        img.getAttribute("data-src") || img.getAttribute("src");
+      if (
+        !slides.length ||
+        slides.length !== enlarged.length ||
+        !slides.every((img, i) => url(img) && url(img) === url(enlarged[i]))
+      )
+        continue;
+      if (slides.length === 1 && !slides[0].closest("a")) {
+        slides[0].setAttribute("data-lse-product-lightbox", "yes");
+        overlay.remove();
+      } else if (
+        slides.length > 1 &&
+        root.LSE_CONFIG?.widgets?.includes("image-carousel") &&
+        !gallery.querySelector("video,iframe,form,figcaption")
+      ) {
+        gallery.setAttribute("data-lse-product-carousel", "yes");
+        overlay.remove();
       }
     }
     let galleryIndex = 0;
@@ -2478,6 +2600,36 @@
             node.closest("a[aria-label]")?.getAttribute("aria-label") ||
             "Icon";
           delete settings.lse_attributes["data-lse-icon-asset"];
+        } else if (
+          node.id === "sqs-cart-root" &&
+          !node.textContent.trim() &&
+          root.LSE_CONFIG?.wooCart &&
+          root.LSE_CONFIG.widgets.includes("shortcode")
+        ) {
+          widget = "shortcode";
+          settings._title = "Shopping cart";
+          settings.shortcode = "[woocommerce_cart]";
+        } else if (
+          node.matches(".product-gallery[data-lse-product-carousel]") &&
+          root.LSE_CONFIG?.widgets?.includes("image-carousel")
+        ) {
+          widget = "image-carousel";
+          settings._title = "Product gallery";
+          settings.carousel = [
+            ...node.querySelectorAll("img.product-gallery-slides-item-image"),
+          ].map((img) => ({
+            id: 0,
+            url: restoreRefs(
+              img.getAttribute("src") || img.getAttribute("data-src"),
+            ),
+          }));
+          settings.thumbnail_size = "full";
+          settings.slides_to_show = "1";
+          settings.slides_to_scroll = "1";
+          settings.autoplay = "no";
+          settings.navigation = "both";
+          settings.link_to = "file";
+          settings.open_lightbox = "yes";
         } else if (formWidgets.has(node)) {
           widget = "form";
           Object.assign(settings, formWidgets.get(node));
@@ -2539,6 +2691,10 @@
             id: 0,
           };
           settings.image_size = "full";
+          if (image.hasAttribute("data-lse-product-lightbox")) {
+            settings.link_to = "file";
+            settings.open_lightbox = "yes";
+          }
           settings.caption_source = figureImage ? "custom" : "none";
           if (figureImage) settings.caption = sourceHTML(figureImage, true);
           settings.lse_image_alt = image.getAttribute("alt") || "";
@@ -2580,7 +2736,16 @@
           settings.link = sourceLink(node);
         } else if (tag === "hr") {
           widget = "divider";
-          settings.color = w.getComputedStyle(node).borderTopColor;
+          const border = w.getComputedStyle(node);
+          settings.color = border.borderTopColor;
+          if (parseFloat(border.borderTopWidth) > 0)
+            settings.weight = px(border.borderTopWidth);
+          if (
+            ["solid", "dashed", "dotted", "double"].includes(
+              border.borderTopStyle,
+            )
+          )
+            settings.style = border.borderTopStyle;
         } else if (
           [
             "svg",
@@ -2729,6 +2894,20 @@
           if (!entry.widget && !entry.element.elements.length) {
             const rect = entry.node.getBoundingClientRect();
             props.hasBox = rect.width > 0 && rect.height > 0;
+            if (
+              entry.node.matches(".section-background,.section-border") &&
+              s.position === "absolute" &&
+              s.backgroundImage === "none" &&
+              s.backgroundColor === "rgba(0, 0, 0, 0)" &&
+              s.boxShadow === "none" &&
+              s.outlineStyle === "none" &&
+              s.filter === "none" &&
+              (!s.backdropFilter || s.backdropFilter === "none") &&
+              ["Top", "Right", "Bottom", "Left"].every(
+                (side) => parseFloat(s["border" + side + "Width"]) === 0,
+              )
+            )
+              props.hasBox = false;
             props.generatedContent = ["::before", "::after"].some(
               (pseudo) =>
                 !["none", "normal"].includes(
@@ -2806,7 +2985,9 @@
             }
             if (gaps.length) props.inlineGap = Math.min(...gaps);
           }
-          props.sourceMinHeight = s.getPropertyValue("--min-height").trim();
+          props.sourceMinHeight =
+            typography.viewportSize(entry.node, s, "min-height") ||
+            s.getPropertyValue("--min-height").trim();
           if (!entry.widget && entry.node.matches(".e-con")) {
             const overlay = w.getComputedStyle(entry.node, "::before");
             if (
@@ -2835,7 +3016,9 @@
             typed && typed.get("width")?.toString() !== "auto",
           );
           props.specifiedWidth = typed?.get("width")?.toString();
-          props.specifiedHeight = typed?.get("height")?.toString();
+          props.specifiedHeight =
+            typography.viewportSize(entry.node, s, "height") ||
+            typed?.get("height")?.toString();
           props.specifiedGridColumns = typed
             ?.get("grid-template-columns")
             ?.toString();
@@ -3033,7 +3216,7 @@
           );
         const sourceScaffold =
           dom.matches(
-            ".sqs-block,.sqs-block-content,.content-wrapper,.content,.sqs-layout,.sqs-row,.image-block-outer-wrapper,.fluid-image-animation-wrapper,.fluid-image-container,.fluid-image-component-root,.js-content-mode-element-wrapper,.js-content-mode-element,.header-menu-nav-folder-content,.header-menu-nav-wrapper,.header-menu-nav-item-content,.header-announcement-bar-wrapper",
+            ".sqs-block,.sqs-block-content,.content-wrapper,.content,.sqs-layout,.sqs-row,.image-block-outer-wrapper,.fluid-image-animation-wrapper,.fluid-image-container,.fluid-image-component-root,.js-content-mode-element-wrapper,.js-content-mode-element,.header-menu-nav-folder-content,.header-menu-nav-wrapper,.header-menu-nav-item-content,.header-announcement-bar-wrapper,.product-content-wrapper,.product-gallery-slides,.gallery-lightbox-wrapper,.gallery-lightbox-list,.gallery-lightbox-item-wrapper,.gallery-lightbox-item-src,.sqs-text-block-container,.sqs-html-content",
           ) && !!dom.closest("#siteWrapper,.sqs-layout,.fluid-engine");
         const shell =
           isLayout &&
@@ -3789,14 +3972,8 @@
                 parseFloat(s["min-height"]) > 0
                   ? s.sourceMinHeight || s["min-height"]
                   : "";
-              if (parseFloat(minHeight) > 0) {
-                const unit =
-                  minHeight.match(/(px|vh|vw|em|rem|%)$/)?.[1] || "px";
-                target["min_height" + suffix] = {
-                  unit,
-                  size: parseFloat(minHeight),
-                  sizes: [],
-                };
+              if (minHeight) {
+                target["min_height" + suffix] = sourceSize(minHeight);
               } else if (
                 (!element.elements.length ||
                   (s.inlineFlow &&

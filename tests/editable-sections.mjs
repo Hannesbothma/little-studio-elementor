@@ -23,7 +23,7 @@ try {
     const project = await LSECapture.packageWebsite(home, [
       record(
         "",
-        `<article><section class="region"><section><h1>Work</h1>
+        `<article><section class="region"><section style="min-height:calc(100vh - 40px)"><h1>Work</h1>
         <svg style="display:none"><symbol id="arrow" viewBox="0 0 10 10"><path d="M0 0h10v10z"/></symbol></svg>
         <svg viewBox="0 0 10 10"><use href="#arrow"/></svg><svg><use href="/social.svg#network"/></svg><div></div>
         <iframe src="https://player.vimeo.com/video/357581440?background=1"></iframe>
@@ -47,6 +47,16 @@ try {
     const blank = await LSEConverter.convert(project, project.pages[1], {
       preserveCSS: true,
     });
+    const supportsCart = LSE_CONFIG.wooCart;
+    let shop;
+    try {
+      LSE_CONFIG.wooCart = true;
+      shop = await LSEConverter.convert(project, project.pages[1], {
+        preserveCSS: true,
+      });
+    } finally {
+      LSE_CONFIG.wooCart = supportsCart;
+    }
     const flat = (nodes) => nodes.flatMap((n) => [n, ...flat(n.elements)]);
     const widgets = flat(converted.elements);
     const fixture = {
@@ -87,6 +97,13 @@ try {
         .map((n) => n.settings._title),
       regions: converted.regions.map((n) => n.kind),
       blank: blank.emptyBody,
+      supportsCart,
+      cart: flat(shop.elements).find((n) => n.widgetType === "shortcode")
+        ?.settings.shortcode,
+      viewportHeight:
+        /--lse-source-min-height:\s*calc\((?:100vh\s*-\s*40px|-40px\s*\+\s*100vh)\)/.test(
+          converted.css,
+        ),
       navInstalled: LSE_CONFIG.widgets.includes("nav-menu"),
       menu: widgets.find((n) => n.widgetType === "nav-menu")?.settings,
       nested:
@@ -111,7 +128,9 @@ try {
   ]);
   assert.deepEqual(result.sections, ["Work", "Subscribe"]);
   assert.deepEqual(result.regions, ["header", "footer"]);
-  assert.equal(result.blank, true);
+  assert.equal(result.blank, !result.supportsCart);
+  assert.equal(result.cart, "[woocommerce_cart]");
+  assert(result.viewportHeight, "Retain the authored viewport height");
   assert(result.nested);
   if (result.navInstalled) assert.equal(result.menu?.lse_imported_menu, "yes");
   assert.equal(result.icons, 2);

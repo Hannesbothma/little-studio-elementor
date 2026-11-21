@@ -1,3 +1,7 @@
+## LS Elementor 0.12.17
+
+Use a paired local Chromium worker to prepare URL imports after closing the WordPress tab. Squarespace gallery scaffolding stays out of the editor tree. Supported flat dividers and cart pages use editable widgets. Newsletter forms can use the destination’s configured Mailchimp audience with double opt-in. Repeated report findings now name the affected pages once. Import reports distinguish a WordPress session refusal, an identified hosting challenge and an unidentified HTTP refusal.
+
 ## LS Elementor 0.12.16
 
 WordPress restores a missing background job event on the next WP-Cron run, including when the import tab is closed. Builds on the editable page and template changes in 0.12.15.

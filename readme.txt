@@ -3,7 +3,7 @@ Contributors: littlestudio
 Requires at least: 6.8
 Tested up to: 7.1.4
 Requires PHP: 8.0
-Stable tag: 0.12.16
+Stable tag: 0.12.17
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -182,6 +182,9 @@ The WordPress capture engine fetches public pages on request; no source scripts,
 PHP files, account data or application backends are installed by capture.
 
 == Changelog ==
+
+= 0.12.17 =
+* Pair a local Chromium renderer to convert an entire URL import after closing the admin tab. Convert supported gallery wrappers, flat section dividers, WooCommerce carts and destination newsletter forms. Identify additional HTTP 403 causes in the report.
 
 = 0.12.16 =
 * Recover missing background scan and import events on the next WP-Cron run.
@@ -380,3 +383,24 @@ that imports add drafts/media; homepage/menu changes are a separate opt-in actio
 
 = 0.1.0 =
 Initial whole-website JSON importer and native Elementor conversion.
+
+== Background conversion on your computer ==
+
+The optional local renderer prepares URL imports while the WordPress tab is closed.
+On the computer that will do the conversion, open the matching release of the
+LS Elementor GitHub repository. From its directory run:
+
+    npm ci
+    npx playwright install chromium
+    node scripts/local-renderer.mjs https://your-wordpress-site.example --login
+
+Sign in with your WordPress administrator account and keep Remember Me selected.
+Then run the worker and leave it running while imports are in progress:
+
+    node scripts/local-renderer.mjs https://your-wordpress-site.example
+
+In LS Elementor, open the website URL importer, paste the source address and
+choose “Import all pages on my computer”. You can close the WordPress tab as
+soon as it shows the job is queued. Open LS Elementor again for progress,
+Skip, Retry or Copy report. WordPress saves the prepared drafts with WP-Cron.
+Each WordPress installation uses a separate local browser sign-in.

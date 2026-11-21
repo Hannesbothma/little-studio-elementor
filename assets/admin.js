@@ -119,6 +119,10 @@
       else if (res.status === 413)
         message =
           "The hosting server rejected the request because it is too large. Check the server request/upload limits.";
+      else if (res.status === 403 && details.challenge)
+        message =
+          details.challenge +
+          " interrupted the request. Saved drafts are kept.";
       else if (res.status === 403)
         message =
           "The server refused this request without giving LS Elementor a reason. Saved drafts are kept.";
@@ -146,6 +150,7 @@
     // A generic refusal from the HTTP layer carries no file-level diagnosis.
     error.uploadRefused =
       !details.converterHandler &&
+      !details.challenge &&
       !data?.message &&
       !data?.data?.message &&
       clean !== "-1" &&
@@ -155,6 +160,17 @@
     error.lseMessage = message;
     error.lseDetails = {
       ...details,
+      refusal:
+        res.status !== 403
+          ? ""
+          : details.challenge ||
+            (clean === "-1" || data?.code === "rest_cookie_invalid_nonce"
+              ? "WordPress session check failed"
+              : details.converterHandler
+                ? "Refused by LS Elementor in WordPress"
+                : /^rest_[a-z_]+$/.test(data?.code || "")
+                  ? "Refused by the WordPress REST API"
+                  : "Unidentified HTTP refusal; correlate this UTC time and request ID with the hosting access log"),
       error: data?.data?.error || (data?.code ? { code: data.code } : null),
       responseKind:
         data === undefined ? (/<[^>]+>/.test(clean) ? "html" : "text") : "json",
@@ -278,6 +294,7 @@
       if (
         target === config.pageRest &&
         [403, 404, 405].includes(res.status) &&
+        res.headers.get("cf-mitigated") !== "challenge" &&
         res.headers.get("x-little-studio-handler") !== "converter"
       ) {
         const failure = await res
@@ -304,6 +321,10 @@
             : "admin-ajax.php",
         contentType: res.headers.get("content-type") || "",
         redirected: res.redirected,
+        challenge:
+          res.headers.get("cf-mitigated") === "challenge"
+            ? "Cloudflare challenge"
+            : "",
         requestId:
           res.headers.get("x-request-id") || res.headers.get("cf-ray") || "",
         converterHandler:
@@ -755,7 +776,9 @@
       return;
     setBusy(true);
     selectionStarted = true;
-    operationId = crypto.randomUUID();
+    operationId =
+      new URLSearchParams(location.search).get("lse-render-task") ||
+      crypto.randomUUID();
     journal.reset(operationId);
     originalFile = file.name || "";
     if (!prepared)
@@ -961,6 +984,10 @@
   async function run({ background = false, recovery = null } = {}) {
     if (busy || !project) return;
     lastRun = { background, recovery };
+    const audience =
+      recovery?.newsletterAudience ||
+      $("#lse-newsletter-audience")?.value.trim() ||
+      "";
     const source = selected();
     if (!source.pages.length) return;
     const target = recovery?.target || window.LSEManage?.target;
@@ -1025,7 +1052,8 @@
         ":" +
         $("#lse-scripts").checked +
         ":" +
-        (target?.id || "new");
+        (target?.id || "new") +
+        (audience ? ":audience:" + audience : "");
       const importIdentity = [
         ...new Uint8Array(
           await crypto.subtle.digest(
@@ -1049,6 +1077,7 @@
             operation_id: operationId,
             site_id: source.site_id,
             target_job: target?.id || "",
+            newsletter_audience: audience,
             expected_stamps: target
               ? Object.fromEntries(
                   target.pages.map((p) => [p.key, p.current_stamp]),
@@ -1105,6 +1134,7 @@
             preserveCSS,
             scripts: $("#lse-scripts").checked,
             background,
+            newsletterAudience: audience,
           });
           localRecovery = true;
         } catch {}
@@ -1704,6 +1734,7 @@
     request,
     resumeImport,
     copyReport,
+    importReport: () => journal.report(job, project, originalFile),
     choose,
     chooseProject(project, name) {
       return choose({ name }, project);

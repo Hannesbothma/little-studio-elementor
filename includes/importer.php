@@ -266,6 +266,17 @@ final class LSE_Importer
                 $parent = $seen[$parent]['parent_key'] ?? '';
             }
         }
+        $audience = $input['newsletter_audience'] ?? '';
+        if (
+            !is_string($audience) ||
+            ($audience !== '' &&
+                (!preg_match('/^[a-f0-9]{10}$/iD', $audience) ||
+                    !LSE_Plugin::mailchimp_ready()))
+        ) {
+            throw new RuntimeException(
+                'Check the Mailchimp audience ID and the API key in Elementor Integrations.',
+            );
+        }
         if (!empty($input['target_job'])) {
             return self::refresh($input);
         }
@@ -309,6 +320,7 @@ final class LSE_Importer
             'fonts' => [],
             'map' => [],
             'reports' => [],
+            'newsletter_audience' => $audience,
             'layout' => $layout,
             'scripts' =>
                 !empty($input['scripts']) &&
@@ -1685,7 +1697,7 @@ final class LSE_Importer
             $widget = $item['widgetType'] ?? '';
             $carousel = in_array(
                 $widget,
-                ['media-carousel', 'reviews', 'slides'],
+                ['media-carousel', 'image-carousel', 'reviews', 'slides'],
                 true,
             );
             if ($native || $carousel || $widget === 'form') {
@@ -1703,6 +1715,7 @@ final class LSE_Importer
                             'image',
                             'button',
                             'divider',
+                            'shortcode',
                             'html',
                             'video',
                             'google_maps',
@@ -1710,6 +1723,7 @@ final class LSE_Importer
                             'icon',
                             'form',
                             'media-carousel',
+                            'image-carousel',
                             'reviews',
                             'slides',
                         ],
@@ -1727,7 +1741,7 @@ final class LSE_Importer
                 );
             }
             if (!$native && $widget === 'form') {
-                // Only enable local collection. Source email and third-party actions are never copied.
+                // Build submission actions from the destination settings.
                 $fields = [];
                 foreach ((array) ($settings['form_fields'] ?? []) as $field) {
                     if (
@@ -1786,6 +1800,35 @@ final class LSE_Importer
                     ? ['save-to-database']
                     : [];
                 $settings['submissions_metadata'] = [];
+                foreach (array_keys($settings) as $key) {
+                    if (str_starts_with($key, 'mailchimp_')) {
+                        unset($settings[$key]);
+                    }
+                }
+                if (
+                    ($settings['lse_newsletter'] ?? '') === 'yes' &&
+                    !empty($job['newsletter_audience']) &&
+                    LSE_Plugin::mailchimp_ready()
+                ) {
+                    foreach ($fields as $field) {
+                        if ($field['field_type'] !== 'email') {
+                            continue;
+                        }
+                        $settings['submit_actions'][] = 'mailchimp';
+                        $settings['mailchimp_list'] =
+                            $job['newsletter_audience'];
+                        $settings['mailchimp_api_key_source'] = 'default';
+                        $settings['mailchimp_double_opt_in'] = 'yes';
+                        $settings['mailchimp_fields_map'] = [
+                            [
+                                '_id' => '1e51000',
+                                'remote_id' => 'email',
+                                'local_id' => $field['custom_id'],
+                            ],
+                        ];
+                        break;
+                    }
+                }
             }
             if (is_array($settings['lse_attributes'] ?? null)) {
                 $settings['lse_attributes'] = array_filter(
@@ -1835,12 +1878,23 @@ final class LSE_Importer
                     );
                 }
             }
+            $cart =
+                !$native &&
+                $widget === 'shortcode' &&
+                ($settings['shortcode'] ?? '') === '[woocommerce_cart]' &&
+                shortcode_exists('woocommerce_cart');
+            if (!$native && $widget === 'shortcode' && !$cart) {
+                throw new RuntimeException(
+                    'The imported cart requires WooCommerce on this site.',
+                );
+            }
             foreach ($settings as $field => $value) {
                 if (
                     !$native &&
                     (str_contains($field, 'custom_css') ||
                         str_starts_with($field, '__') ||
-                        str_contains($field, 'shortcode'))
+                        (str_contains($field, 'shortcode') &&
+                            !($cart && $field === 'shortcode')))
                 ) {
                     unset($settings[$field]);
                 } elseif (

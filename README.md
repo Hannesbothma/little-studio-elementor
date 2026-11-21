@@ -16,6 +16,13 @@ to create drafts. To work elsewhere while a scan or import runs, click **Run in
 background** and open **Keep working in WordPress**. Keep the task tab open and
 use **View progress** when you return.
 
+To close the tab during conversion, pair the optional Chromium worker on your
+computer. In this repository run `npm ci`, then `npx playwright install chromium`.
+Run `node scripts/local-renderer.mjs https://your-wordpress-site.example --login`
+and sign in with **Remember Me** selected. Start the same command without `--login` and leave it running.
+Choose **Import all pages on my computer** in the URL importer. You can close
+the WordPress tab as soon as the import is queued.
+
 Use **Download JSON** on the review screen if you want a portable copy. The
 bundle includes each page's Elementor 0.4 template, supporting styles, shared
 media and internal links. Upload it to LS Elementor on another WordPress site

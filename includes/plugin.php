@@ -206,6 +206,7 @@ final class LSE_Plugin
             'media_skip',
             'resume_prepared',
             'stage_page',
+            'renderer',
             'background_start',
             'background_status',
             'background_decide',
@@ -337,15 +338,18 @@ final class LSE_Plugin
                         );
                     }
                     $input = self::input($action);
-                    $result = str_starts_with($action, 'capture_')
-                        ? LSE_Capture::$action($input)
-                        : (in_array(
-                            $action,
-                            ['update_check', 'update_install'],
-                            true,
-                        )
-                            ? LSE_Updates::$action($input)
-                            : LSE_Importer::$action($input));
+                    $result =
+                        $action === 'renderer'
+                            ? LSE_Renderer::handle($input)
+                            : (str_starts_with($action, 'capture_')
+                                ? LSE_Capture::$action($input)
+                                : (in_array(
+                                    $action,
+                                    ['update_check', 'update_install'],
+                                    true,
+                                )
+                                    ? LSE_Updates::$action($input)
+                                    : LSE_Importer::$action($input)));
                     if (
                         in_array(
                             $action,
@@ -710,6 +714,7 @@ final class LSE_Plugin
                         class_exists('\\Elementor\\Utils') &&
                         \Elementor\Utils::validate_html_tag('button') ===
                             'button',
+                    'wooCart' => shortcode_exists('woocommerce_cart'),
                     'collectSubmissions' => self::collect_submissions(),
                     'widgets' => class_exists('\\Elementor\\Plugin')
                         ? array_keys(LSE_Native::widgets())
@@ -777,6 +782,7 @@ final class LSE_Plugin
                 <main class="lse-workspace">
                     <div id="lse-status" class="lse-notice" role="status" aria-live="polite">Choose a file or capture a website link to get started.</div>
                     <button type="button" class="button" data-lse-copy-report>Copy report</button>
+                    <div class="lse-notice" id="lse-render-task" hidden><span role="status"></span> <button type="button" class="button" data-render-choice="skip" hidden>Skip item</button> <button type="button" class="button" data-render-choice="retry" hidden>Retry</button> <button type="button" class="button" data-render-copy hidden>Copy report</button></div>
                     <div id="lse-background-task" class="lse-notice lse-actions" hidden><span id="lse-background-status" role="status"></span><button type="button" class="button" id="lse-background-view">View progress</button><a class="button" href="<?php echo esc_url(
                         admin_url('index.php'),
                     ); ?>" target="_blank" rel="noopener">Keep working in WordPress</a></div>
@@ -856,6 +862,9 @@ final class LSE_Plugin
                     )
                         ? 'Use the source header and footer sitewide'
                         : 'Standalone pages'; ?></option><option value="elementor_header_footer">Use WordPress header and footer</option></select></label></div><label class="lse-check"><input type="checkbox" id="lse-scripts" checked> Keep website interactions</label><label class="lse-check"><input type="checkbox" id="lse-css" checked> Keep website styling</label></details>
+                    <?php if (
+                        self::mailchimp_ready()
+                    ): ?><label class="lse-field">Mailchimp audience ID for newsletter forms (optional)<input id="lse-newsletter-audience" type="text" maxlength="10" pattern="[A-Fa-f0-9]{10}" autocomplete="off"></label><?php endif; ?>
                     <label class="lse-check" id="lse-overwrite-option" hidden><input type="checkbox" id="lse-overwrite"> Allow replacing selected edited or published pages.</label>
                     <div class="lse-dialog-actions"><button type="button" class="button" id="lse-reset">Cancel</button><button type="button" class="button" id="lse-source-download">Download JSON</button><span id="lse-import-scope">New pages are saved as drafts.</span><button type="button" class="button" id="lse-import-background">Import in background</button><button type="button" class="button button-primary" id="lse-import">Import</button></div>
                 </div>
@@ -870,7 +879,7 @@ final class LSE_Plugin
                     <label class="lse-field">Website address<input id="lse-capture-url" type="url" placeholder="https://your-website.com" required maxlength="2048"></label>
                     <p id="lse-capture-status" class="lse-notice" role="status" aria-live="polite"></p>
                 </div>
-                <footer class="lse-dialog-actions"><button type="button" class="button" data-lse-background hidden>Run in background</button><button type="button" class="button" id="lse-capture-copy" hidden>Copy report</button><button type="button" class="button" id="lse-capture-retry" hidden>Retry</button><button type="button" class="button" id="lse-capture-skip" hidden>Skip this page and continue</button><button type="button" class="button" id="lse-capture-resume" hidden>Resume scan</button><button type="button" class="button" id="lse-capture-background">Scan in background</button><button type="submit" class="button button-primary" id="lse-capture-start">Scan website</button></footer>
+                <footer class="lse-dialog-actions"><button type="button" class="button" data-lse-background hidden>Run in background</button><button type="button" class="button" id="lse-capture-copy" hidden>Copy report</button><button type="button" class="button" id="lse-capture-retry" hidden>Retry</button><button type="button" class="button" id="lse-capture-skip" hidden>Skip this page and continue</button><button type="button" class="button" id="lse-capture-resume" hidden>Resume scan</button><button type="button" class="button" id="lse-render-submit" hidden>Import all pages on my computer</button><button type="button" class="button" id="lse-capture-background">Scan in background</button><button type="submit" class="button button-primary" id="lse-capture-start">Scan website</button></footer>
             </form>
         </dialog>
         <dialog id="lse-replace-dialog" class="lse-dialog lse-page-dialog" aria-labelledby="lse-replace-title" aria-describedby="lse-replace-description">
@@ -1032,6 +1041,17 @@ final class LSE_Plugin
             );
         }
     }
+    public static function mailchimp_ready()
+    {
+        return (bool) get_option('elementor_pro_mailchimp_api_key') &&
+            class_exists(\ElementorPro\Modules\Forms\Module::class) &&
+            isset(
+                \ElementorPro\Modules\Forms\Module::instance()->actions_registrar->get()[
+                    'mailchimp'
+                ],
+            );
+    }
+
     public static function collect_submissions()
     {
         return class_exists(\ElementorPro\Modules\Forms\Module::class) &&
