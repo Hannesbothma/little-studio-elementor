@@ -125,7 +125,50 @@
     },
     { passive: true },
   );
+  // Atomic tabs retain their authored markup and styling without the source runtime.
+  const atomicTabs = "[data-lse-interactive] .e-tabs-base";
+  function tabsFor(tab) {
+    const group = tab?.closest(atomicTabs);
+    if (!group) return [];
+    return Array.from(
+      group.querySelectorAll('button[role="tab"][aria-controls]'),
+    )
+      .filter((button) => button.closest(".e-tabs-base") === group)
+      .map((button) => ({
+        button,
+        panel: document.getElementById(button.getAttribute("aria-controls")),
+      }))
+      .filter(
+        ({ button, panel }) =>
+          !button.disabled &&
+          panel?.matches('[role="tabpanel"]') &&
+          panel.closest(".e-tabs-base") === group,
+      );
+  }
+  function selectTab(tab, tabs) {
+    for (const { button, panel } of tabs) {
+      const selected = button === tab;
+      button.setAttribute("aria-selected", String(selected));
+      button.tabIndex = selected ? 0 : -1;
+      button.classList.toggle("e--selected", selected);
+      panel.classList.toggle("e--selected", selected);
+      panel.hidden = !selected;
+      if (selected) {
+        if (panel.style.display === "none")
+          panel.style.removeProperty("display");
+      } else {
+        panel.style.display = "none";
+      }
+    }
+  }
   document.addEventListener("click", (event) => {
+    const tab = event.target.closest?.('button[role="tab"]');
+    const tabs = tabsFor(tab);
+    if (tabs.some(({ button }) => button === tab)) {
+      event.preventDefault();
+      selectTab(tab, tabs);
+      return;
+    }
     const toggle = event.target.closest?.("[data-lse-menu-toggle]");
     if (toggle) {
       event.preventDefault();
@@ -133,6 +176,29 @@
     }
   });
   document.addEventListener("keydown", (event) => {
+    const tab = event.target.closest?.('button[role="tab"]');
+    const list = tab?.closest('[role="tablist"]');
+    const vertical = list?.getAttribute("aria-orientation") === "vertical";
+    const rtl = list && getComputedStyle(list).direction === "rtl";
+    const forward = vertical ? "ArrowDown" : rtl ? "ArrowLeft" : "ArrowRight";
+    const backward = vertical ? "ArrowUp" : rtl ? "ArrowRight" : "ArrowLeft";
+    if (tab && [forward, backward, "Home", "End"].includes(event.key)) {
+      const tabs = tabsFor(tab);
+      const current = tabs.findIndex(({ button }) => button === tab);
+      if (current !== -1) {
+        const last = tabs.length - 1;
+        const next =
+          event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? last
+              : (current + (event.key === forward ? 1 : last)) % tabs.length;
+        event.preventDefault();
+        selectTab(tabs[next].button, tabs);
+        tabs[next].button.focus();
+        return;
+      }
+    }
     const toggle = event.target.closest?.("[data-lse-menu-toggle]");
     if (
       toggle &&

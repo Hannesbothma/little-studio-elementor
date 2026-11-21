@@ -1,3 +1,7 @@
+## LS Elementor 0.12.19
+
+Restore click and keyboard navigation for imported Elementor Atomic tabs, including drafts saved by earlier versions.
+
 ## LS Elementor 0.12.18
 
 - **Import website** starts an all-pages draft import directly from a URL. **Scan website** lets you choose pages and options.
