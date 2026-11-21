@@ -400,7 +400,7 @@ try {
       id,
     );
     assert.deepEqual(edited.edited, [control]);
-    assert.equal(edited.status, "draft");
+    assert.equal(edited.status, control === "sticky" ? "publish" : "draft");
   }
   await page.goto(job.pages[0].preview_url, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(

@@ -96,10 +96,19 @@ final class LSE_Media
         ]);
         self::queue($id, true);
     }
+    private static function prime_tasks($ids)
+    {
+        $ids = array_unique($ids);
+        // Keep each metadata lookup small. With hundreds of IDs, a database
+        // can scan the postmeta table and read unrelated page and template CSS.
+        foreach (array_chunk($ids, 32) as $batch) {
+            update_meta_cache('post', $batch);
+        }
+        return $ids;
+    }
     public static function release($ids)
     {
-        update_meta_cache('post', array_unique($ids));
-        foreach (array_unique($ids) as $id) {
+        foreach (self::prime_tasks($ids) as $id) {
             $task = get_post_meta($id, self::META, true);
             if (is_array($task) && empty($task['released'])) {
                 $task['released'] = true;
@@ -137,8 +146,7 @@ final class LSE_Media
         $pending = [];
         $errors = [];
         $skipped = [];
-        update_meta_cache('post', array_unique($ids));
-        foreach (array_unique($ids) as $id) {
+        foreach (self::prime_tasks($ids) as $id) {
             $task = get_post_meta($id, self::META, true);
             if (!is_array($task)) {
                 continue;

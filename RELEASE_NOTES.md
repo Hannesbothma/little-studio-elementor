@@ -5,7 +5,7 @@
 - **Remove import** can permanently delete its pages and unused templates. Shared media stays available to other pages and imports.
 - The converter drops more invisible overlays from the Elementor Structure panel.
 
-- If WordPress takes too long to confirm a request, the copied report retains the timeout and saved progress.
+- Import status checks read image metadata in smaller batches. The copied report also preserves the cause of a request timeout and any saved progress.
 
 ## LS Elementor 0.12.17
 
