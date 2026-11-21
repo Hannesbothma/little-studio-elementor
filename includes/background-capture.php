@@ -42,6 +42,28 @@ trait LSE_Background_Capture
         }
     }
 
+    public static function recover_worker($owner, $id)
+    {
+        $previous = get_current_user_id();
+        wp_set_current_user($owner);
+        try {
+            $state = self::delivery_session($id);
+            if (
+                $state &&
+                empty($state['done']) &&
+                !isset($state['error']) &&
+                !get_transient(self::key($id) . '_cancelled')
+            ) {
+                wp_schedule_single_event(time(), 'lse_scan_work', [
+                    $owner,
+                    $id,
+                ]);
+            }
+        } finally {
+            wp_set_current_user($previous);
+        }
+    }
+
     public static function capture_active($input)
     {
         $id = get_user_meta(get_current_user_id(), '_lse_capture', true);

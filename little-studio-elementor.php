@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Little Studio to Elementor
  * Description: Capture website links or import JSON/HTML into Elementor, then manage, refresh and edit imported pages.
- * Version: 0.12.15
+ * Version: 0.12.16
  * Plugin URI: https://github.com/Hannesbothma/little-studio-elementor
  * Update URI: https://github.com/Hannesbothma/little-studio-elementor
  * Requires at least: 6.8
@@ -12,7 +12,7 @@
  * Text Domain: little-studio-elementor
  */
 if ( ! defined( 'ABSPATH' ) ) { exit; }
-define( 'LSE_VERSION', '0.12.15' );
+define( 'LSE_VERSION', '0.12.16' );
 define( 'LSE_FILE', __FILE__ );
 // Keep this identity stable while the converted Elementor output stays compatible.
 define( 'LSE_CONVERTER_VERSION', 'capture-v19-0.12.15' );
@@ -44,6 +44,7 @@ LSE_Scrolling::init();
 LSE_Appearance::init();
 LSE_Updates::init();
 LSE_Plugin::init();
+add_action('wp_loaded', ['LSE_Spool', 'recover_workers']);
 add_action('lse_import_work', ['LSE_Importer', 'background_work'], 10, 2);
 add_action('lse_import_prune', ['LSE_Importer', 'background_prune'], 10, 2);
 add_action('lse_scan_work', ['LSE_Capture', 'capture_work'], 10, 2);

@@ -102,6 +102,33 @@ final class LSE_Spool
         }
     }
 
+    // A concurrent WP-Cron update can drop a single event. The later cleanup
+    // event keeps the job address available even when its browser has closed.
+    public static function recover_workers()
+    {
+        if (!wp_doing_cron()) {
+            return;
+        }
+        foreach (_get_cron_array() as $hooks) {
+            foreach (['import', 'scan'] as $kind) {
+                foreach ($hooks['lse_' . $kind . '_prune'] ?? [] as $event) {
+                    $args = $event['args'];
+                    if (
+                        count($args) !== 2 ||
+                        wp_next_scheduled('lse_' . $kind . '_work', $args)
+                    ) {
+                        continue;
+                    }
+                    if ($kind === 'import') {
+                        LSE_Importer::recover_worker(...$args);
+                    } else {
+                        LSE_Capture::recover_worker(...$args);
+                    }
+                }
+            }
+        }
+    }
+
     public static function kick()
     {
         if (!defined('DISABLE_WP_CRON') || !DISABLE_WP_CRON) {

@@ -102,6 +102,14 @@ trait LSE_Background_Import
         }
     }
 
+    public static function recover_worker($owner, $id)
+    {
+        $queue = get_option(self::background_key($id));
+        if (in_array($queue['phase'] ?? '', ['queued', 'running'], true)) {
+            wp_schedule_single_event(time(), 'lse_import_work', [$owner, $id]);
+        }
+    }
+
     public static function background_status($input)
     {
         $job = self::load($input['job'] ?? '');
