@@ -72,6 +72,53 @@ final class LSE_Importer
     {
         return esc_url_raw((string) $url, ['http', 'https', 'mailto', 'tel']);
     }
+    private static function source_aliases($page)
+    {
+        $aliases = $page['url_aliases'] ?? [];
+        if (!is_array($aliases)) {
+            throw new RuntimeException('Invalid source page aliases.');
+        }
+        $source = self::clean_url($page['url'] ?? '');
+        return array_values(
+            array_unique(
+                array_map(static function ($alias) use ($source) {
+                    self::text($alias, 2048);
+                    $alias = self::clean_url($alias);
+                    [$base, $query] = array_pad(explode('?', $alias, 2), 2, '');
+                    if (!$query || !$source || $base !== $source) {
+                        throw new RuntimeException(
+                            'A captured page alias needs the same URL path as its base page.',
+                        );
+                    }
+                    return $alias;
+                }, $aliases),
+            ),
+        );
+    }
+
+    private static function map_page(&$map, $page)
+    {
+        if (!$page['source_url']) {
+            return;
+        }
+        $map[$page['source_url']] = $page['url'];
+        $reserved = array_fill_keys($GLOBALS['wp']->public_query_vars, true);
+        foreach ($page['source_aliases'] ?? [] as $alias) {
+            parse_str((string) wp_parse_url($alias, PHP_URL_QUERY), $query);
+            $suffix = http_build_query(
+                array_diff_key($query, $reserved),
+                '',
+                '&',
+                PHP_QUERY_RFC3986,
+            );
+            $map[$alias] =
+                $page['url'] .
+                ($suffix
+                    ? (str_contains($page['url'], '?') ? '&' : '?') . $suffix
+                    : '');
+        }
+    }
+
     public static function check($input)
     {
         $fingerprint = $input['fingerprint'] ?? '';
@@ -162,7 +209,7 @@ final class LSE_Importer
             );
         }
         $seen = [];
-        foreach ($pages as $page) {
+        foreach ($pages as $index => $page) {
             if (!is_array($page)) {
                 throw new RuntimeException('Invalid page metadata.');
             }
@@ -181,8 +228,10 @@ final class LSE_Importer
             ) {
                 self::text($page[$field] ?? '', $limit);
             }
-            $seen[$key] = $page;
+            $page['url_aliases'] = self::source_aliases($page);
+            $pages[$index] = $seen[$key] = $page;
         }
+        $input['pages'] = $pages;
         if (
             !is_array($input['site'] ?? []) ||
             !is_array($input['site']['navigation'] ?? [])
@@ -302,6 +351,7 @@ final class LSE_Importer
                     'id' => $post,
                     'source_url' => self::clean_url($page['url'] ?? ''),
                     'source_slug' => (string) ($page['slug'] ?? ''),
+                    'source_aliases' => $page['url_aliases'],
                     'parent_key' => $page['parent_key'] ?? '',
                     'done' => false,
                     'initial_stamp' => self::stamp($post),
@@ -332,9 +382,7 @@ final class LSE_Importer
                 $page['edit_url'] = admin_url(
                     'post.php?post=' . $page['id'] . '&action=elementor',
                 );
-                if ($page['source_url']) {
-                    $job['map'][$page['source_url']] = $page['url'];
-                }
+                self::map_page($job['map'], $page);
             }
             unset($page);
             foreach ($job['pages'] as &$page) {

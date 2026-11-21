@@ -1,3 +1,7 @@
+## LS Elementor 0.12.12
+
+Large website captures package and validate media in smaller steps, reuse one URL lookup, and release the preview media after each page. Query URLs that return the exact same HTML as their base page share one draft. The report shows packaging, media rewriting and validation as separate stages.
+
 ## LS Elementor 0.12.11
 
 Large scans give the browser time to respond between page layout and stylesheet measurements. Scan and import recovery read or save one batch at a time. The copied report identifies when the importer is saving its browser recovery copy.

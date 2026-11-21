@@ -794,9 +794,11 @@
         (/\.html?$/i.test(file.name)
           ? M.fromHTML(text, file.name)
           : M.validate(JSON.parse(text.replace(/^\uFEFF/, ""))));
-      if (project.pages.some((p) => p.elementor)) {
-        for (const p of project.pages)
-          if (p.elementor) window.LSENative.requireWidgets(p.elementor);
+      const pause = M.browserTimeSlice();
+      for (const page of project.pages) {
+        const turn = pause();
+        if (turn) await turn;
+        if (page.elementor) window.LSENative.requireWidgets(page.elementor);
       }
       fingerprint = prepared
         ? await capturedFingerprint(project)
@@ -847,11 +849,21 @@
       ]
         .map((x) => "<span>" + esc(x) + "</span>")
         .join("");
-      $("#lse-pages").innerHTML = project.pages
-        .map((p) => {
-          const x = M.inspect(p);
-          return (
-            '<tr><td><input type="checkbox" checked data-page-key="' +
+      const findings = new Set(
+        Array.isArray(project.capture?.warnings)
+          ? project.capture.warnings.filter(
+              (warning) => typeof warning === "string",
+            )
+          : [],
+      );
+      const rows = [];
+      for (const p of project.pages) {
+        const turn = pause();
+        if (turn) await turn;
+        const x = M.inspect(p);
+        for (const warning of x.warnings) findings.add(warning);
+        rows.push(
+          '<tr><td><input type="checkbox" checked data-page-key="' +
             esc(p.key) +
             '" aria-label="Import ' +
             esc(p.title) +
@@ -867,25 +879,16 @@
             (x.warnings.length ? "review" : "") +
             '">' +
             (x.warnings.length ? "Needs setup" : "Ready") +
-            "</span></td></tr>"
-          );
-        })
-        .join("");
-      const captureWarnings = Array.isArray(project.capture?.warnings)
-        ? project.capture.warnings.filter((w) => typeof w === "string")
-        : [];
-      const findings = [
-        ...new Set([
-          ...captureWarnings,
-          ...project.pages.flatMap((p) => M.inspect(p).warnings),
-        ]),
-      ];
+            "</span></td></tr>",
+        );
+      }
+      $("#lse-pages").innerHTML = rows.join("");
       if (project.pages.some((p) => p.js.trim()) && !config.canScripts)
-        findings.push(
+        findings.add(
           "An administrator with script permission must import the interactive pages.",
         );
-      $("#lse-setup").hidden = !findings.length;
-      $("#lse-findings").innerHTML = window.LSEReports.render(findings);
+      $("#lse-setup").hidden = !findings.size;
+      $("#lse-findings").innerHTML = window.LSEReports.render([...findings]);
       const hasScripts = project.pages.some(
         (p) => p.js.trim() || /<script/i.test(p.html),
       );
@@ -1046,11 +1049,12 @@
             overwrite: $("#lse-overwrite").checked,
             title: source.title,
             pages: source.pages.map(
-              ({ key, title, slug, url, parent_key }) => ({
+              ({ key, title, slug, url, url_aliases, parent_key }) => ({
                 key,
                 title,
                 slug,
                 url,
+                url_aliases,
                 parent_key,
               }),
             ),
@@ -1102,7 +1106,10 @@
       progress(3, "Reading page image labels and fonts…");
       const imageAlt = new Map(),
         fontFamilies = new Map();
+      const pause = M.browserTimeSlice();
       for (const page of source.pages) {
+        const turn = pause();
+        if (turn) await turn;
         const doc = new DOMParser().parseFromString(page.html, "text/html");
         for (const img of doc.images)
           if (!imageAlt.has(img.getAttribute("src")))

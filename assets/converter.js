@@ -186,7 +186,7 @@
     );
   }
 
-  function validate(input) {
+  function* validateProject(input) {
     if (root.LSENative?.isTemplate(input))
       return root.LSENative.fromTemplates([
         { name: "template.json", data: input },
@@ -229,6 +229,7 @@
       );
     const keys = new Set();
     for (const page of p.pages) {
+      yield;
       if (
         !page ||
         !["key", "title", "html", "css", "js"].every((k) => string(page[k])) ||
@@ -271,6 +272,7 @@
       page.parent_key = page.parent_key || "";
     }
     for (const page of p.pages) {
+      yield;
       if (
         /(?:\b(?:src|href|poster)\s*=\s*["']|\burl\s*\(\s*["']?)(?:file:|[A-Za-z]:[\\/])/i.test(
           page.html + page.css + page.js,
@@ -296,6 +298,7 @@
     }
     const parents = new Map(p.pages.map((x) => [x.key, x.parent_key]));
     for (const [key, parent] of parents) {
+      yield;
       const seen = new Set([key]);
       let next = parent;
       while (next) {
@@ -327,7 +330,8 @@
         "audio/ogg": "ogg",
         "application/pdf": "pdf",
       };
-    for (const page of p.pages)
+    for (const page of p.pages) {
+      yield;
       for (const field of ["html", "css", "js"])
         for (const m of page[field].matchAll(
           /data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)/gi,
@@ -340,12 +344,16 @@
             p.assets.push({ url, name, type: m[1], data: m[0] });
           }
         }
-    for (const page of p.pages)
+    }
+    for (const page of p.pages) {
+      yield;
       for (const field of ["html", "css", "js"])
         for (const [uri, url] of inline)
           page[field] = page[field].split(uri).join(url);
+    }
     const urls = new Set();
     for (const a of p.assets) {
+      yield;
       if (
         !a ||
         !["url", "name", "type", "data"].every((k) => string(a[k]) && a[k]) ||
@@ -412,12 +420,38 @@
       throw Error("Invalid homepage or navigation records.");
     return p;
   }
+  function validate(input) {
+    const project = validateProject(input);
+    let step = project.next();
+    while (!step.done) step = project.next();
+    return step.value;
+  }
+
+  async function validateAsync(input) {
+    const project = validateProject(input);
+    const pause = browserTimeSlice();
+    let step = project.next();
+    while (!step.done) {
+      const turn = pause();
+      if (turn) await turn;
+      step = project.next();
+    }
+    return step.value;
+  }
+
   const rewriteCache = new WeakMap();
-  function rewrite(text, map) {
+  function rewrite(text, map, visit) {
+    const sourceText = String(text || "");
     const cached = map && rewriteCache.get(map);
-    if (cached)
-      return String(text || "").replace(cached.expression, cached.replace);
-    let result = String(text || "");
+    const apply = ({ expression, match }) =>
+      sourceText.replace(expression, (value, offset, original) => {
+        const target = match(value, offset, original);
+        if (target === undefined) return value;
+        if (!visit) return target;
+        visit(target);
+        return value;
+      });
+    if (cached) return apply(cached);
     const pairs = [];
     for (const [a, b] of Object.entries(map || {})) {
       if (a) {
@@ -428,7 +462,7 @@
       }
     }
     pairs.sort((a, b) => b[0].length - a[0].length);
-    if (!pairs.length) return result;
+    if (!pairs.length) return sourceText;
     const lookup = new Map(pairs);
     const expression = new RegExp(
       [...lookup.keys()]
@@ -436,14 +470,14 @@
         .join("|"),
       "g",
     );
-    const replace = (m, offset, source) =>
+    const match = (m, offset, source) =>
       /^https?:/i.test(m.replaceAll("\\/", "/")) &&
       /[\\\w./%~-]/.test(source.charAt(offset + m.length))
-        ? m
+        ? undefined
         : lookup.get(m);
     if (map && typeof map === "object" && Object.isFrozen(map))
-      rewriteCache.set(map, { expression, replace });
-    return result.replace(expression, replace);
+      rewriteCache.set(map, { expression, match });
+    return apply({ expression, match });
   }
   function inspect(page) {
     if (page.elementor) {
@@ -1640,46 +1674,81 @@
   }
 
   function resourceSession(project, map = {}) {
-    const previewMap = {},
-      originalAssets = new Map(),
-      blobs = [];
+    const aliases = Object.create(null);
     const styles = new Map();
     const destMap = Object.freeze({ ...map });
-    let users = 0,
-      disposed = false;
+    const fonts = new Set(project.fonts.map((font) => font.url));
+    let styleChars = 0;
+    let users = 0;
+    let disposed = false;
+    project.assets.forEach((asset, index) => {
+      const key = String(index);
+      aliases[asset.url] = key;
+      try {
+        aliases[new URL(asset.url).pathname] = key;
+      } catch {}
+      if (destMap[asset.url]) aliases[destMap[asset.url]] = key;
+    });
+    Object.freeze(aliases);
     const cleanup = () => {
       if (disposed && !users) {
-        for (const url of blobs) URL.revokeObjectURL(url);
-        blobs.length = 0;
         styles.clear();
+        styleChars = 0;
       }
     };
-    let previews;
-    async function preparePreviews() {
+    async function prepare(pageSource, css) {
+      const selected = new Set();
+      rewrite(pageSource, aliases, (index) => selected.add(Number(index)));
+      rewrite(css, aliases, (index) => selected.add(Number(index)));
+      for (const url of fonts) selected.add(Number(aliases[url]));
+      const previewMap = Object.create(null),
+        originalAssets = new Map();
       const pause = browserTimeSlice();
-      for (const asset of project.assets) {
-        const turn = pause();
-        if (turn) await turn;
-        const blob = URL.createObjectURL(
-          new Blob([asset.bytes], { type: asset.type }),
-        );
-        blobs.push(blob);
-        previewMap[asset.url] = blob;
-        try {
-          previewMap[new URL(asset.url).pathname] = blob;
-        } catch {}
-        if (map[asset.url]) previewMap[map[asset.url]] = blob;
-        originalAssets.set(blob, map[asset.url] || asset.url);
+      const dispose = () => {
+        for (const url of originalAssets.keys()) URL.revokeObjectURL(url);
+        originalAssets.clear();
+      };
+      try {
+        const blobs = new Map();
+        for (const index of selected) {
+          const turn = pause();
+          if (turn) await turn;
+          const asset = project.assets[index];
+          if (!asset) continue;
+          const blob = URL.createObjectURL(
+            new Blob([asset.bytes], { type: asset.type }),
+          );
+          blobs.set(String(index), blob);
+          originalAssets.set(blob, destMap[asset.url] || asset.url);
+        }
+        for (const [alias, index] of Object.entries(aliases))
+          if (blobs.has(index)) previewMap[alias] = blobs.get(index);
+        return {
+          previewMap: Object.freeze(previewMap),
+          originalAssets,
+          dispose,
+        };
+      } catch (error) {
+        dispose();
+        throw error;
       }
-      return Object.freeze(previewMap);
     }
     return {
-      prepare() {
-        return (previews ??= preparePreviews());
-      },
-      originalAssets,
+      prepare,
       destMap,
       styles,
+      rememberStyle(key, value) {
+        const length = key.length + value.length;
+        const limit = 8 * 1024 * 1024;
+        if (length > limit || styles.has(key)) return;
+        while (styleChars + length > limit) {
+          const first = styles.keys().next().value;
+          styleChars -= first.length + styles.get(first).length;
+          styles.delete(first);
+        }
+        styles.set(key, value);
+        styleChars += length;
+      },
       retain() {
         if (disposed) throw Error("The conversion resource session is closed.");
         users++;
@@ -1721,22 +1790,27 @@
     const resources =
       options.resources || resourceSession(project, options.map);
     resources.retain();
+    let preview;
     try {
+      const source = resolveLinks(project, page, resources.destMap);
+      const sourceCSS = (project.site_css || "") + "\n" + page.css;
+      preview = await resources.prepare(source, sourceCSS);
       return await convertDocument(
         project,
         page,
         { ...options, map: resources.destMap },
         resources,
+        { ...preview, source, sourceCSS },
       );
     } finally {
+      preview?.dispose();
       resources.release();
       if (!options.resources) resources.dispose();
     }
   }
-  async function convertDocument(project, page, options, resources) {
+  async function convertDocument(project, page, options, resources, preview) {
     const warnings = [...inspect(page).warnings];
-    const previewMap = await resources.prepare();
-    const { originalAssets } = resources;
+    const { originalAssets, previewMap, source, sourceCSS } = preview;
     const pause = browserTimeSlice();
     const restoreRefs = (value) =>
       String(value).replace(/blob:[^\s"')<>]+/g, (url) => {
@@ -1756,8 +1830,7 @@
                 Object.entries(value).map(([k, v]) => [k, restore(v)]),
               )
             : value;
-    const source = resolveLinks(project, page, options.map || {}),
-      doc = new DOMParser().parseFromString(source, "text/html");
+    const doc = new DOMParser().parseFromString(source, "text/html");
     warnings.push(...prepareSource(doc));
     const inlineScripts = [...doc.querySelectorAll("script:not([src])")]
       .filter(
@@ -1809,17 +1882,16 @@
     const style = doc.createElement("style");
     let fonts = "";
     for (const f of project.fonts) {
-      const a = project.assets.find((a) => a.url === f.url);
-      if (a)
+      const url = previewMap[f.url];
+      if (url)
         fonts +=
           "@font-face{font-family:" +
           JSON.stringify(f.family) +
           ";src:url(" +
-          JSON.stringify(previewMap[a.url]) +
+          JSON.stringify(url) +
           ");font-display:swap}";
     }
-    style.textContent =
-      rewrite((project.site_css || "") + "\n" + page.css, previewMap) + fonts;
+    style.textContent = rewrite(sourceCSS, previewMap) + fonts;
     doc.head.append(style);
     const csp = doc.createElement("meta");
     csp.httpEquiv = "Content-Security-Policy";
@@ -3570,7 +3642,7 @@
         for (const rule of rules) {
           const turn = pause();
           if (turn) await turn;
-          const key = String(!!options.preserveCSS) + rule.cssText;
+          const key = String(!!options.preserveCSS) + restoreRefs(rule.cssText);
           if (resources.styles.has(key)) {
             fragments.push(resources.styles.get(key));
             continue;
@@ -3651,7 +3723,8 @@
               "{" +
               (await sourceStyles(rule.cssRules)) +
               "}\n";
-          resources.styles.set(key, fragment);
+          fragment = restoreRefs(fragment);
+          resources.rememberStyle(key, fragment);
           fragments.push(fragment);
         }
         return fragments.join("");
@@ -3801,11 +3874,13 @@
   }
   root.LSEConverter = {
     validate,
+    validateAsync,
     fromHTML,
     rewrite,
     inspect,
     convert,
     resourceSession,
+    browserTimeSlice,
     resolveLinks,
     prepareSource,
     cssReferences,

@@ -63,10 +63,43 @@ try {
       Buffer.from("%PDF-1.4\n%%EOF").toString("base64"),
     ),
   ];
+  const duplicate = site + "/lodge/?itemId=terrace&p=99";
+  const different = site + "/lodge/?category=rooms";
+  records.push(
+    { ...records[1], url: duplicate, requested: duplicate },
+    page(different, "<title>Only rooms</title><main><h1>Rooms</h1></main>"),
+  );
   const result = await tab.evaluate(
-    async ({ site, records }) => {
-      const project = await LSECapture.packageWebsite(site + "/", records);
+    async ({ site, records, duplicate, different }) => {
+      const rewrite = LSEConverter.rewrite;
+      const maps = new Set(),
+        phases = [];
+      const project = await (async () => {
+        LSEConverter.rewrite = (text, map) => {
+          maps.add(map);
+          return rewrite(text, map);
+        };
+        try {
+          return await LSECapture.packageWebsite(
+            site + "/",
+            records,
+            [],
+            (phase) => phases.push(phase),
+          );
+        } finally {
+          LSEConverter.rewrite = rewrite;
+        }
+      })();
       const source = project.pages[0];
+      const draft = await LSEAdmin.request("start", {
+        fingerprint: crypto.randomUUID().replaceAll("-", "").repeat(2),
+        site_id: project.site_id,
+        title: source.title,
+        pages: [{ ...source, html: undefined, css: undefined, js: undefined }],
+        site: { home_key: source.key },
+        layout: "elementor_canvas",
+      });
+      const aliasQuery = new URL(draft.map[duplicate]).searchParams;
       const document = new DOMParser().parseFromString(
         source.html,
         "text/html",
@@ -105,6 +138,16 @@ try {
       );
       return {
         title: source.title,
+        reusedMediaMap: maps.size === 1 && Object.isFrozen([...maps][0]),
+        phases,
+        distinctQueryKept: project.pages.some((page) => page.url === different),
+        alias: source.url_aliases,
+        mappedAlias: {
+          draft: Number(aliasQuery.get("page_id")),
+          selectedImage: aliasQuery.get("itemId"),
+          reserved: aliasQuery.get("p"),
+        },
+        draftId: draft.pages[0].id,
         home: project.site.home_key === source.key,
         missingSlug: project.pages[1].slug,
         indexing: source.seo.indexing,
@@ -129,9 +172,24 @@ try {
         report,
       };
     },
-    { site, records },
+    { site, records, duplicate, different },
   );
   assert.equal(result.title, "Guest Lodge");
+  assert.equal(result.reusedMediaMap, true);
+  assert.deepEqual(result.phases, [
+    "Packaging page 1 of 3",
+    "Packaging page 2 of 3",
+    "Packaging page 3 of 3",
+    "Rewriting packaged media references",
+    "Validating captured page data",
+  ]);
+  assert(result.distinctQueryKept);
+  assert.deepEqual(result.alias, [duplicate]);
+  assert.deepEqual(result.mappedAlias, {
+    draft: result.draftId,
+    selectedImage: "terrace",
+    reserved: null,
+  });
   assert(result.home);
   assert.equal(result.missingSlug, "bad-zz");
   assert.equal(result.indexing, "noindex");

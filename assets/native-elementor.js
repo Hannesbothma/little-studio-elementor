@@ -130,7 +130,11 @@
       warnings = [];
     const count = (type) => nodes.filter((n) => n.widgetType === type).length;
     const fallbacks = count("html");
-    if (JSON.stringify(template).match(/https?:\/\//))
+    const hasURL = (entry) => /https?:\/\//.test(JSON.stringify(entry));
+    if (
+      nodes.some((node) => hasURL({ ...node, elements: undefined })) ||
+      hasURL({ ...template, content: undefined })
+    )
       warnings.push(
         "Review external media and page links. Files packaged in a Little Studio website JSON are remapped during import; unbundled resources remain external.",
       );

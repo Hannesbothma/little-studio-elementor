@@ -939,6 +939,8 @@ trait LSE_Management
                     $source['url'] ?? '',
                 );
                 $job['pages'][$index]['source_slug'] = $source['slug'] ?? '';
+                $job['pages'][$index]['source_aliases'] =
+                    $source['url_aliases'];
                 $job['pages'][$index]['regions'] = [];
             }
             if (isset($input['site']['navigation'])) {
@@ -961,9 +963,7 @@ trait LSE_Management
                 current_user_can('unfiltered_html');
             // Keep existing destinations and their addresses; never create replacement posts.
             foreach ($job['pages'] as $page) {
-                if ($page['source_url']) {
-                    $job['map'][$page['source_url']] = $page['url'];
-                }
+                self::map_page($job['map'], $page);
             }
             self::store($job);
             update_user_meta(

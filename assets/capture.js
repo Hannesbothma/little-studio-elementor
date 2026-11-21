@@ -3,7 +3,10 @@
   const A = window.LSEAdmin,
     M = window.LSEConverter,
     $ = (s) => document.querySelector(s);
-  const bytes = (data) => Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+  const bytes = (data) =>
+    Uint8Array.fromBase64
+      ? Uint8Array.fromBase64(data)
+      : Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
   const text = (record) => new TextDecoder().decode(bytes(record.data));
   const hash = async (value) =>
     [...new Uint8Array(await crypto.subtle.digest("SHA-256", value))]
@@ -69,7 +72,13 @@
       ? type
       : "";
   };
-  async function packageWebsite(source, records, warnings = []) {
+  async function packageWebsite(
+    source,
+    records,
+    warnings = [],
+    onStage = () => {},
+  ) {
+    const pause = M.browserTimeSlice();
     source = absolute(source, source);
     const resources = new Map(),
       assets = [],
@@ -81,13 +90,34 @@
       resources.set(r.requested, r);
     }
     const startPage = resources.get(source)?.url || source;
-    const pages = [
-      ...new Map(
-        records
-          .filter((r) => r.kind === "page" && r.type === "text/html")
-          .map((r) => [r.url, r]),
-      ).values(),
-    ];
+    const pagesByURL = new Map(
+      records
+        .filter(
+          (record) => record.kind === "page" && record.type === "text/html",
+        )
+        .map((record) => [record.url, record]),
+    );
+    const queryAliases = new Map();
+    const pages = [...pagesByURL.values()].filter((record) => {
+      const url = new URL(record.url);
+      if (!url.search || record.url === startPage) return true;
+      url.search = "";
+      const canonical = pagesByURL.get(url.href);
+      // Gallery state and tracking links can return exactly the same page.
+      // Only collapse a query URL if the capture also has its identical base page.
+      if (!canonical || canonical.data !== record.data) return true;
+      const aliases = queryAliases.get(canonical.url) || [];
+      aliases.push(record.url);
+      queryAliases.set(canonical.url, aliases);
+      return false;
+    });
+    const duplicates = pagesByURL.size - pages.length;
+    if (duplicates)
+      notes.add(
+        "Combined " +
+          duplicates +
+          " query variants with identical captured pages.",
+      );
     const startIndex = pages.findIndex((page) => page.url === startPage);
     if (startIndex > 0) pages.unshift(...pages.splice(startIndex, 1));
     if (!pages.length)
@@ -147,7 +177,7 @@
       const url = absolute(value, base);
       if (!url) return "";
       const fragment = new URL(value, base).hash;
-      if (assets.some((a) => a.url === url)) return url + fragment;
+      if (assetsByURL.has(url)) return url + fragment;
       if (assetMap.has(url)) {
         const mapped = assetMap.get(url);
         nameAsset(assetsByURL.get(mapped), url, hint);
@@ -220,9 +250,12 @@
       });
     };
     const output = [],
-      navigation = [],
-      documents = new Map();
-    for (const record of pages) {
+      navigation = [];
+    let home;
+    for (const [index, record] of pages.entries()) {
+      onStage("Packaging page " + (index + 1) + " of " + pages.length);
+      const turn = pause();
+      if (turn) await turn;
       const doc = new DOMParser().parseFromString(text(record), "text/html");
       const pageTitle =
         doc.title.trim() || doc.querySelector("h1")?.textContent.trim();
@@ -236,7 +269,7 @@
           doc.querySelector("base[href]")?.getAttribute("href") || record.url,
           record.url,
         ) || record.url;
-      documents.set(record.url, { doc, base });
+      if (index === 0) home = { doc, base };
       const key =
         "page-" + (await hash(encoder.encode(record.url))).slice(0, 20);
       const styles = [],
@@ -296,6 +329,8 @@
       for (const node of doc.querySelectorAll("base,meta[http-equiv]"))
         node.remove();
       for (const el of doc.querySelectorAll("*")) {
+        const turn = pause();
+        if (turn) await turn;
         if (el.hasAttribute("data-settings")) {
           try {
             const settings = JSON.parse(el.getAttribute("data-settings"));
@@ -449,6 +484,9 @@
         slug,
         url: record.url,
         parent_key: "",
+        ...(queryAliases.has(record.url) && {
+          url_aliases: queryAliases.get(record.url),
+        }),
         html: doc.documentElement.outerHTML,
         css: styles.join("\n"),
         js: scripts.join("\n;\n"),
@@ -488,7 +526,7 @@
       if (parent && parent.key !== item.key) item.parent_key = parent.key;
     }
     const first = output[0],
-      { doc, base } = documents.get(first.url),
+      { doc, base } = home,
       seen = new Set();
     for (const link of doc.querySelectorAll("nav a[href]")) {
       const url = absolute(link.getAttribute("href"), base),
@@ -511,11 +549,16 @@
     // Rewrite references discovered on later pages too, including URLs inside
     // source JavaScript and gallery data attributes. Keep these on the same
     // packaged media as the editable native Image widgets.
-    const packagedMedia = Object.fromEntries(assetMap);
-    for (const page of output)
+    onStage("Rewriting packaged media references");
+    const packagedMedia = Object.freeze(Object.fromEntries(assetMap));
+    for (const page of output) {
+      const turn = pause();
+      if (turn) await turn;
       for (const field of ["html", "css", "js"])
         page[field] = M.rewrite(page[field], packagedMedia);
-    return M.validate({
+    }
+    onStage("Validating captured page data");
+    return M.validateAsync({
       format: "little-studio-website",
       version: 1,
       site_id: "capture-" + (await hash(encoder.encode(source))).slice(0, 24),
@@ -902,6 +945,10 @@
             $("#lse-capture-url").value,
             raw,
             notes,
+            (phase) => {
+              status.textContent = phase;
+              scanSummary(phase);
+            },
           );
           if (durable) raw.length = 0;
           project.capture.failed_resources = step.failed_resources || [];
