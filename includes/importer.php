@@ -2661,6 +2661,7 @@ final class LSE_Importer
                 ) {
                     $changed = true;
                 }
+                wp_cache_delete($page['id'], 'post_meta');
             }
             if ($changed) {
                 foreach ($group as $member) {
@@ -2900,7 +2901,9 @@ final class LSE_Importer
             $job = self::load($lock['id']);
             if ($job['state'] === 'ready') {
                 LSE_Media::release(array_column($job['assets'], 'id'));
-                return self::status($input);
+                return !empty($input['worker'])
+                    ? ['id' => $job['id'], 'state' => $job['state']]
+                    : self::status($input);
             }
             if (!in_array($job['state'], ['importing', 'finishing'], true)) {
                 throw new RuntimeException(
@@ -2930,7 +2933,9 @@ final class LSE_Importer
             $job['state'] = 'ready';
             self::store($job);
             LSE_Media::release(array_column($job['assets'], 'id'));
-            return self::status(['job' => $job['id']]);
+            return !empty($input['worker'])
+                ? ['id' => $job['id'], 'state' => $job['state']]
+                : self::status(['job' => $job['id']]);
         } finally {
             self::unlock($lock);
         }
@@ -3016,6 +3021,11 @@ final class LSE_Importer
                 $post &&
                 !empty(get_post_meta($post->ID, '_lse_refresh_backup', true)) &&
                 hash_equals($page['stamp'] ?? '', $native_stamp);
+            if ($post) {
+                // WordPress caches all metadata for a post together. Keep only
+                // the fingerprints while checking the remaining imported pages.
+                wp_cache_delete($post->ID, 'post_meta');
+            }
         }
         unset($page);
         $job['background'] = self::background_status($input);

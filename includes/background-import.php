@@ -238,6 +238,7 @@ trait LSE_Background_Import
                         $result = self::finish([
                             'job' => $id,
                             'compact' => true,
+                            'worker' => true,
                         ]);
                         if ($result['state'] === 'ready') {
                             $queue['phase'] = 'ready';

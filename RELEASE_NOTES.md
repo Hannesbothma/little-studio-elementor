@@ -1,3 +1,7 @@
+## LS Elementor 0.12.14
+
+Large completed imports release page metadata as their results are checked. The background worker can finish without loading every page's metadata into one PHP request.
+
 ## LS Elementor 0.12.13
 
 Give the browser time to respond while calculating the identity of a large captured website before showing page review.
