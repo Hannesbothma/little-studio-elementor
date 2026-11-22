@@ -95,6 +95,11 @@ trait LSE_Background_Capture
                 'The saved capture batch is unavailable.',
             );
         }
+        // WP-Cron updates can drop newly queued events when requests overlap.
+        // A polling client can restore the address of a scan that is still live.
+        $args = [get_current_user_id(), $id];
+        LSE_Spool::schedule('lse_scan_prune', $args, DAY_IN_SECONDS);
+        LSE_Spool::schedule('lse_scan_work', $args);
         LSE_Spool::kick();
         return [
             'waiting' => true,

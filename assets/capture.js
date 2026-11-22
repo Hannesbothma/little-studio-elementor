@@ -629,7 +629,9 @@
       }
     }
     const menu = M.headerMenu(
-      doc.querySelector("header nav.header-nav-list"),
+      doc.querySelector(
+        "header nav.header-nav-list, header nav.elementor-nav-menu--main",
+      ),
       base,
     );
     if (menu) {

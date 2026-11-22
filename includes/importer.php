@@ -1697,10 +1697,24 @@ final class LSE_Importer
             $widget = $item['widgetType'] ?? '';
             $carousel = in_array(
                 $widget,
-                ['media-carousel', 'image-carousel', 'reviews', 'slides'],
+                [
+                    'media-carousel',
+                    'image-carousel',
+                    'reviews',
+                    'slides',
+                    'gallery',
+                ],
                 true,
             );
-            if ($native || $carousel || $widget === 'form') {
+            if (
+                $native ||
+                $carousel ||
+                in_array(
+                    $widget,
+                    ['form', 'nested-tabs', 'icon-list', 'icon-box'],
+                    true,
+                )
+            ) {
                 LSE_Native::element($item);
             }
             if (
@@ -1720,6 +1734,10 @@ final class LSE_Importer
                             'video',
                             'google_maps',
                             'nav-menu',
+                            'nested-tabs',
+                            'gallery',
+                            'icon-list',
+                            'icon-box',
                             'icon',
                             'form',
                             'media-carousel',
@@ -1843,7 +1861,17 @@ final class LSE_Importer
             if (
                 $native ||
                 $carousel ||
-                in_array($widget, ['icon', 'nav-menu'], true)
+                in_array(
+                    $widget,
+                    [
+                        'icon',
+                        'nav-menu',
+                        'icon-list',
+                        'icon-box',
+                        'nested-tabs',
+                    ],
+                    true,
+                )
             ) {
                 $settings = LSE_Native::settings(
                     $settings,

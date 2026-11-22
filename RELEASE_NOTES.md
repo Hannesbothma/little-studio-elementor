@@ -1,3 +1,11 @@
+## LS Elementor 0.12.20
+
+- Rebuild supported floating WhatsApp links as editable Elementor buttons with their original destination and prefilled message.
+- Convert supported Elementor Atomic tabs into native Nested Tabs with independently editable panel content.
+- Rebuild matching Elementor Pro header and footer menus against the imported WordPress menu, including submenus.
+- Convert supported Elementor grid galleries, icon lists and icon boxes into native widgets. Preserve layout wrappers on the rendered page while hiding redundant builder layers in the editor.
+- Restore missing WP-Cron events while a background scan is waiting.
+
 ## LS Elementor 0.12.19
 
 Restore click and keyboard navigation for imported Elementor Atomic tabs, including drafts saved by earlier versions.

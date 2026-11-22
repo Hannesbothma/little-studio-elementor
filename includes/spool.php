@@ -95,7 +95,10 @@ final class LSE_Spool
         if (wp_next_scheduled($hook, $args) !== false) {
             return;
         }
-        if (!wp_schedule_single_event(time() + $delay, $hook, $args)) {
+        if (
+            !wp_schedule_single_event(time() + $delay, $hook, $args) &&
+            wp_next_scheduled($hook, $args) === false
+        ) {
             throw new RuntimeException(
                 'WordPress could not schedule background processing. Check WP-Cron on this host.',
             );

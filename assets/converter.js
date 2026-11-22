@@ -1251,9 +1251,11 @@
     );
   }
   function headerMenu(nav, base) {
-    if (!nav || !nav.matches("header nav.header-nav-list")) return null;
+    if (!nav) return null;
     const link = (a) => {
-      if (!a || !a.textContent.trim()) return null;
+      if (!a || !a.textContent.trim() || !a.hasAttribute("href")) return null;
+      if (a.getAttribute("href") === "#")
+        return { label: a.textContent.trim().slice(0, 150), url: "#" };
       try {
         const url = new URL(a.getAttribute("href"), base);
         return ["http:", "https:", "tel:", "mailto:"].includes(url.protocol)
@@ -1263,6 +1265,25 @@
         return null;
       }
     };
+    if (nav.matches("nav.elementor-nav-menu--main")) {
+      const list = (ul) => {
+        if (!ul) return null;
+        const items = [];
+        for (const li of ul.children) {
+          const item = link(li.querySelector(":scope > a[href]"));
+          if (!item || li.tagName !== "LI") return null;
+          const sub = li.querySelector(":scope > ul");
+          if (sub) {
+            item.children = list(sub);
+            if (!item.children) return null;
+          }
+          items.push(item);
+        }
+        return items.length ? items : null;
+      };
+      return list(nav.querySelector(":scope > ul.elementor-nav-menu"));
+    }
+    if (!nav.matches("header nav.header-nav-list")) return null;
     const items = [];
     for (const row of nav.children) {
       const folder = row.querySelector(
@@ -1714,8 +1735,281 @@
       mute: node.hasAttribute("muted") ? "yes" : "",
     };
   }
+  function floatingWhatsApp(doc) {
+    for (const placeholder of doc.querySelectorAll(
+      ".qlwapp[data-button][data-contacts]",
+    )) {
+      let button, contacts, scheme;
+      try {
+        button = JSON.parse(placeholder.dataset.button);
+        contacts = JSON.parse(placeholder.dataset.contacts);
+        scheme = JSON.parse(placeholder.dataset.scheme || "{}");
+      } catch {
+        continue;
+      }
+      const active =
+        Array.isArray(contacts) &&
+        contacts.filter((contact) => Number(contact?.active) === 1);
+      const side = { "bottom-left": "left", "bottom-right": "right" }[
+        button?.position
+      ];
+      if (
+        !side ||
+        button.box !== "no" ||
+        button.timedays?.length ||
+        active?.length !== 1
+      )
+        continue;
+      const [contact] = active;
+      if (
+        contact.type !== "phone" ||
+        contact.timedays?.length ||
+        contact.display?.devices !== "all" ||
+        contact.display?.target?.include !== 1 ||
+        contact.display?.target?.ids?.length ||
+        Object.values(contact.display?.entries || {}).some(
+          (entry) => entry?.ids?.length,
+        ) ||
+        Object.values(contact.display?.taxonomies || {}).some(
+          (entry) => entry?.ids?.length,
+        )
+      )
+        continue;
+      const phone = String(contact.phone || "").replace(/[+ ().-]/g, "");
+      if (!/^[1-9][0-9]{6,14}$/.test(phone)) continue;
+      const target = new URL("https://wa.me/" + phone);
+      if (typeof contact.message === "string" && contact.message.trim())
+        target.searchParams.set("text", contact.message.trim().slice(0, 1200));
+      const color = (value, fallback) =>
+        /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(value) ? value : fallback;
+      const anchor = doc.createElement("a");
+      anchor.dataset.lseWhatsapp = "";
+      anchor.textContent = "WhatsApp";
+      anchor.setAttribute("aria-label", "WhatsApp");
+      anchor.href = target.href;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      anchor.style.cssText =
+        "position:fixed;bottom:24px;" +
+        side +
+        ":20px;z-index:9999;display:inline-flex;align-items:center;justify-content:center;width:72px;height:40px;border-radius:24px;font-size:24px;color:" +
+        color(scheme.text, "#ffffff") +
+        ";background-color:" +
+        color(scheme.brand, "#25d366");
+      placeholder.replaceWith(anchor);
+    }
+  }
+  function nestedTabPanels(group) {
+    const buttons = [
+      ...group.querySelectorAll(
+        ':scope > .e-tabs-menu-base > button[role="tab"][aria-controls]',
+      ),
+    ];
+    const panels = [
+      ...group.querySelectorAll(
+        ':scope > .e-tabs-content-area-base > [role="tabpanel"]',
+      ),
+    ];
+    if (
+      buttons.length < 2 ||
+      buttons.length !== panels.length ||
+      buttons.length > 30
+    )
+      return null;
+    const matched = buttons.map((button) =>
+      panels.find((panel) => panel.id === button.getAttribute("aria-controls")),
+    );
+    if (
+      matched.includes(undefined) ||
+      new Set(matched).size !== panels.length ||
+      buttons.some(
+        (button) =>
+          !button.textContent.trim() ||
+          button.disabled ||
+          button.querySelector("img,svg,a"),
+      )
+    )
+      return null;
+    return { buttons, panels: matched };
+  }
+  function nativeFontIcon(node) {
+    const icon = node?.querySelector("svg.e-font-icon-svg, i");
+    for (const name of icon?.classList || []) {
+      const match = /^(?:e-)?(fas|far|fab)-([a-z0-9-]+)$/.exec(name);
+      if (!match) continue;
+      return {
+        library: { fas: "fa-solid", far: "fa-regular", fab: "fa-brands" }[
+          match[1]
+        ],
+        value: match[1] + " fa-" + match[2],
+      };
+    }
+    return null;
+  }
+  function nativeIconList(node, win) {
+    if (
+      !node.matches(".elementor-widget-icon-list") ||
+      !root.LSE_CONFIG?.widgets?.includes("icon-list")
+    )
+      return null;
+    const list = node.querySelector("ul.elementor-icon-list-items");
+    if (!list) return null;
+    const items = [...list.children].map((li, index) => {
+      const label = li.querySelector(".elementor-icon-list-text");
+      const link = li.querySelector("a[href]");
+      const icon = nativeFontIcon(li);
+      if (
+        !label ||
+        (li.querySelector("svg,i") && !icon) ||
+        li.querySelectorAll("a").length > 1
+      )
+        return null;
+      return {
+        _id: slideKey(li, index),
+        text: label.textContent.trim(),
+        ...(icon && { selected_icon: icon }),
+        ...(link && { link: sourceLink(link) }),
+      };
+    });
+    if (!items.length || items.includes(null)) return null;
+    const label = list.querySelector(".elementor-icon-list-text");
+    const look = win.getComputedStyle(label);
+    const icon = list.querySelector(".elementor-icon-list-icon svg");
+    const paint = icon && win.getComputedStyle(icon);
+    const settings = {
+      icon_list: items,
+      view: list.classList.contains("elementor-inline-items")
+        ? "inline"
+        : "traditional",
+      text_color: look.color,
+      icon_typography_typography: "custom",
+      icon_typography_font_family: fontStack(look.fontFamily).family,
+      icon_typography_font_size: px(look.fontSize),
+      icon_typography_font_weight: look.fontWeight,
+      ...(paint && { icon_color: paint.fill, icon_size: px(paint.width) }),
+    };
+    for (const level of ["", "_tablet", "_mobile"]) {
+      const prefix =
+        "elementor-" + (level ? level.slice(1) + "-" : "") + "align-";
+      const alignment = [...node.classList].find((name) =>
+        name.startsWith(prefix),
+      );
+      if (alignment)
+        settings["icon_align" + level] = alignment.slice(prefix.length);
+    }
+    return settings;
+  }
+  function nativeIconBox(node, win) {
+    if (
+      !node.matches(".elementor-widget-icon-box") ||
+      !root.LSE_CONFIG?.widgets?.includes("icon-box")
+    )
+      return null;
+    const title = node.querySelector(".elementor-icon-box-title");
+    const description = node.querySelector(".elementor-icon-box-description");
+    const icon = nativeFontIcon(node.querySelector(".elementor-icon-box-icon"));
+    const links = [...node.querySelectorAll("a[href]")];
+    if (!title || !icon || links.some((link) => link.href !== links[0].href))
+      return null;
+    const label = title.querySelector("a,span") || title;
+    const look = win.getComputedStyle(label);
+    const paint = win.getComputedStyle(
+      node.querySelector(
+        ".elementor-icon-box-icon svg, .elementor-icon-box-icon i",
+      ),
+    );
+    const settings = {
+      selected_icon: icon,
+      title_text: sourceHTML(label, true),
+      description_text: description ? sourceHTML(description, true) : "",
+      title_size: title.localName,
+      title_color: look.color,
+      title_typography_typography: "custom",
+      title_typography_font_family: fontStack(look.fontFamily).family,
+      title_typography_font_size: px(look.fontSize),
+      title_typography_font_weight: look.fontWeight,
+      primary_color: paint.fill !== "none" ? paint.fill : paint.color,
+      size: px(paint.width),
+      ...(links[0] && { link: sourceLink(links[0]) }),
+    };
+    const position =
+      /(?:^|\s)elementor-position-(inline-start|inline-end|block-start)(?:\s|$)/.exec(
+        node.className,
+      );
+    const mobile =
+      /(?:^|\s)elementor-mobile-position-(inline-start|inline-end|block-start)(?:\s|$)/.exec(
+        node.className,
+      );
+    if (position) settings.position = position[1];
+    if (mobile) settings.position_mobile = mobile[1];
+    return settings;
+  }
+  function nativeGallery(node, restoreURL) {
+    if (
+      !node.matches(".elementor-widget-gallery") ||
+      !root.LSE_CONFIG?.widgets?.includes("gallery")
+    )
+      return null;
+    const source = backgroundSettings(node);
+    if (
+      source.gallery_layout !== "grid" ||
+      (source.gallery_type && source.gallery_type !== "single")
+    )
+      return null;
+    const cards = [
+      ...node.querySelectorAll(".elementor-gallery__container > a"),
+    ];
+    if (
+      !cards.length ||
+      cards.some((card) =>
+        card.querySelector(
+          ".elementor-gallery-item__content,[data-elementor-lightbox-video]",
+        ),
+      )
+    )
+      return null;
+    const gallery = cards.map((card) => {
+      const href = card.getAttribute("href");
+      if (
+        card.getAttribute("data-elementor-open-lightbox") !== "yes" ||
+        !href ||
+        !/^https?:\/\//i.test(restoreURL(href))
+      )
+        return null;
+      return { id: 0, url: restoreURL(href) };
+    });
+    if (gallery.includes(null)) return null;
+    const settings = {
+      gallery,
+      gallery_type: "single",
+      gallery_layout: "grid",
+      link_to: "file",
+    };
+    if (/^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/.test(source.aspect_ratio || ""))
+      settings.aspect_ratio = source.aspect_ratio;
+    if (source.overlay_background === "yes")
+      settings.overlay_background = "yes";
+    for (const suffix of [
+      "",
+      "_widescreen",
+      "_laptop",
+      "_tablet_extra",
+      "_tablet",
+      "_mobile_extra",
+      "_mobile",
+    ]) {
+      const columns = Number(source["columns" + suffix]);
+      const gap = source["gap" + suffix]?.size;
+      if (Number.isInteger(columns) && columns >= 1 && columns <= 12)
+        settings["columns" + suffix] = columns;
+      if (typeof gap === "number" && gap >= 0 && gap <= 100)
+        settings["gap" + suffix] = px(gap);
+    }
+    return settings;
+  }
   function prepareSource(doc) {
     prepareLazyMedia(doc);
+    floatingWhatsApp(doc);
     const warnings = [];
     for (const divider of doc.querySelectorAll(".section-divider-display")) {
       const section = divider.closest("section[data-current-context]");
@@ -2196,6 +2490,18 @@
           ]),
         );
       const expected = signature(project.site.navigation);
+      for (const widget of doc.querySelectorAll(
+        "header .elementor-widget-nav-menu,footer .elementor-widget-nav-menu",
+      )) {
+        const nav = widget.querySelector("nav.elementor-nav-menu--main");
+        if (signature(headerMenu(nav, page.url) || []) === expected)
+          widget.setAttribute(
+            "data-lse-wp-menu",
+            nav.matches(".elementor-nav-menu--layout-vertical")
+              ? "vertical"
+              : "horizontal",
+          );
+      }
       for (const header of doc.querySelectorAll("header")) {
         const navs = Array.from(header.querySelectorAll("nav.header-nav-list"));
         if (
@@ -2430,6 +2736,22 @@
           if (nativeButtons) nativeInteractions.add(region);
           else islands.add(region);
         }
+      const tabs = new Map(),
+        tabsPanels = new Set();
+      if (root.LSE_CONFIG?.widgets?.includes("nested-tabs")) {
+        for (const group of d.querySelectorAll(".e-tabs-base")) {
+          const resolved = nestedTabPanels(group);
+          if (!resolved) continue;
+          tabs.set(group, resolved);
+          for (const panel of resolved.panels) {
+            // Measure inactive panels with their real content and authored layout.
+            panel.hidden = false;
+            if (panel.style.display === "none")
+              panel.style.removeProperty("display");
+            panel.classList.add("e--selected");
+          }
+        }
+      }
       const formWidgets = new Map();
       for (const n of d.querySelectorAll("form")) {
         const block = n.closest('[data-widget_type^="form."]') || n;
@@ -2443,10 +2765,11 @@
       for (const n of d.querySelectorAll(
         "dialog,[data-lse-interaction],.elementor-widget-nav-menu",
       ))
-        islands.add(n);
+        if (!n.hasAttribute("data-lse-wp-menu")) islands.add(n);
       for (const n of d.querySelectorAll("button[aria-controls]")) {
         if (
           n.closest("[data-lse-wp-menu]") ||
+          tabs.has(n.closest(".e-tabs-base")) ||
           (n.hasAttribute("data-lse-menu-toggle") && n.closest("header"))
         )
           continue;
@@ -2553,6 +2876,9 @@
           root.LSE_CONFIG?.widgets?.includes("slides") &&
           slidesSettings(node, w);
         const carousel = carouselSettings(node);
+        const gallery = nativeGallery(node, restoreRefs);
+        const iconList = nativeIconList(node, w);
+        const iconBox = nativeIconBox(node, w);
         const video =
           tag === "iframe" && node.hasAttribute("data-lse-video")
             ? JSON.parse(node.getAttribute("data-lse-video"))
@@ -2585,6 +2911,135 @@
             menu_typography_font_size: px(style.fontSize),
             menu_typography_font_weight: style.fontWeight,
           });
+          if (node.matches(".elementor-widget-nav-menu")) {
+            const source = node.querySelector("nav.elementor-nav-menu--main");
+            const alignment = [...node.classList].find((name) =>
+              /^elementor-nav-menu__align-(start|center|end|justify)$/.test(
+                name,
+              ),
+            );
+            if (alignment)
+              settings.align_items = alignment.replace(
+                "elementor-nav-menu__align-",
+                "",
+              );
+            settings.menu_name =
+              source?.getAttribute("aria-label") ||
+              (node.closest("footer")
+                ? "Footer navigation"
+                : "Main navigation");
+            const breakpoint = [...node.classList].find((name) =>
+              /^elementor-nav-menu--dropdown-(mobile|mobile_extra|tablet)$/.test(
+                name,
+              ),
+            );
+            if (node.querySelector(".elementor-menu-toggle")) {
+              settings.dropdown =
+                breakpoint?.replace("elementor-nav-menu--dropdown-", "") ||
+                "tablet";
+              settings.toggle = "burger";
+            }
+            if (source?.classList.contains("e--pointer-underline"))
+              settings.pointer = "underline";
+            settings.submenu_icon = {
+              value: "fas fa-caret-down",
+              library: "fa-solid",
+            };
+            const anchor = source?.querySelector("a.elementor-item");
+            if (anchor) {
+              const style = w.getComputedStyle(anchor);
+              settings.padding_horizontal_menu_item = px(style.paddingLeft);
+              settings.padding_vertical_menu_item = px(style.paddingTop);
+              const line = w.getComputedStyle(anchor, "::after");
+              if (
+                settings.pointer === "underline" &&
+                line.backgroundColor !== "rgba(0, 0, 0, 0)"
+              ) {
+                settings.pointer_color_menu_item_hover = line.backgroundColor;
+                settings.pointer_color_menu_item_active = line.backgroundColor;
+                settings.pointer_width = px(line.height);
+              }
+            }
+          }
+        } else if (node.hasAttribute("data-lse-whatsapp")) {
+          widget = "button";
+          const color = w.getComputedStyle(node);
+          Object.assign(settings, {
+            _title: "WhatsApp",
+            text: '<span class="screen-reader-text">WhatsApp</span>',
+            link: sourceLink(node),
+            selected_icon: { value: "fab fa-whatsapp", library: "fa-brands" },
+            button_text_color: color.color,
+            background_color: color.backgroundColor,
+          });
+        } else if (tabs.has(node)) {
+          widget = "nested-tabs";
+          const { buttons, panels } = tabs.get(node);
+          const standard =
+            buttons.find(
+              (button) => button.getAttribute("aria-selected") !== "true",
+            ) || buttons[0];
+          const active =
+            buttons.find(
+              (button) => button.getAttribute("aria-selected") === "true",
+            ) || buttons[0];
+          const normal = w.getComputedStyle(standard);
+          const selected = w.getComputedStyle(active);
+          const label = w.getComputedStyle(
+            standard.firstElementChild || standard,
+          );
+          const list = w.getComputedStyle(standard.parentElement);
+          const spacing = w.getComputedStyle(node);
+          Object.assign(settings, {
+            _title: "Tabs",
+            tabs: buttons.map((button, i) => ({
+              _id: slideKey(button, i),
+              tab_title: button.textContent.trim().slice(0, 150),
+            })),
+            tabs_direction: "block-start",
+            breakpoint_selector: "none",
+            title_typography_typography: "custom",
+            title_typography_font_family: fontStack(label.fontFamily).family,
+            title_typography_font_size: px(label.fontSize),
+            title_typography_font_weight: label.fontWeight,
+            tabs_title_space_between: px(list.columnGap),
+            tabs_title_spacing: px(spacing.rowGap),
+            tabs_title_border_radius: radius(normal.borderRadius),
+            padding: dim(normal, "padding"),
+            title_text_color: label.color,
+            title_text_color_active: w.getComputedStyle(
+              active.firstElementChild || active,
+            ).color,
+            tabs_title_background_color_background: "classic",
+            tabs_title_background_color_color: normal.backgroundColor,
+            tabs_title_background_color_active_background: "classic",
+            tabs_title_background_color_active_color: selected.backgroundColor,
+          });
+          children = panels.map((panel, i) => {
+            const child = create(panel, depth + 1);
+            delete child.settings._element_id;
+            delete child.settings.lse_attributes.role;
+            delete child.settings.lse_attributes["aria-labelledby"];
+            child.settings._title = settings.tabs[i].tab_title;
+            tabsPanels.add(panel);
+            child.isInner = true;
+            return child;
+          });
+        } else if (iconList) {
+          widget = "icon-list";
+          settings._title = "Icon list";
+          Object.assign(settings, iconList);
+        } else if (iconBox) {
+          widget = "icon-box";
+          settings._title = node
+            .querySelector(".elementor-icon-box-title")
+            .textContent.trim()
+            .slice(0, 100);
+          Object.assign(settings, iconBox);
+        } else if (gallery) {
+          widget = "gallery";
+          settings._title = "Photo gallery";
+          Object.assign(settings, gallery);
         } else if (tag === "svg" && node.hasAttribute("data-lse-icon-asset")) {
           widget = "icon";
           settings.selected_icon = {
@@ -3168,7 +3623,14 @@
         const entry = byId.get(node.id);
         const { tag, node: dom } = entry;
         const children = node.elements;
-        if (entry.widget) return [node];
+        if (entry.widget) {
+          if (entry.widget === "nested-tabs")
+            for (const panel of children)
+              panel.elements = panel.elements.flatMap((child) =>
+                pageBlocks(child, panel.id),
+              );
+          return [node];
+        }
         const decorative = !children.length;
         if (
           decorative &&
@@ -3205,7 +3667,7 @@
         );
         const removableWrapper =
           (builderWrapper || children.length === 1) &&
-          !hasDesignControls(entry) &&
+          (builderWrapper || !hasDesignControls(entry)) &&
           !dom.matches("[role],[tabindex]") &&
           ![...dom.attributes].some((attribute) =>
             attribute.name.startsWith("aria-"),
@@ -3396,6 +3858,24 @@
             "__LSE_SCOPE__ .elementor-element-" +
             element.id +
             ":not([data-lse-menu-open]){display:none!important}\n";
+        if (widget === "nested-tabs") {
+          const scope = "__LSE_SCOPE__ .elementor-element-" + element.id;
+          css +=
+            scope +
+            " .e-n-tabs-content > .e-con:not(.e-active){display:none!important}\n";
+        }
+        if (entry.node.hasAttribute("data-lse-whatsapp")) {
+          const scope = "__LSE_SCOPE__ .elementor-element-" + element.id;
+          css +=
+            scope +
+            " .elementor-button{width:72px;height:40px;display:flex;align-items:center;justify-content:center;border-radius:24px;padding:0}" +
+            scope +
+            " .elementor-button-icon{font-size:24px;margin:0;display:flex}" +
+            scope +
+            " .screen-reader-text{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}" +
+            scope +
+            " .elementor-button-content-wrapper{gap:0}";
+        }
         if (widget === "image")
           css +=
             ":where(__LSE_SCOPE__ .elementor-element-" +
@@ -3820,12 +4300,13 @@
               }
             }
             if (!widget) {
-              target["lse_display" + suffix] =
-                !s.display.includes("flex") &&
-                !s.display.includes("grid") &&
-                s.inlineFlow
-                  ? "flex"
-                  : s.display;
+              if (!tabsPanels.has(entry.node))
+                target["lse_display" + suffix] =
+                  !s.display.includes("flex") &&
+                  !s.display.includes("grid") &&
+                  s.inlineFlow
+                    ? "flex"
+                    : s.display;
               target["lse_text_align" + suffix] = s["text-align"];
               if (s.explicitHeight || s.fillHeight)
                 target["lse_height" + suffix] = sourceSize(
