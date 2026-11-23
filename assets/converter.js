@@ -797,6 +797,8 @@
   const outerProps = [
     "display",
     "box-sizing",
+    "float",
+    "clear",
     "position",
     "top",
     "right",
@@ -2714,6 +2716,7 @@
         [390, "_mobile"],
       ]);
       const floatedRows = new Map();
+      const convertedFloatRows = new Set();
       const sourceOverflow = [];
       const sourceLabel = (node) => {
         const names = [node.id, ...node.classList].map((name) =>
@@ -2736,6 +2739,7 @@
       // Capture each CSS transition instead of stretching a phone measurement
       // across the entire tablet/mobile range.
       const boundaries = new Set(widths);
+      const measurementWidths = new Map();
       const collectBoundaries = (rules) => {
         for (const rule of rules) {
           if (rule.type === 4)
@@ -2743,10 +2747,18 @@
               /\b(min|max)-width\s*:\s*([\d.]+)px/gi,
             )) {
               const edge = Number(match[2]);
-              for (const value of match[1].toLowerCase() === "min"
-                ? [edge, edge - 0.02]
-                : [edge])
-                if (value >= 390 && value <= 1440) boundaries.add(value);
+              if (edge >= 390 && edge <= 1440) boundaries.add(edge);
+              if (
+                match[1].toLowerCase() === "min" &&
+                edge - 0.02 >= 390 &&
+                edge - 0.02 <= 1440
+              ) {
+                const below = edge - 0.02;
+                boundaries.add(below);
+                // Browsers round iframe viewport widths to whole CSS pixels.
+                // Measure below the breakpoint while emitting its precise boundary.
+                measurementWidths.set(below, Math.ceil(edge) - 1);
+              }
             }
           if (rule.cssRules) collectBoundaries(rule.cssRules);
         }
@@ -3342,7 +3354,7 @@
         "left",
       ];
       for (const width of widths) {
-        frame.style.width = width + "px";
+        frame.style.width = (measurementWidths.get(width) ?? width) + "px";
         await new Promise((r) => setTimeout(r, 25));
         fitHeadings();
         let overflow;
@@ -3469,45 +3481,67 @@
             (node) => w.getComputedStyle(node).display !== "none",
           );
           if (
-            layoutDevices.has(width) &&
             !entry.widget &&
             s.display === "block" &&
-            flowChildren.length > 1 &&
-            (floatedRows.size < 12 || floatedRows.has(entry))
+            flowChildren.length > 1
           ) {
-            let first;
+            const columns = [];
             for (const node of flowChildren) {
-              const float = w.getComputedStyle(node).cssFloat;
-              if (float !== "left" && float !== "right") continue;
-              const box = node.getBoundingClientRect();
-              if (box.width < 1 || box.height < 1) continue;
-              if (!first || Math.abs(first.box.top - box.top) > 2) {
-                first = { node, box, float };
-                continue;
+              const style = w.getComputedStyle(node);
+              if (["absolute", "fixed"].includes(style.position)) continue;
+              const float = style.cssFloat;
+              if (float === "left" || float === "right") {
+                const box = node.getBoundingClientRect();
+                if (box.width >= 1 && box.height >= 1)
+                  columns.push({ node, box, float });
               }
-              if (
-                box.left < first.box.right - 2 &&
-                first.box.left < box.right - 2
+            }
+            // A Bootstrap-style row contains ordered, same-line floats.
+            // Leave mixed flow and wrapped floats to the source CSS.
+            if (
+              s.direction === "ltr" &&
+              columns.length === flowChildren.length &&
+              columns.every(
+                ({ box, float }, index) =>
+                  float === "left" &&
+                  Math.abs(box.top - columns[0].box.top) <= 2 &&
+                  (!index || box.left >= columns[index - 1].box.right - 1),
               )
-                continue;
-              const origin = entry.node.getBoundingClientRect().left;
-              const describeColumn = (column) =>
-                sourceLabel(column.node) +
-                " @x=" +
-                Math.round(column.box.left - origin) +
-                "px, width=" +
-                Math.round(column.box.width) +
-                "px, float=" +
-                column.float;
-              if (!floatedRows.has(entry)) floatedRows.set(entry, []);
-              floatedRows.get(entry).push({
-                width,
-                columns:
-                  describeColumn(first) +
-                  " / " +
-                  describeColumn({ node, box, float }),
-              });
-              break;
+            ) {
+              props.floatRow = true;
+              convertedFloatRows.add(entry.element.id);
+            } else if (
+              layoutDevices.has(width) &&
+              (floatedRows.size < 12 || floatedRows.has(entry))
+            ) {
+              const first = columns[0];
+              const second =
+                first &&
+                columns
+                  .slice(1)
+                  .find(
+                    ({ box }) =>
+                      Math.abs(first.box.top - box.top) <= 2 &&
+                      (box.left >= first.box.right - 2 ||
+                        first.box.left >= box.right - 2),
+                  );
+              if (second) {
+                const origin = entry.node.getBoundingClientRect().left;
+                const describeColumn = (column) =>
+                  sourceLabel(column.node) +
+                  " @x=" +
+                  Math.round(column.box.left - origin) +
+                  "px, width=" +
+                  Math.round(column.box.width) +
+                  "px, float=" +
+                  column.float;
+                if (!floatedRows.has(entry)) floatedRows.set(entry, []);
+                floatedRows.get(entry).push({
+                  width,
+                  columns:
+                    describeColumn(first) + " / " + describeColumn(second),
+                });
+              }
             }
           }
           props.inlineFlow =
@@ -3775,10 +3809,16 @@
           dom.matches(
             ".sqs-block,.sqs-block-content,.content-wrapper,.content,.sqs-layout,.sqs-row,.image-block-outer-wrapper,.fluid-image-animation-wrapper,.fluid-image-container,.fluid-image-component-root,.js-content-mode-element-wrapper,.js-content-mode-element,.header-menu-nav-folder-content,.header-menu-nav-wrapper,.header-menu-nav-item-content,.header-announcement-bar-wrapper,.product-content-wrapper,.product-gallery-slides,.gallery-lightbox-wrapper,.gallery-lightbox-list,.gallery-lightbox-item-wrapper,.gallery-lightbox-item-src,.sqs-text-block-container,.sqs-html-content",
           ) && !!dom.closest("#siteWrapper,.sqs-layout,.fluid-engine");
+        const keepsFloatFrame =
+          tag !== "body" &&
+          children.some((child) => convertedFloatRows.has(child.id)) &&
+          hasDesignControls(entry);
         const shell =
           isLayout &&
           !kind &&
           !decorative &&
+          !keepsFloatFrame &&
+          !convertedFloatRows.has(node.id) &&
           (sectionFrame ||
             ((!keepBlock || pageFrame) &&
               !section &&
@@ -4042,6 +4082,10 @@
           );
           const sourceValues = {};
           const sourceVariable = (name) => "var(--lse-source-" + name + ")";
+          const inlineRow =
+            !s.display.includes("flex") &&
+            !s.display.includes("grid") &&
+            (s.floatRow || s.inlineFlow);
           if (textWidget)
             sourceValues["font-size"] = s.typography.fontSize || s["font-size"];
           if (!widget || widget !== "html") {
@@ -4049,9 +4093,7 @@
               ? s.display === "inline"
                 ? "inline-block"
                 : s.display
-              : !s.display.includes("flex") &&
-                  !s.display.includes("grid") &&
-                  s.inlineFlow
+              : inlineRow
                 ? "flex"
                 : s.display;
             sourceValues.width = s.specifiedWidth || "auto";
@@ -4064,7 +4106,9 @@
             sourceValues["image-height"] =
               s.image.specifiedHeight || s.image.height;
           if (!widget) {
-            sourceValues["flex-direction"] = s["flex-direction"];
+            sourceValues["flex-direction"] = s.floatRow
+              ? "row"
+              : s["flex-direction"];
             sourceValues["flex-wrap"] = s["flex-wrap"];
             sourceValues["row-gap"] = (parseFloat(s["row-gap"]) || 0) + "px";
             sourceValues["column-gap"] =
@@ -4080,6 +4124,10 @@
               "align-content",
             ])
               sourceValues[name] = s[name];
+            if (s.floatRow) {
+              sourceValues["justify-content"] = "flex-start";
+              sourceValues["align-items"] = "flex-start";
+            }
             sourceValues["min-height"] =
               parseFloat(s["min-height"]) > 0
                 ? s.sourceMinHeight || s["min-height"]
@@ -4393,12 +4441,7 @@
             }
             if (!widget) {
               if (!tabsPanels.has(entry.node))
-                target["lse_display" + suffix] =
-                  !s.display.includes("flex") &&
-                  !s.display.includes("grid") &&
-                  s.inlineFlow
-                    ? "flex"
-                    : s.display;
+                target["lse_display" + suffix] = inlineRow ? "flex" : s.display;
               target["lse_text_align" + suffix] = s["text-align"];
               if (s.explicitHeight || s.fillHeight)
                 target["lse_height" + suffix] = sourceSize(
@@ -4476,7 +4519,7 @@
               }
               target["flex_direction" + suffix] = s.display.includes("flex")
                 ? s["flex-direction"]
-                : s.inlineFlow
+                : inlineRow
                   ? "row"
                   : "column";
               const textAlign =
@@ -4503,6 +4546,10 @@
                 !s.display.includes("flex") && s.inlineFlow
                   ? "wrap"
                   : s["flex-wrap"];
+              if (s.floatRow) {
+                target["flex_justify_content" + suffix] = "flex-start";
+                target["flex_align_items" + suffix] = "flex-start";
+              }
               target["flex_gap" + suffix] = {
                 unit: "px",
                 column: String(parseFloat(s["column-gap"]) || s.inlineGap || 0),
@@ -4585,10 +4632,11 @@
           if (
             suffix !== null &&
             !widget &&
-            element.settings.container_type === "grid"
+            (element.settings.container_type === "grid" ||
+              (options.preserveCSS && convertedFloatRows.has(element.id)))
           ) {
-            // Core's Flex direction controls only emit selectors for .e-flex.
-            // A desktop Grid keeps .e-grid when the source becomes Flex later.
+            // Use authored breakpoints for imported layout changes and support
+            // containers that keep Elementor's desktop Grid class on mobile.
             for (const property of ["direction", "wrap"])
               element.settings["lse_flex_" + property + suffix] =
                 options.preserveCSS
@@ -4717,12 +4765,7 @@
                 : "") +
               ")";
           if (!widget) {
-            const display =
-              s.inlineFlow &&
-              !s.display.includes("flex") &&
-              !s.display.includes("grid")
-                ? "flex"
-                : s.display;
+            const display = inlineRow ? "flex" : s.display;
             declarations.push("display:" + display, "--display:" + display);
           }
 

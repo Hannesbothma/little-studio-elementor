@@ -94,11 +94,7 @@ try {
     report,
     /1\/1 pages checked for source overflow and floated rows/,
   );
-  assert.match(
-    report,
-    /Floated row conversion: div\.report-row \[[a-f0-9]{8}\] at 1440px, 1024px/,
-  );
-  assert.match(report, /div\.report-main @x=0px, width=\d+px, float=left/);
+  assert.doesNotMatch(report, /Floated row conversion: div\.report-row/);
   assert.match(report, /Source horizontal overflow: 390px/);
   assert.match(
     report,
@@ -116,6 +112,48 @@ try {
     downloaded.replace(/^Generated .*$/m, ""),
     report.replace(/^Generated .*$/m, ""),
   );
+  const preview = await context.newPage();
+  const previewUrl = await tab.evaluate(
+    () => LSEAdmin.job.pages[0].preview_url,
+  );
+  await preview.goto(previewUrl);
+  for (const width of [1440, 992, 991, 390]) {
+    await preview.setViewportSize({ width, height: 720 });
+    const boxes = await preview.locator(".report-row").evaluate((row) => {
+      const { x, width } = row.getBoundingClientRect();
+      const box = (selector) => {
+        const bounds = row.querySelector(selector).getBoundingClientRect();
+        return { x: bounds.x, top: bounds.top, width: bounds.width };
+      };
+      return {
+        x,
+        width,
+        main: box(".report-main"),
+        sidebar: box(".report-sidebar"),
+      };
+    });
+    if (width >= 992) {
+      assert(
+        Math.abs(boxes.main.top - boxes.sidebar.top) < 2,
+        JSON.stringify(boxes),
+      );
+      assert(
+        Math.abs(boxes.main.width - 0.66 * boxes.width) < 2,
+        JSON.stringify(boxes),
+      );
+      assert(
+        Math.abs(boxes.sidebar.x - boxes.main.x - boxes.main.width) < 2,
+        JSON.stringify(boxes),
+      );
+    } else {
+      assert(boxes.sidebar.top > boxes.main.top, JSON.stringify(boxes));
+      assert(
+        Math.abs(boxes.main.x - boxes.sidebar.x) < 2,
+        JSON.stringify(boxes),
+      );
+    }
+  }
+  await preview.close();
 
   const start = (title) =>
     rpc("start", {

@@ -1,3 +1,7 @@
+## LS Elementor 0.12.22
+
+- Preserve single-row floated columns as editable Elementor rows and keep the source's responsive stacking breakpoint. This fixes the desktop header and sidebar layout on Quotes to Scrape.
+
 ## LS Elementor 0.12.21
 
 - Make the copyable and downloadable import report available once draft saves and image processing finish.
