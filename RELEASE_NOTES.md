@@ -1,3 +1,8 @@
+## LS Elementor 0.12.21
+
+- Make the copyable and downloadable import report available once draft saves and image processing finish.
+- Record page URLs, WordPress page IDs, missing resources, save diagnostics, source overflow, and floated rows that can stack in Elementor.
+
 ## LS Elementor 0.12.20
 
 - Rebuild supported floating WhatsApp links as editable Elementor buttons with their original destination and prefilled message.

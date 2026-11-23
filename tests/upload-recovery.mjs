@@ -105,19 +105,8 @@ try {
     await tab.locator("#lse-error-item-title").textContent(),
     /blocked.svg/,
   );
-  await tab.locator("dialog[open] [data-lse-copy-report]").click();
+  assert(await tab.locator("#lse-final-report").isHidden());
   const copied = () => tab.evaluate(() => navigator.clipboard.readText());
-  const live = await copied();
-  for (const part of [
-    "403",
-    "first.svg",
-    "blocked.svg",
-    "HTTP 504",
-    "qa-refusal",
-    "one file at a time",
-  ])
-    assert(live.includes(part), part);
-  assert(!live.includes("PRIVATE"));
   await tab.locator("#lse-skip-item").click();
   await tab
     .getByRole("button", { name: "Skip this page and continue" })
@@ -172,6 +161,10 @@ try {
     "Skipped file",
     "Skipped page",
     "403",
+    "first.svg",
+    "blocked.svg",
+    "HTTP 504",
+    "one file at a time",
     "qa-refusal",
     "import_validation",
     "HTTP 400",
@@ -239,12 +232,12 @@ try {
   assert(denyStatus);
   assert(await tab.locator("#lse-skip-item").isHidden());
   assert.equal(skipRequests, 0);
-  await tab.locator("dialog[open] [data-lse-copy-report]").click();
-  const paused = await copied();
+  assert(await tab.locator("#lse-final-report").isHidden());
+  const paused = await tab.evaluate(() => LSEAdmin.importReport());
   assert(paused.includes("session expired"));
   assert(paused.includes("403"));
   console.log(
-    "Verified session-wide refusal pauses without offering a file skip and remains copyable.",
+    "Verified session-wide refusal records diagnostics and keeps the final report hidden while paused.",
   );
 } finally {
   await browser.close();

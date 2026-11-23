@@ -79,8 +79,7 @@ const requestJob = (id) =>
 async function processTask(task) {
   const tab = await browser.newPage();
   let job = "",
-    started = false,
-    report = "";
+    started = false;
   try {
     const workUrl = new URL(admin);
     workUrl.searchParams.set("lse-render-task", task.id);
@@ -176,7 +175,6 @@ async function processTask(task) {
           job,
           state: "submitted",
           message: "Drafts are queued in WordPress.",
-          report: await tab.evaluate(() => LSEAdmin.importReport()),
         });
         return;
       }
@@ -193,8 +191,6 @@ async function processTask(task) {
         throw Error(
           state.message || "The import stopped before it was queued.",
         );
-      if (choices.length)
-        report = await tab.evaluate(() => LSEAdmin.importReport());
       const reply = await request({
         operation: "update",
         id: task.id,
@@ -203,7 +199,6 @@ async function processTask(task) {
         choices,
         item: state.item,
         message: state.message || "Preparing the import.",
-        report,
       });
       if (choices.includes(reply.command))
         await tab.locator("#" + state[reply.command]).click();
@@ -217,11 +212,9 @@ async function processTask(task) {
         job,
         state: "failed",
         message: e.message.slice(0, 450),
-        report:
-          report ||
-          (await tab
-            .evaluate(() => window.LSEAdmin?.importReport())
-            .catch(() => "")),
+        report: await tab
+          .evaluate(() => window.LSEAdmin?.importReport())
+          .catch(() => ""),
       }).catch(() => {});
   } finally {
     await tab.close().catch(() => {});

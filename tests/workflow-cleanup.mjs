@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { chromium } from "playwright";
 
 const origin = process.env.LSE_TEST_URL || "http://127.0.0.1:9416";
@@ -14,6 +15,8 @@ try {
     waitUntil: "domcontentloaded",
   });
   await tab.waitForFunction(() => window.LSECapture && !LSEManage.busy);
+  const finalReport = tab.locator("#lse-final-report");
+  assert(await finalReport.isHidden());
   const rpc = (action, input) =>
     tab.evaluate(([a, x]) => LSEAdmin.request(a, x), [action, input]);
   const scan = async (url) => {
@@ -61,12 +64,14 @@ try {
   await tab.locator("#lse-background-view").getByText("Review pages").waitFor();
   assert(await tab.locator("#lse-flow-dialog").isHidden());
   await tab.locator("#lse-background-view").click();
+  assert(await finalReport.isHidden());
   release = new Promise((resolve) => {
     proceed = resolve;
   });
   await tab.locator("#lse-import").click();
   await tab.locator("#lse-progress [data-lse-background]").click();
   assert(await tab.locator("#lse-flow-dialog").isHidden());
+  assert(await finalReport.isHidden());
   await dashboard.bringToFront();
   proceed();
   await tab.waitForFunction(
@@ -76,6 +81,41 @@ try {
   );
   assert.equal(await tab.evaluate(() => LSEAdmin.job.pages[0].done), true);
   assert(await tab.locator("#lse-background-task").isHidden());
+  await finalReport.waitFor();
+  await finalReport.getByRole("button", { name: "Copy report" }).click();
+  const report = await tab.evaluate(() => navigator.clipboard.readText());
+  assert.match(report, /Report format 2/);
+  assert.match(report, /Source styling kept/);
+  assert.match(
+    report,
+    /missing-report-font\.woff2 · asset · HTTP 404 · discovered from https:\/\/93\.184\.216\.34\/lse-capture\/background\/ · 1 attempt/,
+  );
+  assert.match(
+    report,
+    /1\/1 pages checked for source overflow and floated rows/,
+  );
+  assert.match(
+    report,
+    /Floated row conversion: div\.report-row \[[a-f0-9]{8}\] at 1440px, 1024px/,
+  );
+  assert.match(report, /div\.report-main @x=0px, width=\d+px, float=left/);
+  assert.match(report, /Source horizontal overflow: 390px/);
+  assert.match(
+    report,
+    /source https:\/\/93\.184\.216\.34\/lse-capture\/background\/ · WordPress page \d+/,
+  );
+  const pendingDownload = tab.waitForEvent("download");
+  await finalReport.getByRole("button", { name: "Download report" }).click();
+  const reportFile = await pendingDownload;
+  assert.equal(
+    reportFile.suggestedFilename(),
+    "little-studio-elementor-report.txt",
+  );
+  const downloaded = await readFile(await reportFile.path(), "utf8");
+  assert.equal(
+    downloaded.replace(/^Generated .*$/m, ""),
+    report.replace(/^Generated .*$/m, ""),
+  );
 
   const start = (title) =>
     rpc("start", {

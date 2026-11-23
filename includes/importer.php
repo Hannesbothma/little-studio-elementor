@@ -322,6 +322,9 @@ final class LSE_Importer
             'reports' => [],
             'newsletter_audience' => $audience,
             'layout' => $layout,
+            'preserve_css' => isset($input['preserve_css'])
+                ? (bool) $input['preserve_css']
+                : null,
             'scripts' =>
                 !empty($input['scripts']) &&
                 current_user_can('unfiltered_html'),
@@ -429,6 +432,10 @@ final class LSE_Importer
                 'url' => self::clean_url($resource['url'] ?? ''),
                 'kind' => self::text($resource['kind'] ?? '', 30),
                 'role' => self::text($resource['role'] ?? '', 30),
+                'discovery_base' => self::clean_url(
+                    $resource['discovery_base'] ?? '',
+                ),
+                'attempts' => max(0, (int) ($resource['attempts'] ?? 0)),
                 'error' => self::text($resource['error'] ?? '', 1500),
                 'status' => (int) ($resource['status'] ?? 0),
             ];
@@ -2152,6 +2159,20 @@ final class LSE_Importer
             foreach ($input['warnings'] ?? [] as $warning) {
                 self::text($warning, 1500);
             }
+            $layout_review = $input['layout_review'] ?? null;
+            if ($layout_review !== null) {
+                if (!is_array($layout_review) || count($layout_review) > 15) {
+                    throw new RuntimeException(
+                        'Invalid page layout diagnostics.',
+                    );
+                }
+                $layout_review = array_values(
+                    array_map(
+                        static fn($finding) => self::text($finding, 500),
+                        $layout_review,
+                    ),
+                );
+            }
             $source = $candidate_source;
             unset($source['layout_structure'], $source['site_parts']);
             if (!empty($source['structure'])) {
@@ -2350,6 +2371,9 @@ final class LSE_Importer
                 ),
                 'skipped' => $skipped,
             ];
+            if ($layout_review !== null) {
+                $job['reports'][$page['key']]['layout_review'] = $layout_review;
+            }
             self::invalidate_css($id);
             unset($job['pages'][$index]['skipped']);
             $job['pages'][$index]['done'] = true;

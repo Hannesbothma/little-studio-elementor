@@ -336,6 +336,13 @@
           !string(page.conversion.css) ||
           !Array.isArray(page.conversion.warnings) ||
           !page.conversion.warnings.every((warning) => string(warning, 1500)) ||
+          (page.conversion.layout_review !== undefined &&
+            (!Array.isArray(page.conversion.layout_review) ||
+              page.conversion.layout_review.length > 15 ||
+              !page.conversion.layout_review.every(
+                (finding) =>
+                  typeof finding === "string" && /^[ -~]{1,500}$/.test(finding),
+              ))) ||
           (page.conversion.structure !== undefined &&
             !Array.isArray(page.conversion.structure)) ||
           !Array.isArray(page.conversion.regions) ||
@@ -2419,6 +2426,7 @@
         css: page.conversion.css,
         regions: page.conversion.regions,
         warnings,
+        layout_review: page.conversion.layout_review,
         fallbacks,
         source: {
           html: page.html,
@@ -2700,6 +2708,30 @@
       }
       const snapshots = new Map(),
         widths = [1440, 1280, 1024, 768, 767, 390];
+      const layoutDevices = new Map([
+        [1440, ""],
+        [1024, "_tablet"],
+        [390, "_mobile"],
+      ]);
+      const floatedRows = new Map();
+      const sourceOverflow = [];
+      const sourceLabel = (node) => {
+        const names = [node.id, ...node.classList].map((name) =>
+          /^[a-zA-Z_][a-zA-Z0-9_-]{0,39}$/.test(name) ? name : "",
+        );
+        const id = names.shift();
+        return (
+          (/^[a-z][a-z0-9-]{0,39}$/.test(node.localName)
+            ? node.localName
+            : "element") +
+          (id ? "#" + id : "") +
+          names
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((name) => "." + name)
+            .join("")
+        ).slice(0, 80);
+      };
       // Source breakpoints need not coincide with Elementor's three devices.
       // Capture each CSS transition instead of stretching a phone measurement
       // across the entire tablet/mobile range.
@@ -3313,6 +3345,15 @@
         frame.style.width = width + "px";
         await new Promise((r) => setTimeout(r, 25));
         fitHeadings();
+        let overflow;
+        if (layoutDevices.has(width)) {
+          const viewport = d.documentElement.clientWidth;
+          const content = d.documentElement.scrollWidth;
+          if (content - viewport > 2) {
+            overflow = { width, viewport, content };
+            sourceOverflow.push(overflow);
+          }
+        }
         const parents = new WeakMap(),
           inlineBoxes = new WeakMap();
         const atomicInline = (node) => {
@@ -3397,7 +3438,16 @@
             props.parentDisplay = cached.display;
             props.parentWidth = cached.width;
           }
-          props.actualWidth = String(entry.node.getBoundingClientRect().width);
+          const bounds = entry.node.getBoundingClientRect();
+          props.actualWidth = String(bounds.width);
+          if (
+            overflow &&
+            !overflow.edge &&
+            entry.node !== d.body &&
+            bounds.width > 0 &&
+            Math.abs(bounds.right - overflow.content) <= 2
+          )
+            overflow.edge = sourceLabel(entry.node);
           props.typography = typography.read(entry.styleNode, content);
           if (fitted.has(entry.styleNode)) props.typography.fontSize = "";
           props.textMaxWidth =
@@ -3418,6 +3468,48 @@
           const flowChildren = [...entry.node.children].filter(
             (node) => w.getComputedStyle(node).display !== "none",
           );
+          if (
+            layoutDevices.has(width) &&
+            !entry.widget &&
+            s.display === "block" &&
+            flowChildren.length > 1 &&
+            (floatedRows.size < 12 || floatedRows.has(entry))
+          ) {
+            let first;
+            for (const node of flowChildren) {
+              const float = w.getComputedStyle(node).cssFloat;
+              if (float !== "left" && float !== "right") continue;
+              const box = node.getBoundingClientRect();
+              if (box.width < 1 || box.height < 1) continue;
+              if (!first || Math.abs(first.box.top - box.top) > 2) {
+                first = { node, box, float };
+                continue;
+              }
+              if (
+                box.left < first.box.right - 2 &&
+                first.box.left < box.right - 2
+              )
+                continue;
+              const origin = entry.node.getBoundingClientRect().left;
+              const describeColumn = (column) =>
+                sourceLabel(column.node) +
+                " @x=" +
+                Math.round(column.box.left - origin) +
+                "px, width=" +
+                Math.round(column.box.width) +
+                "px, float=" +
+                column.float;
+              if (!floatedRows.has(entry)) floatedRows.set(entry, []);
+              floatedRows.get(entry).push({
+                width,
+                columns:
+                  describeColumn(first) +
+                  " / " +
+                  describeColumn({ node, box, float }),
+              });
+              break;
+            }
+          }
           props.inlineFlow =
             flowChildren.length > 1 && flowChildren.every(atomicInline);
           props.inlineGap = 0;
@@ -4899,6 +4991,51 @@
         }
       }
       const excluded = new Set(regions.map((region) => region.id));
+      const layoutReview = sourceOverflow.map(
+        ({ width, viewport, content, edge }) =>
+          "Source horizontal overflow: " +
+          width +
+          "px: " +
+          content +
+          "px content / " +
+          viewport +
+          "px viewport" +
+          (edge ? "; element at right edge: " + edge : ""),
+      );
+      for (const [entry, samples] of floatedRows) {
+        const { element, node } = entry;
+        const promoted = layoutNodes.has(element.id);
+        const affected = samples
+          .map((sample) => {
+            const control = "flex_direction" + layoutDevices.get(sample.width);
+            return { ...sample, control, direction: element.settings[control] };
+          })
+          .filter(
+            ({ direction }) => promoted || direction?.startsWith("column"),
+          );
+        if (!affected.length) continue;
+        const [sample] = affected;
+        layoutReview.push(
+          "Floated row conversion: " +
+            sourceLabel(node) +
+            " [" +
+            element.id +
+            "] at " +
+            affected.map(({ width }) => width + "px").join(", ") +
+            " -> " +
+            (promoted
+              ? "promoted wrapper"
+              : "vertical container (" +
+                affected
+                  .map(({ control, direction }) => control + "=" + direction)
+                  .join(", ") +
+                ")") +
+            "; source at " +
+            sample.width +
+            "px: " +
+            sample.columns,
+        );
+      }
       const hasBody = (node) => {
         if (excluded.has(node.id)) return false;
         if (node.widgetType) return true;
@@ -4914,6 +5051,7 @@
         emptyBody: !blocks.some(hasBody),
         css: restoreRefs(css),
         warnings: [...new Set(warnings)],
+        layout_review: layoutReview,
         fallbacks,
         regions,
         structure,

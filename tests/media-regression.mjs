@@ -93,6 +93,7 @@ try {
   assert.equal(Object.keys(state.meta.sizes || {}).length, 0);
   assert(Object.keys(state.task.sizes).length >= 3);
   await page.evaluate((job) => LSEAdmin.setJob(job), job);
+  assert(await page.locator("#lse-final-report").isHidden());
   assert.match(
     await page.locator("#lse-media-summary").innerText(),
     /Pages ready.*remaining/,
@@ -153,6 +154,8 @@ try {
   response = await rpc("status", { job: job.id });
   assert.equal(response.media.pending, 0);
   assert.equal(response.media.skipped.length, 0);
+  await page.evaluate((job) => LSEAdmin.setJob(job), response);
+  assert(await page.locator("#lse-final-report").isVisible());
   state = await rpc("test", { operation: "image-state", id: asset.id });
   for (const name of Object.keys(state.task.sizes))
     assert(state.meta.sizes[name]);

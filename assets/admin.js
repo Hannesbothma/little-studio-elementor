@@ -592,6 +592,9 @@
   function scheduleMedia(delay = 1000) {
     clearTimeout(mediaTimer);
     showMedia();
+    const ready = !busy && !mediaRunning && window.LSEReports.finalReady(job);
+    $("#lse-final-report").hidden = !ready;
+    $("#lse-report-details").hidden = !ready;
     if (
       !busy &&
       !mediaRunning &&
@@ -607,7 +610,7 @@
     const current = job,
       item = current.media?.items?.[0];
     mediaRunning = true;
-    showMedia();
+    scheduleMedia();
     try {
       const response = await request("media_process", {
         job: current.id,
@@ -662,7 +665,7 @@
       issue = current?.media?.errors?.[0];
     if (busy || mediaRunning || !issue?.skip) return;
     mediaRunning = true;
-    showMedia();
+    scheduleMedia();
     try {
       const response = await request("media_skip", {
         job: current.id,
@@ -959,11 +962,12 @@
     window.dispatchEvent(new CustomEvent("lse:import-saved", { detail: data }));
     status(
       data.state === "ready"
-        ? data.pages?.some((p) => p.skipped) ||
-          Object.keys(data.skipped_assets || {}).length
-          ? "Import finished with skipped items. Copy the report for details."
-          : data.capture?.complete === false
-            ? "Pages saved. The capture has missing resources; review its report before publishing."
+        ? data.media?.pending
+          ? "Pages saved. The final report will be available when image processing finishes."
+          : data.pages?.some((p) => p.skipped) ||
+              Object.keys(data.skipped_assets || {}).length ||
+              data.capture?.complete === false
+            ? "Import finished with items to review in the final report."
             : data.refreshing
               ? "Pages updated."
               : "Imported. Your pages are ready to edit."
@@ -1107,6 +1111,7 @@
                 }
               : null,
             layout,
+            preserve_css: preserveCSS,
             scripts: $("#lse-scripts").checked,
           });
       journal.attach(job, true);
@@ -1589,31 +1594,19 @@
       button.textContent = "Copy report";
     }, 1500);
   }
-  for (const button of document.querySelectorAll("[data-lse-copy-report]")) {
-    button.addEventListener("click", () =>
-      copyReport(button, journal.report(job, project, originalFile)),
-    );
-  }
+  const reportButton = $("[data-lse-copy-report]");
+  reportButton.addEventListener("click", () => {
+    if (!$("#lse-final-report").hidden)
+      copyReport(reportButton, journal.report(job, project, originalFile));
+  });
   $("#lse-download").addEventListener("click", () => {
-    if (!job) return;
-    const blob = new Blob(
-        [
-          JSON.stringify(
-            {
-              plugin: "Little Studio to Elementor",
-              version: config.version || "0.2.0",
-              source: originalFile,
-              ...job,
-            },
-            null,
-            2,
-          ),
-        ],
-        { type: "application/json" },
-      ),
+    if ($("#lse-final-report").hidden) return;
+    const blob = new Blob([journal.report(job, project, originalFile)], {
+        type: "text/plain;charset=utf-8",
+      }),
       a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "little-studio-elementor-report.json";
+    a.download = "little-studio-elementor-report.txt";
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });

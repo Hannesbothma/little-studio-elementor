@@ -220,6 +220,7 @@ final class LSE_Capture
             'kind' => $kind,
             'depth' => $depth,
             'role' => $role,
+            'discovery_base' => $base,
             'attempt' => 0,
         ];
     }
@@ -691,6 +692,8 @@ final class LSE_Capture
                         'url' => $item['url'],
                         'kind' => $item['kind'],
                         'role' => $item['role'] ?? '',
+                        'discovery_base' => $item['discovery_base'] ?? '',
+                        'attempts' => $attempt + 1,
                         'error' => $e->getMessage(),
                         'status' => $code,
                     ];

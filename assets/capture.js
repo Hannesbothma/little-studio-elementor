@@ -717,6 +717,7 @@
               elements,
               css,
               warnings,
+              layout_review,
               regions,
               structure,
               source,
@@ -757,7 +758,14 @@
               ...page,
               js: source.js.trim(),
               elementor,
-              conversion: { version: 1, css, warnings, regions, structure },
+              conversion: {
+                version: 1,
+                css,
+                warnings,
+                layout_review,
+                regions,
+                structure,
+              },
             };
             if (large) {
               // Keep the native controls available for review. Park the much larger
@@ -1185,7 +1193,6 @@
             message: error.message,
           }),
         ].join("\n");
-        copy.hidden = false;
         if (
           /source website is under maintenance|capture (?:session )?(?:has )?expired|capture (?:cache )?is unavailable|saved scan files expired|capture sequence changed|invalid capture session|scan files are missing|could not read the saved scan files/i.test(
             error.message,
@@ -1194,6 +1201,7 @@
           await cleanup();
         if (!session) records = [];
         retry.hidden = !session;
+        copy.hidden = !!session;
       }
     } finally {
       pending = false;
@@ -1231,7 +1239,7 @@
     rendererStatus.querySelector("span").textContent =
       renderTask?.message || "";
     rendererStatus.querySelector("[data-render-copy]").hidden =
-      !renderTask?.report;
+      renderTask?.state !== "failed" || !renderTask.report;
     for (const button of rendererStatus.querySelectorAll(
       "[data-render-choice]",
     ))

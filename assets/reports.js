@@ -123,6 +123,7 @@
       error.phase,
       error.action,
       error.item?.name || error.item?.title,
+      error.item?.key && "page key " + error.item.key,
       error.item?.url,
       error.message,
       error.httpStatus &&
@@ -130,13 +131,18 @@
         "HTTP " + error.httpStatus,
       issue.code,
       issue.field,
+      issue.selector && "selector " + plain(issue.selector).slice(0, 240),
       issue.line
         ? "line " + issue.line + ", column " + (issue.column || 1)
         : "",
+      issue.token && "token " + plain(issue.token).slice(0, 100),
+      issue.reason && issue.reason !== error.message && issue.reason,
       error.endpoint,
       error.restFallback &&
         "REST returned HTTP " + error.restFallback + " before AJAX retry",
       error.transport,
+      error.requestBytes !== undefined &&
+        error.requestBytes + " uncompressed bytes",
       error.transferBytes !== undefined &&
         error.transferBytes + " payload bytes",
       error.durationMs !== undefined ? error.durationMs + " ms" : "",
@@ -156,6 +162,9 @@
       .filter(Boolean)
       .map(plain)
       .join(" · ");
+  }
+  function finalReady(job) {
+    return job?.state === "ready" && !job.media?.pending;
   }
   function checkpoint(value) {
     const config = window.LSE_CONFIG;
@@ -250,6 +259,8 @@
       const pages = job?.pages || [];
       const skippedPages = pages.filter((page) => page.skipped).length;
       const skippedFiles = Object.values(job?.skipped_assets || {});
+      const capture = job?.capture || project?.capture;
+      const reports = job?.reports || {};
       const saved = checkpoint();
       const latest =
         saved &&
@@ -262,20 +273,44 @@
           : null;
       const lines = [
         "LS Elementor import report",
+        "Report format 2",
         "Generated " + new Date().toISOString(),
         "Plugin " +
           config.version +
           " | Elementor " +
           (config.elementor || "unavailable") +
           " | Pro " +
-          (config.pro ? "active" : "inactive"),
+          (config.proVersion || (config.pro ? "active" : "inactive")),
         "WordPress " + config.wordpress + " | PHP " + config.php,
+        ...(config.theme
+          ? [
+              "Theme " +
+                plain(
+                  [config.theme, config.themeVersion].filter(Boolean).join(" "),
+                ),
+            ]
+          : []),
         "Server limits (bytes) · file " +
           config.maxUpload +
           " · request " +
           config.maxPost,
         "Site " + location.host,
         "Import " + (job?.id || "before draft creation"),
+        ...(capture?.source ? ["Source " + plain(capture.source)] : []),
+        ...(job?.engine ? ["Converter " + plain(job.engine)] : []),
+        ...(job?.layout
+          ? [
+              "Layout " +
+                plain(job.layout) +
+                (typeof job.preserve_css === "boolean"
+                  ? " | Source styling " + (job.preserve_css ? "kept" : "off")
+                  : "") +
+                " | Scripts " +
+                (job.scripts ? "enabled" : "off") +
+                " | Save " +
+                (job.background?.phase ? "background" : "foreground"),
+            ]
+          : []),
         "Project " +
           plain(
             job?.title ||
@@ -308,7 +343,9 @@
               "",
               "Last browser checkpoint (UTC)",
               latest.at + " · " + latest.phase,
-              ...(latest.source ? ["Source " + latest.source] : []),
+              ...(!capture?.source && latest.source
+                ? ["Source " + latest.source]
+                : []),
               ...(Number.isFinite(latest.records)
                 ? [
                     latest.records +
@@ -344,7 +381,6 @@
         lines.push("No recorded failures or recovery actions.");
       const findings = new Set();
       const addFinding = (s) => findings.add(plain(s));
-      const capture = job?.capture || project?.capture;
       const failures = capture?.failed_resources || [];
       const failedURLs = new Set(failures.map((item) => item.url));
       for (const warning of capture?.warnings || []) {
@@ -368,19 +404,37 @@
               : "Capture · ") +
             item.url +
             " · " +
-            (item.error || (item.status ? "HTTP " + item.status : "failed")),
+            [
+              item.kind,
+              item.role,
+              item.status ? "HTTP " + item.status : "",
+              item.error && item.error !== "HTTP " + item.status && item.error,
+              item.discovery_base && "discovered from " + item.discovery_base,
+              item.attempts && item.attempts + " attempt(s)",
+            ]
+              .filter(Boolean)
+              .join(" · "),
         );
       for (const item of skippedFiles)
         addFinding("Skipped file · " + item.name + " · " + item.reason);
       const pageTitles = new Map(
-        pages.map((page) => [page.key, page.current_title || page.title]),
+        pages.map((page) => [
+          page.key,
+          (page.current_title || page.title) + " [" + page.key + "]",
+        ]),
       );
       const affectedPages = new Map();
-      for (const [key, result] of Object.entries(job?.reports || {})) {
+      for (const [key, result] of Object.entries(reports)) {
         for (const warning of new Set(result.warnings || [])) {
           if (!affectedPages.has(warning)) affectedPages.set(warning, []);
           affectedPages.get(warning).push(key);
         }
+        for (const error of result.skipped || [])
+          addFinding(
+            (pageTitles.get(key) || key) +
+              " · Skipped CSS · " +
+              describe({ error }),
+          );
       }
       for (const [warning, keys] of affectedPages) {
         const labels = keys.map((key) => pageTitles.get(key) || key);
@@ -405,11 +459,72 @@
               .filter(Boolean)
               .join(" · "),
         );
+      const checked = pages.filter((page) =>
+        Array.isArray(reports[page.key]?.layout_review),
+      );
+      const layoutFindings = checked.flatMap((page) => {
+        const issues = reports[page.key].layout_review;
+        return issues.length
+          ? [
+              plain(
+                pageTitles.get(page.key) +
+                  " · " +
+                  (page.source_url || "source URL unavailable"),
+              ),
+              ...issues.map((issue) => "  " + plain(issue)),
+            ]
+          : [];
+      });
+      const pageIndex = pages.map((page) => {
+        const result = reports[page.key];
+        return [
+          pageTitles.get(page.key),
+          page.source_url && "source " + page.source_url,
+          page.id && "WordPress page " + page.id,
+          page.slug && "slug " + page.slug,
+          page.skipped
+            ? "skipped"
+            : [page.done ? "saved" : "pending", page.post_status]
+                .filter(Boolean)
+                .join(" / "),
+          result &&
+            Number.isFinite(result.native) &&
+            result.native +
+              " native elements, " +
+              (result.fallbacks || 0) +
+              " HTML regions",
+        ]
+          .filter(Boolean)
+          .map(plain)
+          .join(" · ");
+      });
       return [
         ...lines,
         "",
         "Import findings",
         ...(findings.size ? findings : ["None recorded."]),
+        ...(pages.length
+          ? [
+              "",
+              "Layout diagnostics",
+              checked.length +
+                "/" +
+                pages.length +
+                " pages checked for source overflow and floated rows at 1440px, 1024px and 390px.",
+              "Up to 12 floated rows are recorded per page.",
+              "Checks compare source measurements with converter output. Saved Elementor previews were not rendered by this report.",
+              ...(layoutFindings.length
+                ? layoutFindings
+                : [
+                    checked.length
+                      ? "No issues detected by these checks."
+                      : "No conversion measurements available.",
+                  ]),
+              "",
+              "Page index",
+              ...pageIndex,
+            ]
+          : []),
       ].join("\n");
     }
     return {
@@ -425,6 +540,7 @@
   }
   window.LSEReports = {
     describe,
+    finalReady,
     checkpoint,
     journal,
     groups,

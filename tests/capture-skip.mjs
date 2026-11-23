@@ -98,13 +98,7 @@ try {
     project.site.navigation.map((p) => p.key),
     [project.pages[1].key],
   );
-  await tab.locator("dialog[open] [data-lse-copy-report]").click();
-  const report = await tab.evaluate(() => navigator.clipboard.readText());
-  assert.match(report, /Skipped page · Unconvertible Suite/);
-  assert.match(
-    report,
-    /Skipped unavailable source page · https:\/\/example\.test\/closed\/ · HTTP 404/,
-  );
+  assert(await tab.locator("#lse-final-report").isHidden());
   await tab.locator("#lse-import").click();
   await tab.waitForFunction(
     () => !LSEAdmin.busy && LSEAdmin.job?.state === "ready",
@@ -114,6 +108,13 @@ try {
   assert.equal(
     await tab.evaluate(() => LSEAdmin.job.pages.filter((p) => p.done).length),
     2,
+  );
+  await tab.locator("main [data-lse-copy-report]").click();
+  const report = await tab.evaluate(() => navigator.clipboard.readText());
+  assert.match(report, /Skipped page · Unconvertible Suite/);
+  assert.match(
+    report,
+    /Skipped unavailable source page · https:\/\/example\.test\/closed\/ · page · HTTP 404/,
   );
   const unfinished = await tab.evaluate(() =>
     LSEAdmin.request("start", {

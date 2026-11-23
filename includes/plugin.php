@@ -707,6 +707,11 @@ final class LSE_Plugin
                         ? ELEMENTOR_VERSION
                         : '',
                     'pro' => defined('ELEMENTOR_PRO_VERSION'),
+                    'proVersion' => defined('ELEMENTOR_PRO_VERSION')
+                        ? ELEMENTOR_PRO_VERSION
+                        : '',
+                    'theme' => get_stylesheet(),
+                    'themeVersion' => wp_get_theme()->get('Version'),
                     'themeBuilder' => class_exists(
                         \ElementorPro\Modules\ThemeBuilder\Module::class,
                     ),
@@ -781,7 +786,6 @@ final class LSE_Plugin
                 </aside>
                 <main class="lse-workspace">
                     <div id="lse-status" class="lse-notice" role="status" aria-live="polite">Choose a file or capture a website link to get started.</div>
-                    <button type="button" class="button" data-lse-copy-report>Copy report</button>
                     <div class="lse-notice" id="lse-render-task" hidden><span role="status"></span> <button type="button" class="button" data-render-choice="skip" hidden>Skip item</button> <button type="button" class="button" data-render-choice="retry" hidden>Retry</button> <button type="button" class="button" data-render-copy hidden>Copy report</button></div>
                     <div id="lse-background-task" class="lse-notice lse-actions" hidden><span id="lse-background-status" role="status"></span><button type="button" class="button" id="lse-background-view">View progress</button><a class="button" href="<?php echo esc_url(
                         admin_url('index.php'),
@@ -810,7 +814,6 @@ final class LSE_Plugin
                                 <details class="lse-popover" id="lse-import-menu">
                                     <summary class="button lse-icon-button" aria-label="Import options">⋯</summary>
                                     <div class="lse-popover-panel lse-menu">
-                                        <button type="button" id="lse-download">Download report</button>
                                         <button type="button" id="lse-remove-import" class="lse-danger">Remove import</button>
                                     </div>
                                 </details>
@@ -841,8 +844,12 @@ final class LSE_Plugin
                         <div id="lse-import-details" class="lse-detail-grid" role="tabpanel" aria-labelledby="lse-details-tab" hidden>
                             <section class="lse-detail-card"><h2>Import summary</h2><div id="lse-import-summary"></div></section>
                             <section class="lse-detail-card"><h2>Homepage and menu</h2><p>Publish reviewed pages before applying site setup.</p><label class="lse-check"><input type="checkbox" id="lse-activate-consent"> Use this import's homepage and menu.</label><div class="lse-actions"><button type="button" class="button" id="lse-activate">Apply</button><button type="button" class="button" id="lse-restore" hidden>Restore previous setup</button></div><p id="lse-restoration" class="lse-small"></p></section>
-                            <section class="lse-detail-card lse-conversion-report"><h2>Conversion report</h2><div id="lse-report"></div></section>
+                            <section class="lse-detail-card lse-conversion-report" id="lse-report-details" hidden><h2>Conversion report</h2><div id="lse-report"></div></section>
                         </div>
+                    </section>
+                    <section id="lse-final-report" class="lse-notice" aria-labelledby="lse-final-report-title" hidden>
+                        <strong id="lse-final-report-title">Final import report</strong>
+                        <div class="lse-actions"><button type="button" class="button" data-lse-copy-report>Copy report</button><button type="button" class="button" id="lse-download">Download report</button></div>
                     </section>
                 </main>
             </div>
@@ -850,7 +857,6 @@ final class LSE_Plugin
         <dialog id="lse-flow-dialog" class="lse-dialog" aria-labelledby="lse-flow-title">
             <header class="lse-dialog-head"><h2 id="lse-flow-title">Review new import</h2><button type="button" class="button lse-subtle lse-icon-button" id="lse-flow-close" aria-label="Close import">×</button></header>
             <div class="lse-dialog-body">
-                <button type="button" class="button" data-lse-copy-report>Copy report</button>
                 <p id="lse-dialog-status" class="lse-notice" role="status" aria-live="polite" hidden></p>
                 <div id="lse-review" hidden>
                     <div id="lse-summary" class="lse-summary"></div>

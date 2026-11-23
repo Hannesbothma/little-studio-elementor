@@ -968,6 +968,9 @@ trait LSE_Management
             $job['refreshing'] = true;
             $job['updated'] = time();
             $job['newsletter_audience'] = $input['newsletter_audience'] ?? '';
+            $job['preserve_css'] = isset($input['preserve_css'])
+                ? (bool) $input['preserve_css']
+                : null;
             $job['scripts'] =
                 !empty($input['scripts']) &&
                 current_user_can('unfiltered_html');

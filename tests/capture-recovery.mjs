@@ -76,13 +76,11 @@ try {
   const tab = await context.newPage();
   await tab.goto(screen);
   assert.equal(await tab.locator("dialog[open]").count(), 0);
-  await tab.locator("main [data-lse-copy-report]").click();
-  const report = await tab.evaluate(() => navigator.clipboard.readText());
-  assert.match(report, /Last browser checkpoint \(UTC\)/);
-  assert.match(report, /Waiting for scan batch after record 1/);
-  assert.match(report, /Source https:\/\/recovery\.example\.test\//);
-  assert.match(report, /1 capture records/);
-  assert.doesNotMatch(report, /private=hidden/);
+  assert(await tab.locator("#lse-final-report").isHidden());
+  const checkpoint = await tab.evaluate(() => LSEReports.checkpoint());
+  assert.match(checkpoint.phase, /Waiting for scan batch after record 1/);
+  assert.equal(checkpoint.source, site + "/");
+  assert.equal(checkpoint.records, 1);
 
   await tab.locator("[data-export-open]").first().click();
   await tab.locator("#lse-capture-resume").click();
@@ -106,7 +104,7 @@ try {
     paths,
   );
   console.log(
-    "Verified a closed scan tab leaves a redacted report and resumes to a complete, exportable project.",
+    "Verified a closed scan tab leaves a redacted checkpoint, keeps the final report hidden, and resumes to a complete, exportable project.",
   );
 } finally {
   await browser.close();

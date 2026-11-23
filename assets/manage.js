@@ -85,7 +85,7 @@
       "#lse-new-import,#lse-import-list,#lse-more-imports,[data-import-id],#lse-choose-file," +
         "#lse-resume-import,#lse-worker-retry,#lse-worker-skip,[data-lse-theme-part]," +
         "#lse-page-search,#lse-page-filter,[data-managed-key],#lse-page-inspector button," +
-        "#lse-remove-import,#lse-download,#lse-activate,#lse-restore,#lse-page-form input," +
+        "#lse-remove-import,#lse-download,[data-lse-copy-report],#lse-activate,#lse-restore,#lse-page-form input," +
         "#lse-page-save,#lse-page-close,#lse-page-cancel,#lse-flow-close",
     )) {
       element.disabled = disabled;
@@ -359,48 +359,57 @@
       )
       .join("");
     $("#lse-report").innerHTML =
-      templates
-        .map(
-          (template) =>
-            '<p><a href="' +
-            escapeHtml(template.edit_url) +
-            '">Edit shared ' +
-            escapeHtml(template.kind) +
-            "</a></p>",
-        )
-        .join("") +
-      window.LSEReports.render([
-        ...(current.capture?.warnings || []),
-        ...(current.capture?.failed_resources || []).map(
-          (resource) =>
-            "Could not package " +
-            resource.url +
-            ": " +
-            (resource.error ||
-              (resource.status
-                ? "HTTP " + resource.status
-                : "Unavailable resource")),
-        ),
-      ]) +
-      Object.entries(current.reports || {})
-        .map(([key, report]) => {
-          const title =
-            current.pages.find((page) => page.key === key)?.current_title ||
-            key;
-          const warnings = report.warnings || [];
-          return (
-            '<details class="lse-report-page"><summary>' +
-            escapeHtml(title) +
-            "</summary><p>" +
-            report.native +
-            " native elements · " +
-            report.fallbacks +
-            " HTML regions</p>" +
-            window.LSEReports.render(warnings) +
-            "</details>"
-          );
-        })
-        .join("");
+      current.state !== "ready"
+        ? ""
+        : templates
+            .map(
+              (template) =>
+                '<p><a href="' +
+                escapeHtml(template.edit_url) +
+                '">Edit shared ' +
+                escapeHtml(template.kind) +
+                "</a></p>",
+            )
+            .join("") +
+          window.LSEReports.render([
+            ...(current.capture?.warnings || []),
+            ...(current.capture?.failed_resources || []).map(
+              (resource) =>
+                "Could not package " +
+                resource.url +
+                ": " +
+                (resource.error ||
+                  (resource.status
+                    ? "HTTP " + resource.status
+                    : "Unavailable resource")),
+            ),
+          ]) +
+          Object.entries(current.reports || {})
+            .map(([key, report]) => {
+              const title =
+                current.pages.find((page) => page.key === key)?.current_title ||
+                key;
+              const warnings = report.warnings || [];
+              return (
+                '<details class="lse-report-page"><summary>' +
+                escapeHtml(title) +
+                "</summary><p>" +
+                report.native +
+                " native elements · " +
+                report.fallbacks +
+                " HTML regions</p>" +
+                window.LSEReports.render(warnings) +
+                (report.layout_review?.length
+                  ? "<ul>" +
+                    report.layout_review
+                      .map((finding) => "<li>" + escapeHtml(finding) + "</li>")
+                      .join("") +
+                    "</ul>"
+                  : "") +
+                "</details>"
+              );
+            })
+            .join("");
     $("#lse-restore").hidden = !current.activated;
     $("#lse-restoration").textContent = (current.restoration || []).join(" ");
   }
