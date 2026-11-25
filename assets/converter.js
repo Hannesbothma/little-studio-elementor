@@ -4468,7 +4468,10 @@
             element.id +
             ":not([data-lse-menu-open]){display:none!important}\n";
         if (widget === "nested-tabs") {
-          const scope = "__LSE_SCOPE__ .elementor-element-" + element.id;
+          // Match Core's container widget specificity when restoring the source width.
+          const scope =
+            "__LSE_SCOPE__ .elementor-element.elementor-widget-n-tabs.elementor-element-" +
+            element.id;
           css +=
             scope +
             " .e-n-tabs-content > .e-con:not(.e-active){display:none!important}\n";

@@ -42,8 +42,8 @@ const room = (key, size, border, buttonWidth, alignment) => ({
     .elementor-icon{display:block;font-size:${size}px;line-height:1}
     .elementor-icon svg{display:block;width:1em;height:1em}
     .elementor-icon-box-title{font:400 18px/1.3 Arial,sans-serif;margin:0}
-    .e-tabs-base{display:flex;flex-direction:column;gap:15px}
-    .e-tabs-menu-base{display:flex;justify-content:${alignment};padding:0 10px}
+    .e-tabs-base{display:flex;flex-direction:column;gap:15px;width:105%}
+    .e-tabs-menu-base{display:flex;width:100%;justify-content:${alignment};padding:0 10px}
     .e-tabs-menu-base button{display:block;width:${buttonWidth}px;padding:8px;
       font:16px/24px Arial,sans-serif;background:#fff;color:#292929;border:${border}px solid #8791a0}
     .e-tabs-menu-base button[aria-selected="true"]{border-color:#284667}
@@ -148,7 +148,8 @@ try {
       const icon = preview.locator(
         ".elementor-widget-icon-box .elementor-icon svg",
       );
-      const menu = preview.locator(".e-n-tabs-heading");
+      const tabs = preview.locator(".elementor-widget-n-tabs");
+      const menu = tabs.locator(".e-n-tabs-heading");
       const description = menu.getByRole("tab", { name: "Description" });
       const features = menu.getByRole("tab", { name: "Features" });
       const heading = preview.getByRole("heading", { name: "Room details" });
@@ -168,6 +169,9 @@ try {
           return icon && getComputedStyle(icon).width === width;
         }, iconWidth);
         assert.equal(await css(description, "width"), fixture.width + "px");
+        assert(
+          Math.abs((await tabs.boundingBox()).width - width * 0.84 * 1.05) < 1,
+        );
         assert.equal(
           await css(description, "height"),
           40 + fixture.border * 2 + "px",
