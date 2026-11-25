@@ -1854,6 +1854,122 @@
       return null;
     return { buttons, panels: matched };
   }
+  function tabAppearance(group, buttons, win) {
+    const menu = win.getComputedStyle(buttons[0].parentElement);
+    const spacing = win.getComputedStyle(group);
+    const normalButton =
+      buttons.find(
+        (button) => button.getAttribute("aria-selected") !== "true",
+      ) || buttons[0];
+    const activeButton =
+      buttons.find(
+        (button) => button.getAttribute("aria-selected") === "true",
+      ) || buttons[0];
+    const normal = win.getComputedStyle(normalButton);
+    const active = win.getComputedStyle(activeButton);
+    const label = win.getComputedStyle(
+      normalButton.firstElementChild || normalButton,
+    );
+    const controls = {
+      tabs_justify_horizontal:
+        {
+          "flex-start": "start",
+          start: "start",
+          center: "center",
+          "flex-end": "end",
+          end: "end",
+        }[menu.justifyContent] || "start",
+      title_typography_font_size: px(label.fontSize),
+      title_typography_line_height: sourceSize(label.lineHeight),
+      tabs_title_space_between: px(menu.columnGap),
+      tabs_title_spacing: px(spacing.rowGap),
+      tabs_title_border_radius: radius(normal.borderRadius),
+      padding: dim(normal, "padding"),
+    };
+    const fixedControls = {
+      title_typography_typography: "custom",
+      title_typography_font_family: fontStack(label.fontFamily).family,
+      title_typography_font_weight: label.fontWeight,
+      title_text_color: label.color,
+      title_text_color_active: win.getComputedStyle(
+        activeButton.firstElementChild || activeButton,
+      ).color,
+      tabs_title_background_color_background: "classic",
+      tabs_title_background_color_color: normal.backgroundColor,
+      tabs_title_background_color_active_background: "classic",
+      tabs_title_background_color_active_color: active.backgroundColor,
+    };
+    for (const [state, style] of [
+      ["", normal],
+      ["_hover", normal],
+      ["_active", active],
+    ]) {
+      const prefix = "tabs_title_border" + state;
+      const sides = ["top", "right", "bottom", "left"];
+      const types = sides.map((side) =>
+        style.getPropertyValue("border-" + side + "-style"),
+      );
+      const colors = sides.map((side) =>
+        style.getPropertyValue("border-" + side + "-color"),
+      );
+      if (types.every((value) => value === types[0]))
+        fixedControls[prefix + "_border"] = types[0];
+      if (colors.every((value) => value === colors[0]))
+        fixedControls[prefix + "_color"] = colors[0];
+      controls[prefix + "_width"] = {
+        unit: "px",
+        ...Object.fromEntries(
+          sides.map((side) => [
+            side,
+            String(
+              parseFloat(style.getPropertyValue("border-" + side + "-width")) ||
+                0,
+            ),
+          ]),
+        ),
+        isLinked: false,
+      };
+    }
+    const content = group.querySelector(":scope > .e-tabs-content-area-base");
+
+    const headingWidth = buttons[0].parentElement
+      .computedStyleMap?.()
+      .get("width")
+      ?.toString();
+    const geometry = [
+      ["", "max-width:" + spacing.maxWidth],
+      [
+        ".e-n-tabs-heading",
+        "margin:" + menu.margin,
+        "padding:" + menu.padding,
+        headingWidth && "width:" + headingWidth,
+      ],
+      [".e-n-tabs-content", "padding:" + win.getComputedStyle(content).padding],
+    ];
+    for (const [index, button] of buttons.entries()) {
+      const style = win.getComputedStyle(button);
+      const specified = button.computedStyleMap?.();
+      const dimensions = [
+        "width",
+        "height",
+        "min-width",
+        "max-width",
+        "min-height",
+        "max-height",
+      ].map((name) => {
+        const value = specified?.get(name)?.toString();
+        return value && safeValue(value) ? name + ":" + value : "";
+      });
+      if (dimensions.some(Boolean))
+        geometry.push([
+          ".e-n-tabs-heading > .e-n-tab-title:nth-child(" + (index + 1) + ")",
+          "box-sizing:" + style.boxSizing,
+          "flex-basis:auto",
+          ...dimensions,
+        ]);
+    }
+    return { controls, fixedControls, geometry };
+  }
   function nativeFontIcon(node) {
     const icon = node?.querySelector("svg.e-font-icon-svg, i");
     for (const name of icon?.classList || []) {
@@ -1951,7 +2067,6 @@
       title_typography_font_size: px(look.fontSize),
       title_typography_font_weight: look.fontWeight,
       primary_color: paint.fill !== "none" ? paint.fill : paint.color,
-      size: px(paint.width),
       ...(links[0] && { link: sourceLink(links[0]) }),
     };
     const position =
@@ -2819,12 +2934,11 @@
               /\b(min|max)-width\s*:\s*([\d.]+)px/gi,
             )) {
               const edge = Number(match[2]);
-              if (edge >= 390 && edge <= 1440) boundaries.add(edge);
-              if (
-                match[1].toLowerCase() === "min" &&
-                edge - 0.02 >= 390 &&
-                edge - 0.02 <= 1440
-              ) {
+              if (edge < 390 || edge > 3840) continue;
+              boundaries.add(edge);
+              if (edge >= 1440 && match[1].toLowerCase() === "max")
+                boundaries.add(Math.floor(edge) + 1);
+              if (match[1].toLowerCase() === "min" && edge - 0.02 >= 390) {
                 const below = edge - 0.02;
                 boundaries.add(below);
                 // Browsers round iframe viewport widths to whole CSS pixels.
@@ -2838,6 +2952,7 @@
       for (const style of d.querySelectorAll("style"))
         if (style.sheet) collectBoundaries(style.sheet.cssRules);
       widths.splice(0, widths.length, ...[...boundaries].sort((a, b) => b - a));
+      const widest = widths[0];
       const typography = measureTypography(d);
       const elements = [],
         generatedIds = new Set();
@@ -3164,21 +3279,10 @@
         } else if (tabs.has(node)) {
           widget = "nested-tabs";
           const { buttons, panels } = tabs.get(node);
-          const standard =
-            buttons.find(
-              (button) => button.getAttribute("aria-selected") !== "true",
-            ) || buttons[0];
-          const active =
-            buttons.find(
-              (button) => button.getAttribute("aria-selected") === "true",
-            ) || buttons[0];
-          const normal = w.getComputedStyle(standard);
-          const selected = w.getComputedStyle(active);
-          const label = w.getComputedStyle(
-            standard.firstElementChild || standard,
-          );
-          const list = w.getComputedStyle(standard.parentElement);
-          const spacing = w.getComputedStyle(node);
+          settings._css_classes = settings._css_classes
+            .split(/\s+/)
+            .filter((name) => name !== "e-tabs-base")
+            .join(" ");
           Object.assign(settings, {
             _title: "Tabs",
             tabs: buttons.map((button, i) => ({
@@ -3187,26 +3291,17 @@
             })),
             tabs_direction: "block-start",
             breakpoint_selector: "none",
-            title_typography_typography: "custom",
-            title_typography_font_family: fontStack(label.fontFamily).family,
-            title_typography_font_size: px(label.fontSize),
-            title_typography_font_weight: label.fontWeight,
-            tabs_title_space_between: px(list.columnGap),
-            tabs_title_spacing: px(spacing.rowGap),
-            tabs_title_border_radius: radius(normal.borderRadius),
-            padding: dim(normal, "padding"),
-            title_text_color: label.color,
-            title_text_color_active: w.getComputedStyle(
-              active.firstElementChild || active,
-            ).color,
-            tabs_title_background_color_background: "classic",
-            tabs_title_background_color_color: normal.backgroundColor,
-            tabs_title_background_color_active_background: "classic",
-            tabs_title_background_color_active_color: selected.backgroundColor,
           });
           children = panels.map((panel, i) => {
             const child = create(panel, depth + 1);
             delete child.settings._element_id;
+            // The Atomic class applies Elementor's own padding to a Nested Tabs panel.
+            const classes =
+              child.elType === "container" ? "css_classes" : "_css_classes";
+            child.settings[classes] = (child.settings[classes] || "")
+              .split(/\s+/)
+              .filter((name) => name !== "e-tab-content-base")
+              .join(" ");
             delete child.settings.lse_attributes.role;
             delete child.settings.lse_attributes["aria-labelledby"];
             child.settings._title = settings.tabs[i].tab_title;
@@ -3601,6 +3696,35 @@
           }
           if (entry.widget === "slides")
             props.slides = slideAppearance(entry.node, w);
+          if (entry.widget === "nested-tabs")
+            props.tabs = tabAppearance(
+              entry.node,
+              tabs.get(entry.node).buttons,
+              w,
+            );
+          if (entry.widget === "icon-box") {
+            const icon = entry.node.querySelector(
+              ".elementor-icon-box-icon .elementor-icon",
+            );
+            const title = entry.node.querySelector(".elementor-icon-box-title");
+            const wrapper = entry.node.querySelector(
+              ".elementor-icon-box-wrapper",
+            );
+            const iconStyle = icon && w.getComputedStyle(icon);
+            const titleStyle = w.getComputedStyle(title);
+            const wrapperStyle = w.getComputedStyle(wrapper || entry.node);
+            props.iconBox = {
+              size: parseFloat(iconStyle?.fontSize),
+              gap: wrapperStyle.columnGap,
+              alignment: wrapperStyle.alignItems,
+              fontSize: w.getComputedStyle(
+                title.querySelector("a,span") || title,
+              ).fontSize,
+              lineHeight: titleStyle.lineHeight,
+              marginTop: titleStyle.marginTop,
+              marginBottom: titleStyle.marginBottom,
+            };
+          }
           const parent = entry.node.parentElement;
           if (
             d.compatMode === "BackCompat" &&
@@ -3775,6 +3899,17 @@
                 repeat: overlay.backgroundRepeat,
               };
           }
+          // Keep percentage insets relative to the destination containing block.
+          for (const side of ["top", "right", "bottom", "left"]) {
+            const name = "padding-" + side;
+            const authored = typed?.get(name)?.toString();
+            if (
+              options.preserveCSS &&
+              authored?.includes("%") &&
+              safeValue(authored)
+            )
+              props[name] = authored;
+          }
           // Preserve source anchoring: computed left/top can be resolved even when authored auto.
           for (const side of ["left", "right"])
             if (typed?.get("margin-" + side)?.toString() === "auto")
@@ -3877,7 +4012,7 @@
           if (color === previous || !safeValue(color)) continue;
           const rule = "__LSE_SCOPE__{background-color:" + color + "}";
           css +=
-            width === 1440
+            width === widest
               ? rule
               : "@media(max-width:" + width + "px){" + rule + "}";
           previous = color;
@@ -4144,7 +4279,7 @@
                 : "");
             const rule = selector + "{" + declarations.join(";") + "}";
             css +=
-              width === 1440
+              width === widest
                 ? rule
                 : "@media(max-width:" + width + "px){" + rule + "}";
           }
@@ -4208,7 +4343,7 @@
               appearance +
               "}";
             css +=
-              width === 1440
+              width === widest
                 ? declaration
                 : "@media(max-width:" + width + "px){" + declaration + "}";
             previous = appearance;
@@ -4238,13 +4373,56 @@
             let previous = "";
             const previousPositions = new Map();
             const scope = "__LSE_SCOPE__ .elementor-element-" + element.id;
+            const responsiveParts = Object.keys(all[1440].slides.parts).filter(
+              (part) =>
+                widths.some((width) => {
+                  const style = all[width].slides.parts[part];
+                  const desktop = all[1440].slides.parts[part];
+                  return (
+                    style.size !== desktop.size ||
+                    style.lineHeight !== desktop.lineHeight
+                  );
+                }),
+            );
+            for (const suffix of layoutDevices.values())
+              for (const part of responsiveParts) {
+                const prefix = part + "_typography_";
+                element.settings[prefix + "font_size" + suffix] = sourceSize(
+                  "var(--lse-slide-" + part + "-size)",
+                );
+                element.settings[prefix + "line_height" + suffix] = sourceSize(
+                  "var(--lse-slide-" + part + "-line-height)",
+                );
+              }
+            let previousTypography = "";
             for (const width of widths) {
-              const { overlay, backgroundPositions } = all[width].slides;
+              const { overlay, backgroundPositions, parts } = all[width].slides;
               const declarations = Object.entries(overlay)
                 .filter(([, value]) => value && safeValue(value))
                 .map(([key, value]) => key + ":" + value)
                 .join(";");
               let rules = "";
+              const typography = responsiveParts
+                .map(
+                  (part) =>
+                    "--lse-slide-" +
+                    part +
+                    "-size:" +
+                    parts[part].size +
+                    ";--lse-slide-" +
+                    part +
+                    "-line-height:" +
+                    parts[part].lineHeight,
+                )
+                .join(";");
+              if (
+                typography &&
+                typography !== previousTypography &&
+                safeValue(typography)
+              ) {
+                rules += scope + "{" + typography + "}";
+                previousTypography = typography;
+              }
               if (declarations !== previous && declarations) {
                 rules +=
                   scope + " .swiper-slide-contents{" + declarations + "}";
@@ -4270,7 +4448,7 @@
               }
               if (rules)
                 css +=
-                  width === 1440
+                  width === widest
                     ? rules
                     : "@media(max-width:" + width + "px){" + rules + "}";
             }
@@ -4294,6 +4472,46 @@
           css +=
             scope +
             " .e-n-tabs-content > .e-con:not(.e-active){display:none!important}\n";
+          Object.assign(element.settings, all[1440].tabs.fixedControls);
+          for (const [width, suffix] of layoutDevices)
+            for (const [key, value] of Object.entries(all[width].tabs.controls))
+              element.settings[key + suffix] = value;
+          let previous = "";
+          for (const width of widths) {
+            const rules = all[width].tabs.geometry
+              .map(
+                ([selector, ...styles]) =>
+                  scope +
+                  (selector ? " " + selector : "") +
+                  "{" +
+                  styles
+                    .filter((style) => style && safeValue(style))
+                    .join(";") +
+                  "}",
+              )
+              .join("");
+            if (rules === previous) continue;
+            previous = rules;
+            css +=
+              width === widest
+                ? rules
+                : "@media(max-width:" + width + "px){" + rules + "}";
+          }
+        }
+        if (widget === "icon-box" && options.preserveCSS) {
+          const scope = "__LSE_SCOPE__ .elementor-element-" + element.id;
+          let previous;
+          for (const width of widths) {
+            const margin = all[width].iconBox.marginTop;
+            if (margin === previous || !safeValue(margin)) continue;
+            previous = margin;
+            const rule =
+              scope + " .elementor-icon-box-title{margin-top:" + margin + "}";
+            css +=
+              width === widest
+                ? rule
+                : "@media(max-width:" + width + "px){" + rule + "}";
+          }
         }
         if (entry.node.hasAttribute("data-lse-whatsapp")) {
           const scope = "__LSE_SCOPE__ .elementor-element-" + element.id;
@@ -4475,6 +4693,28 @@
                   : null;
           if (suffix !== null) {
             const target = element.settings;
+            if (widget === "icon-box") {
+              const icon = s.iconBox;
+              if (Number.isFinite(icon.size) && icon.size > 0)
+                target["icon_size" + suffix] = px(icon.size);
+              if (icon.gap !== "normal")
+                target["icon_space" + suffix] = px(icon.gap);
+              const alignment = {
+                start: "top",
+                "flex-start": "top",
+                center: "middle",
+                end: "bottom",
+                "flex-end": "bottom",
+              }[icon.alignment];
+              if (alignment)
+                target["content_vertical_alignment" + suffix] = alignment;
+              target["title_typography_font_size" + suffix] = px(icon.fontSize);
+              if (icon.lineHeight !== "normal")
+                target["title_typography_line_height" + suffix] = px(
+                  icon.lineHeight,
+                );
+              target["title_bottom_space" + suffix] = px(icon.marginBottom);
+            }
             if (/^-?\d+$/.test(s["z-index"]))
               target[(widget ? "_z_index" : "z_index") + suffix] = Number(
                 s["z-index"],
@@ -5131,14 +5371,14 @@
               ),
             currentOuter = properties(declarations),
             currentInner = properties(inner);
-          if (width !== 1440) {
+          if (width !== widest) {
             for (const p of previousOuter.keys())
               if (!currentOuter.has(p) && s[p] && safeValue(s[p]))
                 currentOuter.set(p, s[p]);
           }
           const delta = (current, previous) =>
             [...current]
-              .filter(([p, v]) => width === 1440 || previous.get(p) !== v)
+              .filter(([p, v]) => width === widest || previous.get(p) !== v)
               .map(([p, v]) => p + ":" + v);
           const changedOuter = delta(currentOuter, previousOuter),
             changedInner = delta(currentInner, previousInner);
@@ -5158,7 +5398,7 @@
                 "}"
               : "");
           css +=
-            (+width === 1440
+            (+width === widest
               ? rule
               : "@media(max-width:" + width + "px){" + rule + "}") + "\n";
         }
@@ -5339,7 +5579,7 @@
             if (delta.length) {
               const rule = ":where(__LSE_SCOPE__){" + delta.join(";") + "}";
               contextCSS +=
-                width === 1440
+                width === widest
                   ? rule
                   : "@media(max-width:" + width + "px){" + rule + "}";
             }
