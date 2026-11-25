@@ -1559,12 +1559,28 @@ final class LSE_Importer
                 'line',
                 'polyline',
                 'polygon',
+                'text',
+                'tspan',
                 'title',
                 'desc',
             ]
             as $tag
         ) {
             $allowed[$tag] = $svg_attributes;
+        }
+        foreach (['text', 'tspan'] as $tag) {
+            $allowed[$tag] += array_fill_keys(
+                [
+                    'dx',
+                    'dy',
+                    'text-anchor',
+                    'font-family',
+                    'font-size',
+                    'font-weight',
+                    'dominant-baseline',
+                ],
+                true,
+            );
         }
         $allowed['button']['type'] = true;
         $allowed['button']['disabled'] = true;
@@ -1577,6 +1593,7 @@ final class LSE_Importer
                 'value',
                 'placeholder',
                 'disabled',
+                'style',
                 'readonly',
                 'checked',
                 'selected',
@@ -1657,7 +1674,7 @@ final class LSE_Importer
                     true,
                 )
             ) {
-                if (!$interactive) {
+                if (!$interactive && $processor->get_tag() !== 'SELECT') {
                     $processor->set_attribute('disabled', true);
                 }
                 if ($processor->get_attribute('type') === 'password') {

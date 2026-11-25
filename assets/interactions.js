@@ -80,11 +80,11 @@
   );
 
   function toggleMenu(toggle, open) {
-    const panel = document.getElementById(
-      toggle.getAttribute("data-lse-menu-toggle"),
-    );
-    if (!panel || !toggle.closest("[data-lse-interactive]")?.contains(panel))
-      return;
+    const id = toggle.getAttribute("data-lse-menu-toggle");
+    const panel = toggle
+      .closest("[data-lse-interactive]")
+      ?.querySelector("#" + CSS.escape(id));
+    if (!panel) return;
     toggle.setAttribute("aria-expanded", String(open));
     toggle.classList.toggle("lse-source-elementor-active", open);
     panel.hidden = !open;
@@ -115,6 +115,21 @@
       menuStyles.delete(panel);
     }
   }
+  function hoverSubmenu(event, open) {
+    if (event.pointerType !== "mouse") return;
+    const item = event.target.closest?.("[data-lse-submenu-item]");
+    if (!item?.closest(".lse-source-elementor-nav-menu--main")) return;
+    if (item.contains(event.relatedTarget)) return;
+    if (!open && item.contains(document.activeElement)) return;
+    const toggle = item.querySelector(":scope > [data-lse-submenu-button]");
+    if (toggle) toggleMenu(toggle, open);
+  }
+  document.addEventListener("pointerover", (event) =>
+    hoverSubmenu(event, true),
+  );
+  document.addEventListener("pointerout", (event) =>
+    hoverSubmenu(event, false),
+  );
   window.addEventListener(
     "resize",
     () => {
@@ -244,7 +259,7 @@
       return originalAdd.call(this, type, listener, options);
     };
     try {
-      registration.run();
+      registration.run.call(window);
     } catch (error) {
       console.error("Website interaction could not start:", error);
     } finally {

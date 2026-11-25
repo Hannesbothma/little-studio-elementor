@@ -157,6 +157,7 @@ try {
     "workflow-cleanup",
     "maps-regression",
     "fidelity-regression",
+    "website-fidelity",
     "audit-regression",
     "shared-context",
     "css-regression",

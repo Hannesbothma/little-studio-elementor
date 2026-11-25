@@ -189,17 +189,33 @@
         notes.add("External file needs review: " + url);
         return url + fragment;
       }
-      const body = bytes(record.data),
-        digest = await hash(body);
-      if (
-        type === "image/svg+xml" &&
-        /<!DOCTYPE|<!ENTITY/i.test(text(record))
-      ) {
-        notes.add(
-          "An SVG with document declarations was left external: " + url,
+      let body = bytes(record.data);
+      let data = "data:" + type + ";base64," + record.data;
+      if (type === "image/svg+xml") {
+        const svg = new TextDecoder().decode(body);
+        // Discard legacy external SVG DTD identifiers as text, before any
+        // browser or WordPress parser sees the document.
+        const cleaned = svg.replace(
+          /^(\s*(?:<\?xml[^?]*\?>\s*)?)<!DOCTYPE\s+svg(?:\s+PUBLIC\s+(?:"[^"]*"|'[^']*')\s+(?:"[^"]*"|'[^']*')|\s+SYSTEM\s+(?:"[^"]*"|'[^']*'))?\s*>/i,
+          "$1",
         );
-        return url;
+        if (/<!DOCTYPE|<!ENTITY/i.test(cleaned)) {
+          notes.add(
+            "An SVG with document declarations was left external: " + url,
+          );
+          return url + fragment;
+        }
+        if (cleaned !== svg) {
+          body = encoder.encode(cleaned);
+          data = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(new Blob([body], { type }));
+          });
+        }
       }
+      const digest = await hash(body);
       if (byHash.has(type + digest)) {
         const existing = byHash.get(type + digest);
         assetMap.set(url, existing);
@@ -216,7 +232,7 @@
         url: packaged,
         name: "",
         type,
-        data: "data:" + type + ";base64," + record.data,
+        data,
       };
       assets.push(item);
       assetsByURL.set(packaged, item);
@@ -576,7 +592,10 @@
         ...(queryAliases.has(record.url) && {
           url_aliases: queryAliases.get(record.url),
         }),
-        html: doc.documentElement.outerHTML,
+        html:
+          (doc.doctype
+            ? new XMLSerializer().serializeToString(doc.doctype)
+            : "") + doc.documentElement.outerHTML,
         css: styles.join("\n"),
         js: scripts.join("\n;\n"),
         seo: {

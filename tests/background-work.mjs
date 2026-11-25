@@ -124,7 +124,14 @@ try {
   assert(await tick(await token(), "import", errors.id));
   await tab.reload();
   await tab.locator('[data-import-id="' + errors.id + '"]').click();
+  const skipped = tab.waitForResponse((response) =>
+    response
+      .request()
+      .postData()
+      ?.includes("\r\n\r\nlse_background_decide\r\n"),
+  );
   await tab.locator("#lse-worker-skip").click();
+  assert.equal((await (await skipped).json()).success, true);
   assert(await tick(await token(), "import", errors.id));
   assert(await tick(await token(), "import", errors.id));
   assert.equal(

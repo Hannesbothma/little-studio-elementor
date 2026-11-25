@@ -76,3 +76,33 @@ export function comparePixels(expectedPNG, actualPNG) {
       }
   return { width, height, meanError: sum / samples };
 }
+
+export function compareFullPages(expectedPNG, actualPNG) {
+  const expected = decode(expectedPNG);
+  const actual = decode(actualPNG);
+  const width = Math.min(expected.width, actual.width);
+  const height = Math.min(expected.height, actual.height);
+  const pixels =
+    expected.width * expected.height +
+    actual.width * actual.height -
+    width * height;
+  let difference = pixels - width * height;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const a = (y * expected.width + x) * expected.channels;
+      const b = (y * actual.width + x) * actual.channels;
+      if (
+        expected.pixels[a] !== actual.pixels[b] ||
+        expected.pixels[a + 1] !== actual.pixels[b + 1] ||
+        expected.pixels[a + 2] !== actual.pixels[b + 2]
+      )
+        difference++;
+    }
+  }
+  return {
+    source: [expected.width, expected.height],
+    draft: [actual.width, actual.height],
+    differentPixels: difference,
+    percentDifferent: (100 * difference) / pixels,
+  };
+}

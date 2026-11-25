@@ -105,6 +105,14 @@
     }
     return tokens;
   }
+  function singleCSSImage(value) {
+    const css = value?.trim();
+    if (!css || !/^url\s*\(/i.test(css)) return "";
+    const tokens = cssReferences(css);
+    return tokens.length === 1 && tokens[0].end === css.length
+      ? tokens[0].value
+      : "";
+  }
   async function replaceCSSReferences(css, replace) {
     let cursor = 0,
       result = "";
@@ -794,6 +802,15 @@
   }
   const safeValue = (v) =>
     !/[{}<>]|javascript\s*:|expression\s*\(|@import/i.test(v);
+  const backgroundLayers = [
+    "background-size",
+    "background-position",
+    "background-repeat",
+    "background-attachment",
+    "background-origin",
+    "background-clip",
+    "background-blend-mode",
+  ];
   const outerProps = [
     "display",
     "box-sizing",
@@ -817,6 +834,10 @@
     "flex-shrink",
     "flex-basis",
     "grid-template-columns",
+    "grid-template-rows",
+    "grid-template-areas",
+    "grid-auto-columns",
+    "grid-auto-rows",
     "grid-column",
     "grid-row",
     "column-gap",
@@ -833,9 +854,7 @@
     "clip-path",
     "background-color",
     "background-image",
-    "background-size",
-    "background-position",
-    "background-repeat",
+    ...backgroundLayers,
     "min-width",
     "min-height",
     "max-height",
@@ -849,13 +868,7 @@
     "box-sizing",
     "background-color",
     "background-image",
-    "background-size",
-    "background-position",
-    "background-repeat",
-    "background-attachment",
-    "background-origin",
-    "background-clip",
-    "background-blend-mode",
+    ...backgroundLayers,
     "object-fit",
     "object-position",
     "aspect-ratio",
@@ -2131,6 +2144,34 @@
           panel.setAttribute("data-lse-menu-stretch", "");
         panel.hidden = true;
       }
+      if (!root.LSE_CONFIG?.widgets?.includes("nav-menu")) {
+        for (const item of menu.querySelectorAll("li.menu-item-has-children")) {
+          const link = item.querySelector(":scope > a");
+          const submenu = item.querySelector(":scope > ul.sub-menu");
+          if (
+            !link ||
+            !submenu ||
+            item.querySelector(":scope > [data-lse-submenu-button]")
+          )
+            continue;
+          submenu.id ||= "lse-submenu-panel-" + ++menuIndex;
+          submenu.setAttribute("data-lse-submenu-panel", "");
+          submenu.hidden = true;
+          item.setAttribute("data-lse-submenu-item", "");
+          const button = doc.createElement("button");
+          button.type = "button";
+          button.setAttribute(
+            "aria-label",
+            link.textContent.trim() + " submenu",
+          );
+          button.setAttribute("aria-controls", submenu.id);
+          button.setAttribute("aria-expanded", "false");
+          button.setAttribute("data-lse-menu-toggle", submenu.id);
+          button.setAttribute("data-lse-submenu-button", "");
+          button.textContent = "⌄";
+          link.after(button);
+        }
+      }
     }
 
     // Builder slideshow images live in JSON settings, not ordinary image attributes.
@@ -2585,8 +2626,24 @@
     }
     for (const n of doc.querySelectorAll("script,object,embed,link,meta,base"))
       n.remove();
+    const handlers = [];
     for (const n of doc.querySelectorAll("*")) {
+      n.removeAttribute("data-lse-captured-handler");
+      const index = handlers.length;
       for (const a of [...n.attributes]) {
+        if (
+          /^on(?:click|dblclick|input|change|submit|reset|focus|blur|keydown|keyup)$/i.test(
+            a.name,
+          ) &&
+          a.value.trim()
+        ) {
+          n.setAttribute("data-lse-captured-handler", String(index));
+          handlers.push({
+            index,
+            event: a.name.slice(2).toLowerCase(),
+            code: a.value,
+          });
+        }
         if (
           /^on/i.test(a.name) ||
           /^(javascript|vbscript)\s*:/i.test(a.value) ||
@@ -2641,7 +2698,7 @@
       visibility: "hidden",
     });
     document.body.append(frame);
-    let timer;
+    let timer, documentURL;
     try {
       await new Promise((resolve, reject) => {
         timer = setTimeout(
@@ -2652,9 +2709,16 @@
           clearTimeout(timer);
           resolve();
         };
-        frame.srcdoc =
-          "<!doctype html>" +
-          rewrite(doc.documentElement.outerHTML, previewMap);
+        const markup = rewrite(doc.documentElement.outerHTML, previewMap);
+        if (!sourceCSS.trim() && doc.compatMode === "BackCompat") {
+          // srcdoc always uses standards mode, even without a doctype.
+          documentURL = URL.createObjectURL(
+            new Blob([markup], { type: "text/html" }),
+          );
+          frame.src = documentURL;
+        } else {
+          frame.srcdoc = "<!doctype html>" + markup;
+        }
       });
       const d = frame.contentDocument,
         w = frame.contentWindow;
@@ -2740,8 +2804,16 @@
       // across the entire tablet/mobile range.
       const boundaries = new Set(widths);
       const measurementWidths = new Map();
+      let rootHasRelationalStyles = false;
       const collectBoundaries = (rules) => {
         for (const rule of rules) {
+          if (
+            rule.type === 1 &&
+            /(?:^|[\s>+~,(])(?:body|html|:root)(?:[.#][\w-]+)*:has\(\s*>/i.test(
+              rule.selectorText,
+            )
+          )
+            rootHasRelationalStyles = true;
           if (rule.type === 4)
             for (const match of rule.conditionText.matchAll(
               /\b(min|max)-width\s*:\s*([\d.]+)px/gi,
@@ -2769,6 +2841,7 @@
       const typography = measureTypography(d);
       const elements = [],
         generatedIds = new Set();
+      const keepPageContext = options.preserveCSS && rootHasRelationalStyles;
       let fallbacks = 0;
       const structural = new Set();
       const islands = new Set();
@@ -2834,12 +2907,60 @@
       for (const n of [...islands])
         if ([...islands].some((parent) => parent !== n && parent.contains(n)))
           islands.delete(n);
+      function preserveInlineRuns(node) {
+        if (
+          !node.childNodes.length ||
+          /flex|grid/.test(w.getComputedStyle(node).display)
+        )
+          return;
+        let run = [];
+        function wrapRun() {
+          const inlineElements = run.filter((child) => child.nodeType === 1);
+          if (
+            inlineElements.length &&
+            (inlineElements.some((child) => child.tagName === "BR") ||
+              run.some(
+                (child) => child.nodeType === 3 && child.textContent.trim(),
+              ) ||
+              (inlineElements.length > 1 &&
+                inlineElements.some((child) =>
+                  child.matches("small,em,strong"),
+                )))
+          ) {
+            const wrapper = d.createElement("span");
+            wrapper.setAttribute(
+              "style",
+              "all:unset!important;display:block!important",
+            );
+            run[0].before(wrapper);
+            wrapper.append(...run);
+          }
+          run = [];
+        }
+        for (const child of [...node.childNodes]) {
+          if (
+            child.nodeType === 3 ||
+            (child.nodeType === 1 &&
+              child.matches(
+                "a,abbr,b,bdi,bdo,br,cite,code,em,i,kbd,mark,q,s,samp,small,span,strong,sub,sup,time,u,var,wbr",
+              ) &&
+              w.getComputedStyle(child).display === "inline")
+          )
+            run.push(child);
+          else wrapRun();
+        }
+        wrapRun();
+      }
       function create(node, depth = 0) {
         if (node.nodeType === 3) {
           const text = node.textContent.trim();
           if (!text) return null;
-          const wrap = d.createElement(
-            node.parentElement?.tagName === "BUTTON" ? "span" : "p",
+          const wrap = d.createElement("span");
+          wrap.setAttribute(
+            "style",
+            "all:unset!important;display:" +
+              (node.parentElement?.tagName === "BUTTON" ? "inline" : "block") +
+              "!important",
           );
           wrap.textContent = text;
           node.replaceWith(wrap);
@@ -2848,8 +2969,32 @@
         if (node.nodeType !== 1) return null;
         if (structural.has(node))
           return [...node.childNodes].flatMap((n) => create(n, depth) || []);
-        const box = node;
         const tag = node.tagName.toLowerCase();
+        const generatedLink =
+          tag === "a" &&
+          node.hasAttribute("href") &&
+          !node.textContent.trim() &&
+          ["::before", "::after"].some(
+            (pseudo) =>
+              !["normal", "none"].includes(
+                w.getComputedStyle(node, pseudo).content,
+              ),
+          );
+        const linkedImage =
+          tag === "a" &&
+          node.children.length === 1 &&
+          node.firstElementChild.tagName === "IMG"
+            ? node.firstElementChild
+            : null;
+        // An absolutely positioned image does not give its enclosing link a
+        // layout box. Put the editable image widget in that same position.
+        const box =
+          linkedImage &&
+          ["absolute", "fixed"].includes(
+            w.getComputedStyle(linkedImage).position,
+          )
+            ? linkedImage
+            : node;
         if (
           [
             "script",
@@ -3161,6 +3306,7 @@
             "p",
             "ul",
             "ol",
+            "dl",
             "blockquote",
             "pre",
             "label",
@@ -3198,12 +3344,8 @@
           if (figureImage) settings.caption = sourceHTML(figureImage, true);
           settings.lse_image_alt = image.getAttribute("alt") || "";
           settings.lse_alt_override = "yes";
-        } else if (
-          tag === "a" &&
-          node.children.length === 1 &&
-          node.firstElementChild.tagName === "IMG"
-        ) {
-          const image = node.querySelector("img");
+        } else if (linkedImage) {
+          const image = linkedImage;
           widget = "image";
           settings.image = {
             url: rewrite(image.getAttribute("src") || "", options.map || {}),
@@ -3224,6 +3366,7 @@
         } else if (
           tag === "a" &&
           node.hasAttribute("href") &&
+          !generatedLink &&
           node.children.length <= 1 &&
           !node.querySelector(
             "div,section,article,img,svg,h1,h2,h3,h4,h5,h6,p,ul,ol",
@@ -3295,6 +3438,7 @@
             .display.includes("flex")
             ? w.getComputedStyle(node).flexDirection
             : "column";
+          preserveInlineRuns(node);
           children = [...node.childNodes].flatMap(
             (n) => create(n, depth + 1) || [],
           );
@@ -3327,6 +3471,7 @@
           widget,
           tag,
           interactive,
+          generatedLink,
         });
         return element;
       }
@@ -3353,10 +3498,26 @@
         "bottom",
         "left",
       ];
+      const canvasColors = new Map();
+      const transparent = "rgba(0, 0, 0, 0)";
       for (const width of widths) {
         frame.style.width = (measurementWidths.get(width) ?? width) + "px";
         await new Promise((r) => setTimeout(r, 25));
         fitHeadings();
+        if (
+          options.preserveCSS &&
+          options.layout !== "elementor_header_footer"
+        ) {
+          const rootColor = w.getComputedStyle(
+            d.documentElement,
+          ).backgroundColor;
+          canvasColors.set(
+            width,
+            rootColor === transparent
+              ? w.getComputedStyle(d.body).backgroundColor
+              : rootColor,
+          );
+        }
         let overflow;
         if (layoutDevices.has(width)) {
           const viewport = d.documentElement.clientWidth;
@@ -3399,6 +3560,18 @@
                 ? content
                 : s
             ).getPropertyValue(p);
+          if (
+            entry.generatedLink ||
+            (keepPageContext && entry.tag === "body")
+          ) {
+            props.flowPseudos = ["::before", "::after"].filter((pseudo) => {
+              const style = w.getComputedStyle(entry.node, pseudo);
+              return (
+                style.position === "static" &&
+                !["normal", "none"].includes(style.content)
+              );
+            });
+          }
           if (!entry.widget && !entry.element.elements.length) {
             const rect = entry.node.getBoundingClientRect();
             props.hasBox = rect.width > 0 && rect.height > 0;
@@ -3429,6 +3602,16 @@
           if (entry.widget === "slides")
             props.slides = slideAppearance(entry.node, w);
           const parent = entry.node.parentElement;
+          if (
+            d.compatMode === "BackCompat" &&
+            parent === d.body &&
+            s.position === "static" &&
+            Math.abs(
+              entry.node.getBoundingClientRect().top -
+                parent.getBoundingClientRect().top,
+            ) < 0.5
+          )
+            props["margin-top"] = "0px";
           if (parent) {
             if (!parents.has(parent)) {
               const ps = w.getComputedStyle(parent);
@@ -3569,9 +3752,13 @@
             }
             if (gaps.length) props.inlineGap = Math.min(...gaps);
           }
+          const typed = entry.node.computedStyleMap?.();
+          const minimumHeight = typed?.get("min-height")?.toString();
           props.sourceMinHeight =
             typography.viewportSize(entry.node, s, "min-height") ||
-            s.getPropertyValue("--min-height").trim();
+            (minimumHeight?.includes("%")
+              ? minimumHeight
+              : s.getPropertyValue("--min-height").trim());
           if (!entry.widget && entry.node.matches(".e-con")) {
             const overlay = w.getComputedStyle(entry.node, "::before");
             if (
@@ -3589,7 +3776,6 @@
               };
           }
           // Preserve source anchoring: computed left/top can be resolved even when authored auto.
-          const typed = entry.node.computedStyleMap?.();
           for (const side of ["left", "right"])
             if (typed?.get("margin-" + side)?.toString() === "auto")
               props["margin-" + side] = "auto";
@@ -3644,15 +3830,26 @@
             );
             props.imageBoxWidth =
               entry.node === entry.styleNode
-                ? props.actualWidth
-                : String(
-                    Math.max(
-                      1,
-                      entry.node.clientWidth -
-                        (parseFloat(s.paddingLeft) || 0) -
-                        (parseFloat(s.paddingRight) || 0),
-                    ),
+                ? Number(props.actualWidth)
+                : Math.max(
+                    0,
+                    entry.node.clientWidth -
+                      (parseFloat(s.paddingLeft) || 0) -
+                      (parseFloat(s.paddingRight) || 0),
                   );
+            const authoredWidth = entry.styleNode
+              .computedStyleMap?.()
+              .get("width")
+              ?.toString();
+            // An inline link can have a painted box without a client width.
+            // Its image needs a length that does not depend on the new wrapper.
+            props.imageWidth = props.imageBoxWidth
+              ? (100 * Number(props.contentWidth)) / props.imageBoxWidth + "%"
+              : authoredWidth &&
+                  authoredWidth !== "auto" &&
+                  !authoredWidth.includes("%")
+                ? authoredWidth
+                : props.contentWidth + "px";
           }
           if (!snapshots.has(entry.element.id))
             snapshots.set(entry.element.id, {});
@@ -3674,12 +3871,34 @@
       let css = options.preserveCSS
         ? sourceSheets.map((sheet) => fontFaces(sheet.cssRules)).join("")
         : "";
+      if ([...canvasColors.values()].some((color) => color !== transparent)) {
+        let previous;
+        for (const [width, color] of canvasColors) {
+          if (color === previous || !safeValue(color)) continue;
+          const rule = "__LSE_SCOPE__{background-color:" + color + "}";
+          css +=
+            width === 1440
+              ? rule
+              : "@media(max-width:" + width + "px){" + rule + "}";
+          previous = color;
+        }
+      }
+      if (options.preserveCSS && !sourceCSS.trim())
+        css +=
+          "__LSE_SCOPE__ .lse-imported-site [data-lse-source-content] a:any-link{color:revert;text-decoration:revert}\n";
+      if (d.querySelector("[data-lse-submenu-button]"))
+        css +=
+          "__LSE_SCOPE__ [data-lse-submenu-panel][hidden]{display:none!important}\n" +
+          "__LSE_SCOPE__ [data-lse-submenu-item]{position:relative}\n" +
+          "__LSE_SCOPE__ [data-lse-submenu-button]{position:absolute;inset-inline-end:0;top:0;padding:.25em;color:inherit;background:none;border:0;cursor:pointer}\n" +
+          "__LSE_SCOPE__ [data-lse-submenu-item] > a{padding-inline-end:1.5em}\n";
       const structure = [];
       const byId = new Map(elements.map((entry) => [entry.element.id, entry]));
       const layoutNodes = new Set();
       const regionKind = (entry) => {
         const node = entry.node;
         if (
+          keepPageContext ||
           node.parentElement?.closest(
             'main,[role=main],article,aside,nav,section,header,footer,[data-elementor-type="header"],[data-elementor-type="footer"]',
           )
@@ -3813,11 +4032,20 @@
           tag !== "body" &&
           children.some((child) => convertedFloatRows.has(child.id)) &&
           hasDesignControls(entry);
+        const keepsNamedGrid = widths.some((width) => {
+          const style = snapshots.get(node.id)[width];
+          return (
+            style.display.includes("grid") &&
+            style["grid-template-areas"] !== "none"
+          );
+        });
         const shell =
           isLayout &&
           !kind &&
+          !(keepPageContext && tag === "body") &&
           !decorative &&
           !keepsFloatFrame &&
+          !keepsNamedGrid &&
           !convertedFloatRows.has(node.id) &&
           (sectionFrame ||
             ((!keepBlock || pageFrame) &&
@@ -3928,6 +4156,77 @@
         const { element, widget } = entry;
         if (layoutNodes.has(element.id)) continue;
         const all = snapshots.get(element.id);
+        const sampleImageWidth =
+          widget === "image" &&
+          widths.some((width) => !all[width].imageBoxWidth);
+        const useBackgroundCSS = widths.some((width) => {
+          const s = all[width];
+          const image = (widget === "image" ? s.image : s)["background-image"];
+          return image !== "none" && !singleCSSImage(image);
+        });
+        const preservesTextWidth =
+          widget === "text-editor" && options.preserveCSS;
+        const autoWidthBeyondParent =
+          preservesTextWidth &&
+          widths.some((width) => {
+            const s = all[width];
+            return (
+              s.specifiedWidth === "auto" &&
+              s.parentDisplay === "block" &&
+              Number(s.actualWidth) > Number(s.parentWidth) + 1 &&
+              (parseFloat(s["margin-left"]) < 0 ||
+                parseFloat(s["margin-right"]) < 0)
+            );
+          });
+        const textMinWidth =
+          preservesTextWidth &&
+          widths.some(
+            (width) => !["", "auto", "0px"].includes(all[width]["min-width"]),
+          );
+        if (autoWidthBeyondParent || textMinWidth)
+          css +=
+            "__LSE_SCOPE__ .elementor-element.elementor-element-" +
+            element.id +
+            ".elementor-widget.elementor-widget-text-editor" +
+            "{" +
+            (autoWidthBeyondParent
+              ? "max-width:var(--lse-source-max-width);"
+              : "") +
+            (textMinWidth ? "min-width:var(--lse-source-min-width);" : "") +
+            "}\n";
+        if (entry.generatedLink && options.preserveCSS) {
+          let previous;
+          for (const width of widths) {
+            const { color, "text-decoration": decoration } = all[width];
+            const appearance =
+              "color:" + color + ";text-decoration:" + decoration;
+            if (appearance === previous || !safeValue(appearance)) continue;
+            const declaration =
+              "__LSE_SCOPE__ .elementor-element.elementor-element-" +
+              element.id +
+              "{" +
+              appearance +
+              "}";
+            css +=
+              width === 1440
+                ? declaration
+                : "@media(max-width:" + width + "px){" + declaration + "}";
+            previous = appearance;
+          }
+        }
+        if (options.preserveCSS && all[1440].flowPseudos)
+          for (const pseudo of all[1440].flowPseudos) {
+            // Elementor positions container overlays absolutely, including
+            // ordinary pseudo-elements that belong in the source document flow.
+            if (
+              widths.every((width) => all[width].flowPseudos.includes(pseudo))
+            )
+              css +=
+                "__LSE_SCOPE__ .elementor-element.elementor-element-" +
+                element.id +
+                pseudo +
+                "{position:static;inset:auto;width:auto;height:auto;pointer-events:none}\n";
+          }
         if (widget === "slides") {
           for (const [width, suffix] of [
             [1440, ""],
@@ -4015,6 +4314,18 @@
             ") > a,:where(__LSE_SCOPE__ .elementor-element-" +
             element.id +
             ") > .elementor-widget-container > a{width:100%}\n";
+        if (widget === "text-editor" && options.preserveCSS) {
+          // Box controls belong to the editable widget. Keep the copied
+          // paragraph or list from applying the same spacing a second time.
+          const target =
+            "__LSE_SCOPE__ .elementor-element.elementor-element-" + element.id;
+          css +=
+            target +
+            " > [data-lse-source-content]," +
+            target +
+            " > .elementor-widget-container > [data-lse-source-content]" +
+            "{margin:0;padding:0;border:0;background:none;box-shadow:none}\n";
+        }
         if (
           entry.interactive ||
           (widget === "html" && entry.tag !== "svg" && options.preserveCSS)
@@ -4064,6 +4375,17 @@
             ";color:" +
             all[1440].color +
             "}\n";
+          const box = entry.interactive
+            ? "[data-lse-interactive] > [data-lse-source-content]"
+            : "[data-lse-source-content]";
+          css +=
+            "__LSE_SCOPE__ .elementor-element-" +
+            element.id +
+            " " +
+            box +
+            "{box-sizing:" +
+            all[1440]["box-sizing"] +
+            "}\n";
           continue;
         }
         let previousOuter = new Map(),
@@ -4088,6 +4410,8 @@
             (s.floatRow || s.inlineFlow);
           if (textWidget)
             sourceValues["font-size"] = s.typography.fontSize || s["font-size"];
+          if (autoWidthBeyondParent) sourceValues["max-width"] = s["max-width"];
+          if (textMinWidth) sourceValues["min-width"] = s["min-width"];
           if (!widget || widget !== "html") {
             sourceValues.display = widget
               ? s.display === "inline"
@@ -4105,6 +4429,7 @@
           if (widget === "image")
             sourceValues["image-height"] =
               s.image.specifiedHeight || s.image.height;
+          if (sampleImageWidth) sourceValues["image-width"] = s.imageWidth;
           if (!widget) {
             sourceValues["flex-direction"] = s.floatRow
               ? "row"
@@ -4265,13 +4590,7 @@
                   );
               }
               target["align" + suffix] = s["text-align"];
-              if (parseFloat(s.imageBoxWidth) > 0)
-                target["width" + suffix] = {
-                  unit: "%",
-                  size:
-                    (100 * parseFloat(s.contentWidth)) /
-                    parseFloat(s.imageBoxWidth),
-                };
+              target["width" + suffix] = sourceSize(s.imageWidth);
               target["height" + suffix] = image.explicitHeight
                 ? sourceSize(image.specifiedHeight || image.height)
                 : { unit: "custom", size: "auto" };
@@ -4312,12 +4631,11 @@
               target.lse_image_background_background = "classic";
               target["lse_image_background_color" + suffix] =
                 image["background-color"];
-              const background = image["background-image"].match(
-                /^url\(["']?(.*?)["']?\)$/,
-              );
+              const background =
+                !useBackgroundCSS && singleCSSImage(image["background-image"]);
               if (background) {
                 target["lse_image_background_image" + suffix] = {
-                  url: restoreRefs(background[1]),
+                  url: restoreRefs(background),
                   id: 0,
                 };
                 target["lse_image_background_size" + suffix] =
@@ -4465,12 +4783,11 @@
               else if (s["background-color"] !== all[1440]["background-color"])
                 target["lse_background_color" + suffix] = s["background-color"];
               {
-                const image = s["background-image"].match(
-                  /^url\(["']?(.*?)["']?\)$/,
-                );
+                const image =
+                  !useBackgroundCSS && singleCSSImage(s["background-image"]);
                 if (image) {
                   target["background_image" + suffix] = {
-                    url: restoreRefs(image[1]),
+                    url: restoreRefs(image),
                     id: 0,
                   };
                   target["background_size" + suffix] = s["background-size"];
@@ -4483,13 +4800,11 @@
                 target.background_overlay_background = "classic";
                 if (width === 1440) {
                   target.background_overlay_color = s.overlay.color;
-                  const image = s.overlay.image.match(
-                    /^url\(["']?(.*?)["']?\)$/,
-                  );
+                  const image = singleCSSImage(s.overlay.image);
                   if (image)
                     target.background_overlay_image = {
                       id: 0,
-                      url: restoreRefs(image[1]),
+                      url: restoreRefs(image),
                     };
                 } else if (s.overlay.color !== all[1440].overlay?.color)
                   target["lse_overlay_color" + suffix] = s.overlay.color;
@@ -4696,10 +5011,15 @@
                   ]),
                 ),
               };
-            if (widget === "image")
+            if (widget === "image") {
               target["height" + suffix] = sourceSize(
                 sourceVariable("image-height"),
               );
+              if (sampleImageWidth)
+                target["width" + suffix] = sourceSize(
+                  sourceVariable("image-width"),
+                );
+            }
             if (!widget) {
               target["flex_gap" + suffix] = target["grid_gaps" + suffix] = {
                 unit: "custom",
@@ -4736,6 +5056,11 @@
           if (["heading", "text-editor", "button"].includes(widget))
             declarations.push("--lse-text-max-width:" + s.textMaxWidth);
           for (const p of outerProps) {
+            if (
+              backgroundLayers.includes(p) &&
+              s["background-image"] === "none"
+            )
+              continue;
             if (
               widget === "image" &&
               (["aspect-ratio", "object-fit"].includes(p) ||
@@ -4895,6 +5220,9 @@
           let fragment = "";
           if (rule.type === 1) {
             const declarations = namespaceCSS(rule.style.cssText),
+              clearfix =
+                rule.style.display === "table" &&
+                /^(?:"\s*"|'\s*')$/.test(rule.style.content),
               variables = [...rule.style]
                 .filter((p) => p.startsWith("--"))
                 .map((p) =>
@@ -4913,21 +5241,32 @@
                 "$1.lse-imported-site",
               );
               variableSelectors.push("__LSE_SCOPE__ " + selector);
-              const pseudo =
-                  selector.match(/::[a-z-]+(?:\([^)]*\))?$/i)?.[0] || "",
-                main = pseudo ? selector.slice(0, -pseudo.length) : selector;
-              const content = options.preserveCSS
+              const suffix =
+                selector.match(
+                  /(?:::[a-z-]+(?:\([^)]*\))?|:(?:before|after|first-line|first-letter))$/i,
+                )?.[0] || "";
+              const pseudo = suffix.replace(/^:([^:])/, "::$1");
+              const main = suffix
+                ? selector.slice(0, -suffix.length)
+                : selector;
+              const interactiveState =
+                /:(?:hover|focus(?:-within|-visible)?|active|visited|checked|disabled)\b|\.lse-source-elementor-sticky--(?:active|effects)\b/.test(
+                  selector,
+                );
+              let content = options.preserveCSS
                 ? "[data-lse-source-content],[data-lse-source-content] *"
                 : "[data-lse-interactive],[data-lse-interactive] *";
+              if (options.preserveCSS && !suffix && !interactiveState)
+                // An editable paragraph is wrapped in its own widget. It
+                // already has sampled presentation on that wrapper, and
+                // selectors like p:last-child would match every copied root.
+                content =
+                  "[data-lse-source-content]:not(.elementor-widget-text-editor > p,.elementor-widget-text-editor > .elementor-widget-container > p)," +
+                  "[data-lse-source-content] *";
               stateSelectors.push(
                 "__LSE_SCOPE__ " + main + ":where(" + content + ")" + pseudo,
               );
-              if (
-                options.preserveCSS &&
-                /:(?:hover|focus(?:-within|-visible)?|active|visited|checked|disabled)\b|::|\.lse-source-elementor-sticky--(?:active|effects)\b/.test(
-                  selector,
-                )
-              ) {
+              if (options.preserveCSS && (pseudo || interactiveState)) {
                 const native = main.replace(
                   /(^|[\s>+~,(])(h[1-6]|a|p|img|span)(?=$|[\s.#:[>+~,])/g,
                   (_, lead, tag) =>
@@ -4953,14 +5292,19 @@
                 stateSelectors.push(
                   "__LSE_SCOPE__ " +
                     native +
-                    ":is(.elementor-element[data-lse-native]):where(:not(.elementor-widget))" +
+                    ":is(.elementor-element[data-lse-native],.elementor-element-edit-mode):where(:not(.elementor-widget))" +
                     pseudo,
                 );
               }
             }
             fragment =
               groupedRule(variableSelectors, variables) +
-              groupedRule(stateSelectors, declarations);
+              groupedRule(
+                stateSelectors,
+                (clearfix
+                  ? "position:static;width:auto;height:auto;pointer-events:none;"
+                  : "") + declarations,
+              );
           } else if (rule.type === 7) fragment = rule.cssText + "\n";
           else if (rule.cssRules)
             fragment =
@@ -5101,7 +5445,30 @@
         source: {
           html: page.html,
           css: page.css,
-          js: page.js + "\n" + inlineScripts,
+          js: [
+            page.js,
+            inlineScripts,
+            // Opt-in scripts own these listeners. Raw event attributes stay out of saved markup.
+            ...handlers.map(({ index, event, code }) => {
+              const selector =
+                '.lse-imported-site [data-lse-captured-handler="' +
+                index +
+                '"]';
+              return (
+                "for (const node of document.querySelectorAll(" +
+                JSON.stringify(selector) +
+                ")) node.addEventListener(" +
+                JSON.stringify(event) +
+                ", function(event){\n" +
+                "if ((function(event){\n" +
+                code +
+                "\n}).call(this,event) === false) event.preventDefault();\n" +
+                "});"
+              );
+            }),
+          ]
+            .filter(Boolean)
+            .join("\n;\n"),
           structure,
         },
         seo: page.seo || {},
@@ -5110,6 +5477,7 @@
     } finally {
       clearTimeout(timer);
       frame.remove();
+      if (documentURL) URL.revokeObjectURL(documentURL);
     }
   }
   function fromHTML(text, name = "page.html") {

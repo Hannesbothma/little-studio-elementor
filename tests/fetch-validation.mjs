@@ -9,6 +9,7 @@ const php = new PHP(
 );
 try {
   php.writeFile("/fetch.php", await readFile("includes/fetch.php"));
+  php.writeFile("/capture.php", await readFile("includes/capture.php"));
   const r = await php.run({
     code: `<?php
 namespace WpOrg\\Requests { class Response {public $body='body';public $status_code=200;public $headers=[];}class Requests {public static function request_multiple($requests){$GLOBALS['requests']=$requests;$out=[];foreach($requests as$url=>$item){if($item['options']['follow_redirects']!==false||!is_string($item['options']['verify']))throw new \\RuntimeException('Redirect/TLS policy changed');$out[$url]=new Response();if(str_contains($url,'redirect')){$out[$url]->status_code=302;$out[$url]->headers=['location'=>'http://127.0.0.1/private'];}}return $out;}} }
@@ -21,8 +22,18 @@ function _wp_http_get_object(){return new class{public function block_request($u
 function has_filter($name){return $GLOBALS['custom']??false;}
 function apply_filters($hook,$value,...$args){if($hook==='http_response'){$GLOBALS['filtered']=($GLOBALS['filtered']??0)+1;return $value;}if($hook==='pre_http_request'&&str_contains($args[1],'intercepted'))return ['body'=>'intercepted'];return $value;}
 function do_action(...$args){}
+function add_action(...$args){}
 function wp_safe_remote_get($url,$args){$GLOBALS['fallback']=($GLOBALS['fallback']??0)+1;return ['body'=>'fallback','url'=>$url,'args'=>$args];}
 require '/fetch.php';function check($ok,$name){if(!$ok)throw new RuntimeException($name);}
+trait LSE_Background_Capture {}
+function wp_parse_url($url,$component=-1){return parse_url($url,$component);}
+require '/capture.php';
+$normalize=new ReflectionMethod(LSE_Capture::class,'url');
+$base='https://source.example/catalogue/category/books/index.html?filter=all';
+check($normalize->invoke(null,'../../../static/style.css',$base)==='https://source.example/static/style.css','Nested asset path resolved incorrectly');
+check($normalize->invoke(null,'../../images/cover.jpg?size=small#preview',$base)==='https://source.example/catalogue/images/cover.jpg?size=small','Relative path or query was lost');
+check($normalize->invoke(null,'?page=2',$base)==='https://source.example/catalogue/category/books/index.html?page=2','Query-only reference lost the page path');
+check($normalize->invoke(null,'//cdn.example/assets/style.css',$base)==='https://cdn.example/assets/style.css','Protocol-relative host was lost');
 $validate=static function($url){if(str_contains($url,'unsafe'))throw new RuntimeException('Unsafe URL');};
 LSE_Fetch::prime(['https://public.example/a','https://unsafe.example/x','https://public.example/b','https://public.example/redirect','https://public.example/not-started'],$validate);
 check(count($GLOBALS['requests'])===3,'Unsafe or excess resource was fetched');check(($GLOBALS['filtered']??0)===3,'WP response filters missing');check(LSE_Fetch::get('https://public.example/redirect')['response']['code']===302,'Redirect was followed');check(LSE_Fetch::get('https://public.example/a')['body']==='body','Prefetch missing');check(LSE_Fetch::get('https://public.example/a')['body']==='fallback','Response was consumed twice');

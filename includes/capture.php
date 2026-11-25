@@ -25,11 +25,37 @@ final class LSE_Capture
         ) {
             return '';
         }
-        if ($base) {
-            $value = WP_Http::make_absolute_url($value, $base);
-        }
         $value = preg_replace('/#.*$/s', '', $value);
         $p = wp_parse_url($value);
+        if ($base && $p && !isset($p['scheme'])) {
+            $parent = wp_parse_url($base);
+            if (
+                !$parent ||
+                empty($parent['scheme']) ||
+                empty($parent['host'])
+            ) {
+                return '';
+            }
+            $p['scheme'] = $parent['scheme'];
+            if (!isset($p['host'])) {
+                $p['host'] = $parent['host'];
+                $p['port'] = $parent['port'] ?? null;
+                $parent_path = $parent['path'] ?? '/';
+                $reference_path = $p['path'] ?? '';
+                if ($reference_path === '') {
+                    $p['path'] = $parent_path;
+                    $p['query'] ??= $parent['query'] ?? null;
+                } elseif ($reference_path[0] !== '/') {
+                    // Leave every parent-directory segment intact for the path stack below.
+                    $directory = substr(
+                        $parent_path,
+                        0,
+                        strrpos($parent_path, '/') + 1,
+                    );
+                    $p['path'] = $directory . $reference_path;
+                }
+            }
+        }
         if (
             !$p ||
             !in_array(

@@ -1,5 +1,93 @@
 # Verification
 
+## Website fidelity
+
+Run the stable page-context fixture with `LSE_TEST_ONLY=website-fidelity npm test`.
+It checks the generated header, page background, footer relationship, dropdown,
+and a native heading edit in Elementor. The runner saves full-page source and
+draft screenshots and counts every differing pixel, including differences in
+page dimensions.
+
+For live URL imports, install the candidate ZIP in a disposable WordPress site
+running native PHP, then run the same comparison against the test site.
+
+```sh
+LSE_TEST_URL=http://127.0.0.1:9440 \
+LSE_TEST_USER=test-admin \
+LSE_TEST_PASSWORD_FILE=/path/to/test-password \
+node tests/website-fidelity.mjs --live
+```
+
+The live run checks mobile, desktop, and both sides of the 767/768px breakpoint.
+Use `LSE_FIDELITY_CASES` to select comma-separated cases from `cern`, `books`,
+`dropdown`, and `dynamic-controls`. The default output is
+`tests/results/website-fidelity`. The comparison JSON records checks and
+remaining differences after the run.
+
+### Current issues and improvement plan
+
+Updated 25 November 2026. Use the [tested v0.12.24 ZIP](../dist/little-studio-elementor-0.12.24.zip)
+on the SSD as the comparison baseline. The public WordPress updater advertises
+[v0.12.22](https://github.com/Hannesbothma/little-studio-elementor/releases/tag/v0.12.22).
+The recent live imports used Elementor Core. Evidence is in the
+[random-site comparison](../tests/results/random-sites-0.12.24/index.html) and
+[baseline comparison](../tests/results/fidelity-0.12.24/index.html).
+
+#### Confirmed on v0.12.24
+
+| Area | Current problem |
+| --- | --- |
+| IANA linked SVG | A logo with a 234px intrinsic width renders at 23,400px. At 390px the imported page scrolls to 23,425px. A zero-width inline link leaves the importer calculating a percentage against a 1px fallback. |
+| CSS Zen Garden | Four header background layers become a single invalid URL. The 390px draft is 8,346px tall versus 4,296px on the source. Section widths and spacing also differ. |
+| Wikipedia | At 1280px the sidebar leaves its named grid area and the draft reaches a 2,627px scroll width. The References link is present. Tablet and phone drafts also differ visually. |
+| W3C accordion page | The surrounding layout differs even though Enter expands Billing Address and clicking closes it at all three tested widths. The missing icon-font WOFF also returns 404 directly from W3C. |
+| Earlier live samples | CERN, Books to Scrape and The Internet still have visual differences. At 390px the full-page comparisons showed 1.70% of pixels differed for CERN, 1.54% for Books, 1.61% for the dropdown and 7.58% for Dynamic Controls. Their tested links, covers and controls worked. The stable page-context fixture matched exactly at all four tested widths. |
+| Comparison and reporting | The current full-page runner can produce an impractically large image when a draft overflows. The IANA mobile screenshot exceeded 219 million pixels. The final import report records capture and save diagnostics. Rendered layout and interaction checks come from a separate comparison run. |
+
+#### Green Valley Lodge and Pro
+
+| Area | Evidence and work remaining |
+| --- | --- |
+| Original room URL | The live `/delux-family-rooms/` returned 404 on 25 November. The [corrected live room URL](https://greenvalleylodge.co.za/deluxe-family-rooms/) returned 200. The old testing-domain URL also returned 404 that day. Capture the corrected live page and verify that Rooms and the header menu open the right WordPress draft. |
+| Mobile hero and layout | Earlier Core runs showed crop and slide discrepancies on Home and Deluxe/Family Rooms. A separate Core smoke run reported that the imported homepage fit at 320px, 390px and 430px, so the current overflow status needs a fresh source-and-draft comparison. |
+| Accessibility | The sampled W3C keyboard action and earlier room tab behavior passed. Green Valley still needs keyboard navigation, focus, accessible names, alt text, landmarks and a screen-reader check on the current import. |
+| Booking | The NightsBridge link was preserved and its destination loaded. Verify that the current draft opens it from mobile and desktop menus, and use an authorized test flow for availability and booking steps. |
+| Reviews and forms | An older comparison captured nine review cards in the draft versus 18 on the live homepage, with the live feed script absent from the draft. Verify the intended review presentation and service connection. The Contact Us form still needs an end-to-end check with a test recipient. |
+| Elementor Pro stylesheet | The separate stylesheet regression from the handoff needs a reproduction on the current package. Compare the same draft in Core and Pro, and check the loaded styles in both the editor and frontend. |
+| Scan and final report | The older scan that paused with four resources queued is a retest case. Run a large foreground scan and a background scan through resume, image processing, and the final report in native PHP. Confirm that a slow resource can be identified and that the report appears after processing ends. |
+
+#### Order of work
+
+1. **Fix linked-image sizing and catch overflow early.** Add a fixture with an
+   intrinsic SVG inside an inline link. Use the rendered source width when
+   there is no usable containing width for a percentage. Retain authored
+   responsive sizes and test a clickable logo. Compare source and draft
+   scroll widths before full-page capture. Use viewport screenshots and log
+   the offending element when a document exceeds the screenshot budget.
+2. **Preserve layered backgrounds.** Rewrite each URL independently and keep
+   layer order, size, position, repeat, and attachment. Keep multiple layers
+   in CSS when the Elementor media control accepts one image. Verify that
+   all four Zen Garden header layers render, then measure the remaining
+   height and spacing differences separately.
+3. **Preserve named grids.** Retain grid areas, column constraints, and child
+   placement when creating editable Elementor containers. Verify the left
+   sidebar at 1280px, responsive reflow at narrower widths, and navigation
+   to the References section.
+4. **Close the remaining visual and compatibility gaps.** Address the W3C
+   layout and earlier live samples with their working interactions as
+   regression checks. Then run the Green Valley room, mobile, accessibility
+   and service checks on the current build. Reproduce the Pro stylesheet
+   issue independently to keep its diagnosis clear.
+5. **Verify the package and updater.** Use the actual WordPress importer at
+   390px, 768px, and 1280px, plus the widths around any affected source
+   breakpoint. Compare rendered geometry, links, interactions and Elementor
+   editing. Run the exact ZIP in a fresh WordPress test site. Produce one
+   report at the end with source/draft screenshots, passed checks, and
+   remaining issues. For the release pass, verify that the public updater
+   manifest and downloadable ZIP match the tested package.
+
+## Updater verification
+
 The updater was tested headlessly against disposable WordPress 7.1.3, PHP 8.3.33
 and Elementor Core 4.3.6. Plugin files were installed from the distributable ZIP
 inside the virtual installation; the development source directory was not mounted

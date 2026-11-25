@@ -26,6 +26,7 @@ try {
         `<article><section class="region"><section style="min-height:calc(100vh - 40px)"><h1>Work</h1>
         <svg style="display:none"><symbol id="arrow" viewBox="0 0 10 10"><path d="M0 0h10v10z"/></symbol></svg>
         <svg viewBox="0 0 10 10"><use href="#arrow"/></svg><svg><use href="/social.svg#network"/></svg><div></div>
+        <img src="/legacy.svg" alt="Legacy SVG">
         <iframe src="https://player.vimeo.com/video/357581440?background=1"></iframe>
         </section><section><h2>Subscribe</h2><form class="newsletter-form"><div class="newsletter-form-header"><p>Monthly news</p></div>
         <input type="email" name="email" required placeholder="Email"><button type="submit">Sign up</button></form></section></section></article>`,
@@ -37,6 +38,15 @@ try {
         requested: home + "social.svg",
         data: btoa(
           '<svg xmlns="http://www.w3.org/2000/svg"><symbol id="network" viewBox="0 0 64 64"><path d="M0 0h64v64z"/></symbol></svg>',
+        ),
+      },
+      {
+        kind: "asset",
+        type: "image/svg+xml",
+        url: home + "legacy.svg",
+        requested: home + "legacy.svg",
+        data: btoa(
+          '<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "https://example.org/svg.dtd">\n<svg xmlns="http://www.w3.org/2000/svg" width="240" height="60"><rect width="240" height="60"/></svg>',
         ),
       },
       record("cart", '<div id="sqs-cart-root"></div>'),
@@ -98,6 +108,8 @@ try {
       regions: converted.regions.map((n) => n.kind),
       blank: blank.emptyBody,
       supportsCart,
+      legacySVG: project.assets.find((asset) => asset.name === "legacy-svg.svg")
+        ?.data,
       cart: flat(shop.elements).find((n) => n.widgetType === "shortcode")
         ?.settings.shortcode,
       viewportHeight:
@@ -135,6 +147,16 @@ try {
   if (result.navInstalled) assert.equal(result.menu?.lse_imported_menu, "yes");
   assert.equal(result.icons, 2);
   assert.equal(result.icon, "image/svg+xml");
+  assert(
+    result.legacySVG,
+    "Package the linked SVG with a legacy document type",
+  );
+  const legacySVG = Buffer.from(
+    result.legacySVG.split(",")[1],
+    "base64",
+  ).toString();
+  assert.match(legacySVG, /width="240" height="60"/);
+  assert.doesNotMatch(legacySVG, /<!DOCTYPE|<!ENTITY/i);
   assert.equal(result.video.vimeo_url, "https://vimeo.com/357581440");
   assert.equal(result.video.mute, "yes");
   if (result.formInstalled) {
