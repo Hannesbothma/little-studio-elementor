@@ -105,8 +105,10 @@ project.pages[0].css +=
   "@media(max-width:767px){.height-fixture{height:90px}}";
 project.pages[0].html = project.pages[0].html.replace(
   '<div class="long-content" id="details">',
-  '<div class="elementor-widget-nav-menu" data-widget_type="nav-menu.default"><nav class="elementor-nav-menu--main" aria-label="Fixture menu"><ul><li class="menu-item-has-children"><a href="#details">Rooms</a><ul class="sub-menu"><li><a href="#details">Family room</a></li></ul></li></ul></nav></div><div class="long-content" id="details">',
+  '<div class="elementor-widget-nav-menu" data-widget_type="nav-menu.default"><nav class="elementor-nav-menu--main" aria-label="Fixture menu"><ul><li class="menu-item-has-children"><a href="#details">Rooms</a><ul class="sub-menu"><li><a href="#details">Family room</a></li></ul></li></ul></nav><div class="elementor-menu-toggle" aria-label="Fixture mobile menu">Menu</div><nav class="elementor-nav-menu--dropdown" aria-hidden="true"><ul><li class="menu-item-has-children"><a href="#details">Rooms</a><ul class="sub-menu"><li><a href="#details">Family room</a></li></ul></li></ul></nav></div><div class="long-content" id="details">',
 );
+project.pages[0].css +=
+  ".elementor-menu-toggle{display:none}@media(max-width:767px){.elementor-menu-toggle{display:block}.elementor-nav-menu--main{display:none}}";
 project.pages[0].html = project.pages[0].html.replace(
   '<div class="long-content" id="details">',
   '<div class="interactive-box" data-lse-interaction><button type="button">Editable controls</button></div><div class="long-content" id="details">',
@@ -477,16 +479,25 @@ try {
       await child.waitFor({ state: "hidden" });
     }
     if (!usesThemeBuilder && width === 390) {
+      const drawer = page.getByRole("button", { name: "Fixture mobile menu" });
       const toggle = page.getByRole("button", { name: "Rooms submenu" });
       const child = page.getByRole("link", { name: "Family room" });
+      assert.equal(await toggle.count(), 0);
+      await drawer.press("Enter");
+      assert.equal(await drawer.getAttribute("aria-expanded"), "true");
+      assert.equal(await toggle.count(), 1);
       assert.equal(await toggle.getAttribute("aria-expanded"), "false");
       assert.equal(await child.count(), 0);
       await toggle.focus();
       await toggle.press("Enter");
       assert.equal(await toggle.getAttribute("aria-expanded"), "true");
       await child.waitFor({ state: "visible" });
-      await toggle.press("Escape");
-      assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+      await child.press("Escape");
+      assert.equal(await drawer.getAttribute("aria-expanded"), "false");
+      assert(
+        await drawer.evaluate((button) => document.activeElement === button),
+      );
+      assert.equal(await toggle.count(), 0);
       assert.equal(await child.count(), 0);
     }
     await page.locator(".replica-sticky[data-lse-native]").hover();
